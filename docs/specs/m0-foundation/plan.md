@@ -28,12 +28,12 @@ must be accepted before M1.
 ## Stories (small steps)
 
 ### E0.1 — Governance & locked decisions
-| ID | Tier | Goal | Files | Acceptance |
+| ID | Status | Tier | Goal | Acceptance |
 |---|---|---|---|---|
-| S0.1.1 | T2 | Decide license | `LICENSE`, `docs/adr/0001-license.md` | ADR → accepted; LICENSE present |
-| S0.1.2 | T2 | Project name/brand + reserve handles | `README.md` | name in README; domain+handles reserved |
-| S0.1.3 | T2 | OAuth + donations providers | `docs/adr/0005*`, `docs/adr/0006*` | both ADRs accepted |
-| S0.1.4 | T1 | Community docs | `CODE_OF_CONDUCT.md`,`CONTRIBUTING.md`,`SECURITY.md`,`.github/ISSUE_TEMPLATE/*`,`.github/pull_request_template.md` | files present + linked from README |
+| S0.1.1 | ✅ done | T2 | Decide license | ADR-0001 accepted; `LICENSE` (AGPL-3.0 full text) present |
+| S0.1.2 | 🚧 partial | T2 | Project name/brand + reserve handles | `README.md` created with codename "Archipelago"; **final name + domain/handles still pending (owner)** |
+| S0.1.3 | ✅ done | T2 | OAuth + donations providers | ADR-0005 + ADR-0006 accepted |
+| S0.1.4 | ✅ done | T1 | Community docs | `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md` present + linked from `README.md` |
 
 ### E0.2 — Monorepo & tooling skeleton  *(story files materialized in this folder)*
 | ID | Tier | Goal | Acceptance |
