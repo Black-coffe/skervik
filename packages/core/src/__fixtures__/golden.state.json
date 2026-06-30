@@ -1,0 +1,22 @@
+{
+  "matchId": "golden-match-1",
+  "phase": "setup",
+  "turn": 3,
+  "currentPlayerId": "player-1",
+  "players": [
+    {
+      "id": "player-1",
+      "name": "player-1",
+      "victoryPoints": 0,
+      "resources": {}
+    },
+    {
+      "id": "player-2",
+      "name": "player-2",
+      "victoryPoints": 0,
+      "resources": {}
+    }
+  ],
+  "eventIndex": 5,
+  "seedHash": "sha256:skervik-golden-seed-3"
+}

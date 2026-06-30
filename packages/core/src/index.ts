@@ -3,6 +3,8 @@
 export const CORE_VERSION = '0.0.1' as const;
 
 export { reduce, replay } from './reduce.js';
+export type { EventLogLine } from './replay.js';
+export { parseEventLog, replayLog } from './replay.js';
 export type { Seed } from './rng.js';
 export { deriveValue, rollDie, shuffle } from './rng.js';
 export type * from './types.js';

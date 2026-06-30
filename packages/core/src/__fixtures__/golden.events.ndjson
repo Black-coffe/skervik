@@ -1,0 +1,5 @@
+{ "seq": 0, "ts": 1719600000, "type": "MATCH_STARTED", "actor": "system", "data": { "matchId": "golden-match-1", "seedHash": "sha256:skervik-golden-seed-3", "playerIds": ["player-1", "player-2"] } }
+{ "seq": 1, "ts": 1719600005, "type": "DICE_ROLLED", "actor": "system", "data": { "playerId": "player-1", "result": 2 }, "rngStreamIndex": 1 }
+{ "seq": 2, "ts": 1719600010, "type": "TURN_ENDED", "actor": "player-1", "data": { "playerId": "player-1", "nextPlayerId": "player-2" } }
+{ "seq": 3, "ts": 1719600015, "type": "DICE_ROLLED", "actor": "system", "data": { "playerId": "player-2", "result": 3 }, "rngStreamIndex": 3 }
+{ "seq": 4, "ts": 1719600020, "type": "TURN_ENDED", "actor": "player-2", "data": { "playerId": "player-2", "nextPlayerId": "player-1" } }
