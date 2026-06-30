@@ -5,7 +5,7 @@ owner: Queen (main session)
 horizon: zero → 1.0 public release
 ---
 
-# Archipelago — Master Roadmap (zero → releasable 1.0)
+# Skervik — Master Roadmap (zero → releasable 1.0)
 
 > **What this is.** The complete development plan from an empty repo to a
 > production-ready 1.0 you can launch publicly and start onboarding players —
@@ -43,7 +43,7 @@ From Phase 1 — every story serves at least one; none may regress them:
 These are **hard invariants** — see `docs/wiki/` and `docs/adr/`:
 
 - **Authoritative server** — client renders & sends *intents*; only the server emits *events* that mutate state. (`docs/wiki/server-authority.md`)
-- **Deterministic isomorphic core** — `@arch/core` is `reduce(state, event) → state`, pure, zero runtime deps, identical on client & server. No wall-clock, no ambient randomness. (`docs/wiki/deterministic-core.md`, ADR-0003)
+- **Deterministic isomorphic core** — `@skervik/core` is `reduce(state, event) → state`, pure, zero runtime deps, identical on client & server. No wall-clock, no ambient randomness. (`docs/wiki/deterministic-core.md`, ADR-0003)
 - **Event sourcing** — every action is an immutable event; replays/audit/recovery/async fall out of it for free.
 - **Commit-reveal RNG** — `seedHash` shown before the match, `seed` revealed after; all randomness derives from `seed` + event-stream index. (`docs/wiki/fair-rng-commit-reveal.md`)
 - **Profiles are config, not branches** — one engine, behavior configured by `RuleProfile`.
@@ -52,11 +52,11 @@ These are **hard invariants** — see `docs/wiki/` and `docs/adr/`:
 
 | Package | Role | Depends on |
 |---|---|---|
-| `@arch/core` | Pure deterministic rule engine (state, events, intents, reduce/validate, PRNG, replay). **Zero runtime deps.** | — |
-| `@arch/protocol` | Shared WS/REST message types + runtime validation (zod). | core (types) |
-| `@arch/server` | Colyseus rooms (stateful) + Fastify REST (stateless). | core, protocol |
-| `@arch/client` | Pixi.js v8 (2.5D canvas) + React/Zustand HUD + Vite/PWA. | core, protocol |
-| `@arch/bots` | AI (heuristic → MCTS) in a worker; consumes core. | core |
+| `@skervik/core` | Pure deterministic rule engine (state, events, intents, reduce/validate, PRNG, replay). **Zero runtime deps.** | — |
+| `@skervik/protocol` | Shared WS/REST message types + runtime validation (zod). | core (types) |
+| `@skervik/server` | Colyseus rooms (stateful) + Fastify REST (stateless). | core, protocol |
+| `@skervik/client` | Pixi.js v8 (2.5D canvas) + React/Zustand HUD + Vite/PWA. | core, protocol |
+| `@skervik/bots` | AI (heuristic → MCTS) in a worker; consumes core. | core |
 | `infra/` | Docker/compose → k8s, Terraform (IaC). | — |
 | `tools/` | CLIs: seed-verifier, replay-player, balance-sim. | core |
 
@@ -107,7 +107,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S0.1.4` [T1] Author CODE_OF_CONDUCT, CONTRIBUTING, SECURITY.md, issue/PR templates. AC: files present, linked from README.
 
 **E0.2 — Monorepo & tooling skeleton**
-- `S0.2.1` [T2] Init pnpm workspace + 5 package skeletons + root `tsconfig` (base/strict). AC: `pnpm i` clean; all packages resolve; `@arch/*` import works.
+- `S0.2.1` [T2] Init pnpm workspace + 5 package skeletons + root `tsconfig` (base/strict). AC: `pnpm i` clean; all packages resolve; `@skervik/*` import works.
 - `S0.2.2` [T1] ESLint (flat) + Prettier + editorconfig, shared config. AC: `pnpm -r lint` runs clean on skeleton.
 - `S0.2.3` [T1] Vitest wired per package; one passing smoke test each. AC: `pnpm -r test` green.
 - `S0.2.4` [T1] Build pipeline: tsup/tsc for libs, Vite for client; path aliases. AC: `pnpm -r build` green.
@@ -125,7 +125,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S0.4.3` [T2] Perf harness (FPS, mem, bundle, FMP) + **engine decision ADR-0002**. AC: ADR accepted; engine locked.
 
 **E0.5 — Core engine contract skeleton**
-- `S0.5.1` [T2] Define `GameState`, `GameEvent`, `PlayerIntent`, `RejectReason` types in `@arch/core`. AC: types compile; exported.
+- `S0.5.1` [T2] Define `GameState`, `GameEvent`, `PlayerIntent`, `RejectReason` types in `@skervik/core`. AC: types compile; exported.
 - `S0.5.2` [T2] `reduce()` + `validate()` signatures + no-op impl + determinism test scaffold. AC: signatures match ADR-0003; scaffold runs.
 - `S0.5.3` [T2] Seeded PRNG (pcg/xoshiro) + stream-index derivation; unit tests for reproducibility. AC: same seed+index → same sequence, cross-run.
 - `S0.5.4` [T2] Event-log format (ndjson) + `replay(events)` util + golden fixture. AC: replay reproduces state; fixture feeds S0.3.2.
@@ -160,7 +160,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S1.4.4` [T2] Event-log persistence (ndjson; local FS for M1).
 
 **E1.5 — Protocol**
-- `S1.5.1` [T2] Message types (intents + events) in `@arch/protocol` with zod validation.
+- `S1.5.1` [T2] Message types (intents + events) in `@skervik/protocol` with zod validation.
 - `S1.5.2` [T1] Handshake + versioning (`auth.connect`, `room.state`).
 
 **E1.6 — Client: render & interaction**
@@ -285,15 +285,20 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 
 **Locked (2026-06-30)** — see `docs/adr/`:
 
-1. ✅ **License = AGPL-3.0** (ADR-0001). Network copyleft protects the hosted OSS service from closed forks.
-2. ✅ **Render engine = Pixi.js v8** (ADR-0002). Lighter/faster 2.5D on mobile; the E0.4 prototype is a validation checkpoint, not a blocker.
-3. ✅ **Auth = guest + Google + Discord** (ADR-0005). Discord matches the audience and is our community hub.
-4. ✅ **Donations = Open Collective** (ADR-0006). Public ledger = verifiable transparency.
-5. ✅ Already locked at spec time: deterministic isomorphic core (ADR-0003), realtime = Node+Colyseus+Fastify (ADR-0004).
+1. ✅ **Project name/brand = Skervik** (ADR-0007). Domain skervik.com registered 2026-06-30, exp 2028.
+2. ✅ **License = AGPL-3.0** (ADR-0001). Network copyleft protects the hosted OSS service from closed forks.
+3. ✅ **Render engine = Pixi.js v8** (ADR-0002). Lighter/faster 2.5D on mobile; the E0.4 prototype is a validation checkpoint, not a blocker.
+4. ✅ **Auth = guest + Google + Discord** (ADR-0005). Discord matches the audience and is our community hub.
+5. ✅ **Donations = Open Collective** (ADR-0006). Public ledger = verifiable transparency.
+6. ✅ Already locked at spec time: deterministic isomorphic core (ADR-0003), realtime = Node+Colyseus+Fastify (ADR-0004).
 
 **Still open — owner's call:**
 
-- ⏳ **Project name/brand** — needed before M1 art direction (S0.1.2). No default; codename "Archipelago" / scope `@arch/*` until decided.
+_(none at this time)_
+
+**Resolved:**
+
+- ✅ **Project name/brand = Skervik** (skervik.com, registered 2026-06-30, exp 2028; ADR-0007 accepted). Scope `@skervik/*` rename is a separate open item.
 
 ## 8. Risk register (top — full list in tech spec §13)
 

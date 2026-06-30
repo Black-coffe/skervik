@@ -12,7 +12,7 @@ never decide outcomes. This is the foundation of anti-cheat and synchronization
 (tech spec §2.1, §8.4). Decision record: ADR-0004.
 
 Invariants:
-- **Client → intents only.** Every intent is validated server-side by `@arch/core`
+- **Client → intents only.** Every intent is validated server-side by `@skervik/core`
   `validate`; an invalid intent yields `intent.rejected`, never a state change.
 - **Server → events only.** Authoritative events (a `event.batch`) are the only thing
   that mutates state on either side (see [[deterministic-core]]).

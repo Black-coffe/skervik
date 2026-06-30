@@ -17,7 +17,7 @@ identifiers, and CLAUDE.md are in English by convention.
 
 ## What this is
 
-**Archipelago** (working codename; final name TBD) — an online competitive
+**Skervik** — an online competitive
 "explore — trade — settle" game, mechanically inspired by Catan but built as an
 **independent product**: own name, lore, art, setting. The core loop players love
 (trading/negotiation, modular board, the robber's drama) is sacred and only gets
@@ -70,7 +70,7 @@ function validate(
 
 Monorepo via **pnpm workspaces**:
 
-- `packages/core` (`@arch/core`) — pure-TS rule engine, **zero runtime deps** (reused on client & server; this is what must stay deterministic & isomorphic).
+- `packages/core` (`@skervik/core`) — pure-TS rule engine, **zero runtime deps** (reused on client & server; this is what must stay deterministic & isomorphic).
 - `packages/protocol` — shared WS/REST message types.
 - `packages/server` — Node.js + **Colyseus** (stateful rooms, state-sync, reconnect, matchmaker) + **Fastify** (REST/OpenAPI 3.1).
 - `packages/client` — **Pixi.js v8** (2.5D canvas) + **React** (menus/lobby/HUD, kept separate from the game canvas) + **Zustand** (UI state) + **Vite** (build, PWA).
@@ -87,7 +87,7 @@ When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core deter
 ## Roadmap anchor (spec §11)
 
 - **M0** — prototype & gate decisions: Pixi vs Three.js perf prototype, monorepo skeleton, CI, core determinism test. _(This is the next concrete work.)_
-- **M1** — vertical slice: `@arch/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online.
+- **M1** — vertical slice: `@skervik/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online.
 - **M2** — rule profiles + adaptive duration + catch-up + reconnect/grace/bot-fill + matchmaking/lobby/Redis presence + heuristic bots.
 - **M3** — ranked (Glicko-2)/seasons, social, spectator/replays/post-match analytics, 7–10 player modes.
 - **M4** — async mode, Deep profile, themes/skins, a11y (colorblind modes), i18n (UA/RU/EN), PWA wrappers → 1.0.
@@ -115,10 +115,10 @@ token economy, memory protocol) is imported below.
 
 ## Project profile (VULYK bootstrap)
 
-- **Project:** Archipelago — OSS online "explore-trade-settle" game (Catan-inspired, independent). One sentence: see `docs/specs/roadmap/ROADMAP.md`.
+- **Project:** Skervik — OSS online "explore-trade-settle" game (Catan-inspired, independent). One sentence: see `docs/specs/roadmap/ROADMAP.md`.
 - **Status:** greenfield — no code yet; plan-first. Master plan: `docs/specs/roadmap/ROADMAP.md`. Current milestone: **M0** (`docs/specs/m0-foundation/`).
-- **Stack (planned, ADR-0002/0003/0004):** TypeScript monorepo (pnpm workspaces) — `@arch/core` (pure deterministic engine), `@arch/protocol` (zod), `@arch/server` (Colyseus + Fastify), `@arch/client` (Pixi.js v8 + React/Zustand + Vite), `@arch/bots`. Node 22.
-- **Verification (real after M0 E0.2; targets until then):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @arch/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
+- **Stack (planned, ADR-0002/0003/0004):** TypeScript monorepo (pnpm workspaces) — `@skervik/core` (pure deterministic engine), `@skervik/protocol` (zod), `@skervik/server` (Colyseus + Fastify), `@skervik/client` (Pixi.js v8 + React/Zustand + Vite), `@skervik/bots`. Node 22.
+- **Verification (real after M0 E0.2; targets until then):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @skervik/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
 - **Hard invariants (never regress):** deterministic isomorphic core (no wall-clock / no ambient RNG); authoritative server; commit-reveal RNG; event sourcing; rule profiles as config not branches. See `docs/wiki/`.
 - **No-go zones (once they exist):** generated output (`dist/`,`build/`), lockfiles, migration history, vendored art assets.
 - **Budget posture:** BALANCED (cap ~4 parallel workers). `TOP_MODEL = claude-opus-4-8` (per constitution).

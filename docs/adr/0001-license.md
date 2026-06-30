@@ -21,11 +21,11 @@ leave open, which fits the "OSS, no greedy closed forks" intent (tech spec §10)
 
 ## Consequences
 - Easier: contributors trust their work stays open; aligns with transparency narrative.
-- Harder: some companies avoid AGPL dependencies — irrelevant for an end-user game, but note it if `@arch/core` is ever meant for reuse (could dual-license core under MIT later).
+- Harder: some companies avoid AGPL dependencies — irrelevant for an end-user game, but note it if `@skervik/core` is ever meant for reuse (could dual-license core under MIT later).
 - Debt: every source file needs an AGPL header; CI license-check recommended.
 
 ## Invariants created
 - All first-party packages carry the project license; third-party assets/art must be license-compatible and attributed.
 
 ## Revisit when
-- We want `@arch/core` reusable as a permissive library → consider dual-licensing core (MIT) while the service stays AGPL.
+- We want `@skervik/core` reusable as a permissive library → consider dual-licensing core (MIT) while the service stays AGPL.

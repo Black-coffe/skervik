@@ -1,8 +1,10 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Discussions / questions
-    url: https://github.com/Black-coffe/archipelago/discussions
-    about: Ask questions, share ideas, and discuss the roadmap (update URL once the repo/brand is set).
+    # NOTE: placeholder — github.com/Black-coffe/skervik repo not yet created
+    url: https://github.com/Black-coffe/skervik/discussions
+    about: Ask questions, share ideas, and discuss the roadmap.
   - name: 🔒 Report a security vulnerability
-    url: https://github.com/Black-coffe/archipelago/security/advisories/new
+    # NOTE: placeholder — github.com/Black-coffe/skervik repo not yet created
+    url: https://github.com/Black-coffe/skervik/security/advisories/new
     about: Please report vulnerabilities privately — see SECURITY.md. Do not open a public issue.

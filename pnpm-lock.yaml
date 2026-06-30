@@ -47,7 +47,7 @@ importers:
 
   packages/bots:
     dependencies:
-      '@arch/core':
+      '@skervik/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -60,10 +60,10 @@ importers:
 
   packages/client:
     dependencies:
-      '@arch/core':
+      '@skervik/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/protocol':
+      '@skervik/protocol':
         specifier: workspace:*
         version: link:../protocol
       react:
@@ -103,7 +103,7 @@ importers:
 
   packages/protocol:
     dependencies:
-      '@arch/core':
+      '@skervik/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
@@ -116,10 +116,10 @@ importers:
 
   packages/server:
     dependencies:
-      '@arch/core':
+      '@skervik/core':
         specifier: workspace:*
         version: link:../core
-      '@arch/protocol':
+      '@skervik/protocol':
         specifier: workspace:*
         version: link:../protocol
     devDependencies:

@@ -30,7 +30,7 @@ assignees: []
 
 ## Environment
 
-- Component: <!-- @arch/core | server | client | bots | infra -->
+- Component: <!-- @skervik/core | server | client | bots | infra -->
 - OS / browser / device:
 - Version / commit:
 

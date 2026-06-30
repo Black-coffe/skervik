@@ -15,7 +15,7 @@ This is the central architectural decision of the project (tech spec §4).
 3. Per-runtime implementations (TS server + separate client) — drift risk, breaks determinism guarantees.
 
 ## Decision
-**Option 1.** `@arch/core` is a pure TS package with **no runtime dependencies**,
+**Option 1.** `@skervik/core` is a pure TS package with **no runtime dependencies**,
 exporting `reduce` (state transition) and `validate` (intent → events | rejection).
 The same compiled core runs authoritatively on the server and predictively on the client.
 
@@ -25,7 +25,7 @@ The same compiled core runs authoritatively on the server and predictively on th
 - Debt: a golden-replay determinism test must run in CI from day one (S0.3.2).
 
 ## Invariants created
-- `@arch/core` has zero runtime deps and is side-effect free.
+- `@skervik/core` has zero runtime deps and is side-effect free.
 - All randomness flows through the seeded PRNG (ADR + `docs/wiki/fair-rng-commit-reveal.md`), keyed by event-stream index.
 - Only server-emitted **events** mutate state; client **intents** never do directly.
 - Replaying an event log reproduces byte-identical state.

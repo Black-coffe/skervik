@@ -1,9 +1,11 @@
-# Archipelago _(codename — final brand TBD)_
+# Skervik
 
 > An open-source, online **"explore — trade — settle"** game. Mechanically inspired
 > by the trade-build-settle genre, but a **fully independent product** — its own
 > name, lore, art, and setting. Honest, provably-fair randomness; catch-up over
 > runaway-leaders; matches that fit in an hour; no pay-to-win.
+>
+> **Domain:** [skervik.com](https://skervik.com) (registered 2026-06-30, active).
 
 **Status:** 🚧 Greenfield / pre-M0 — planning complete, implementation starting.
 This repo currently holds the design docs, the architecture decisions, and the
@@ -26,6 +28,7 @@ build plan. See the roadmap below.
 
 | Area           | Choice                                                                                   |
 | -------------- | ---------------------------------------------------------------------------------------- |
+| Brand / domain | **Skervik** · skervik.com ([ADR-0007](docs/adr/0007-project-name-brand.md))              |
 | License        | **AGPL-3.0** ([ADR-0001](docs/adr/0001-license.md))                                      |
 | Render engine  | **Pixi.js v8** (2.5D) ([ADR-0002](docs/adr/0002-render-engine.md))                       |
 | Rule core      | **Deterministic isomorphic** TS engine ([ADR-0003](docs/adr/0003-deterministic-core.md)) |
@@ -35,9 +38,9 @@ build plan. See the roadmap below.
 
 ## Tech stack
 
-TypeScript monorepo (pnpm): `@arch/core` (pure rules) · `@arch/protocol` ·
-`@arch/server` (Colyseus + Fastify) · `@arch/client` (Pixi.js v8 + React + Vite) ·
-`@arch/bots`.
+TypeScript monorepo (pnpm): `@skervik/core` (pure rules) · `@skervik/protocol` ·
+`@skervik/server` (Colyseus + Fastify) · `@skervik/client` (Pixi.js v8 + React + Vite) ·
+`@skervik/bots`.
 
 ## Quickstart
 
@@ -45,15 +48,15 @@ TypeScript monorepo (pnpm): `@arch/core` (pure rules) · `@arch/protocol` ·
 
 ```bash
 pnpm i
-pnpm --filter @arch/client dev
+pnpm --filter @skervik/client dev
 ```
 
 ## Contributing
 
 We welcome contributors! Start with [CONTRIBUTING.md](CONTRIBUTING.md), the
 [Code of Conduct](CODE_OF_CONDUCT.md), and our [security policy](SECURITY.md).
-Community chat: Discord (link coming with the brand decision, S0.1.2).
+Community chat: Discord (link coming soon).
 
 ## License
 
-[AGPL-3.0](LICENSE) © the Archipelago contributors.
+[AGPL-3.0](LICENSE) © the Skervik contributors.

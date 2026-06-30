@@ -31,17 +31,17 @@ must be accepted before M1.
 | ID | Status | Tier | Goal | Acceptance |
 |---|---|---|---|---|
 | S0.1.1 | ✅ done | T2 | Decide license | ADR-0001 accepted; `LICENSE` (AGPL-3.0 full text) present |
-| S0.1.2 | 🚧 partial | T2 | Project name/brand + reserve handles | `README.md` created with codename "Archipelago"; **final name + domain/handles still pending (owner)** |
+| S0.1.2 | ✅ done | T2 | Project name/brand + reserve handles | Name = **Skervik**; skervik.com registered 2026-06-30 (exp 2028); ADR-0007 accepted. |
 | S0.1.3 | ✅ done | T2 | OAuth + donations providers | ADR-0005 + ADR-0006 accepted |
 | S0.1.4 | ✅ done | T1 | Community docs | `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, `.github/ISSUE_TEMPLATE/*`, `.github/pull_request_template.md` present + linked from `README.md` |
 
 ### E0.2 — Monorepo & tooling skeleton  *(story files materialized in this folder)*
 | ID | Tier | Goal | Acceptance |
 |---|---|---|---|
-| S0.2.1 | T2 | pnpm workspace + 5 package skeletons + root tsconfig | `pnpm i` clean; `@arch/*` resolve |
+| S0.2.1 | T2 | pnpm workspace + 5 package skeletons + root tsconfig | `pnpm i` clean; `@skervik/*` resolve |
 | S0.2.2 | T1 | ESLint flat + Prettier + editorconfig | `pnpm -r lint` clean |
 | S0.2.3 | T1 | Vitest per package + smoke tests | `pnpm -r test` green |
-| S0.2.4 | T1 | Build (tsup/tsc libs, Vite client) + aliases | `pnpm -r build` green; `pnpm --filter @arch/client dev` serves |
+| S0.2.4 | T1 | Build (tsup/tsc libs, Vite client) + aliases | `pnpm -r build` green; `pnpm --filter @skervik/client dev` serves |
 | S0.2.5 | T1 | Pre-commit (lint-staged) + commit-msg lint | bad commit rejected locally |
 
 ### E0.3 — CI/CD foundation
@@ -51,10 +51,10 @@ must be accepted before M1.
 | S0.3.2 | T2 | Core determinism test in CI (golden replay) | CI red if core nondeterministic (needs S0.5.4) |
 | S0.3.3 | T1 | Client preview deploy (Cloudflare Pages) | PR posts preview URL |
 | S0.3.4 | T0 | Dependabot/Renovate + CodeQL | configs merged; first scan runs |
-| S0.3.5 | T1 | **CI guard: `@arch/core` has no runtime `dependencies`** (enforces 2nd half of ADR-0003) — *from E0.2 review* | CI red if core gains a runtime dep |
+| S0.3.5 | T1 | **CI guard: `@skervik/core` has no runtime `dependencies`** (enforces 2nd half of ADR-0003) — *from E0.2 review* | CI red if core gains a runtime dep |
 | S0.3.6 | T0 | `prettier --check` in CI — *from E0.2 review* | CI red on any unformatted file |
 
-> **E0.2 review follow-up (nit #3):** add a type-only cross-package import of `@arch/core`
+> **E0.2 review follow-up (nit #3):** add a type-only cross-package import of `@skervik/core`
 > from a sibling (in a smoke test) to prove the workspace+alias wiring end-to-end — fold into E0.5 S0.5.1.
 
 ### E0.4 — Render prototype gate (Pixi vs Three)
@@ -77,7 +77,7 @@ must be accepted before M1.
 - [ ] Core determinism (golden-replay) test passing in CI.
 - [ ] ADR-0001 (license), ADR-0002 (engine), ADR-0003 (core) accepted; LICENSE applied.
 - [ ] Project name decided; README + community docs present.
-- [ ] `pnpm --filter @arch/client dev` renders an empty 2.5D board.
+- [ ] `pnpm --filter @skervik/client dev` renders an empty 2.5D board.
 
 ## How to build this
 `/vulyk-build` on the E0.2 story files here first; then `/vulyk-plan m0-foundation`

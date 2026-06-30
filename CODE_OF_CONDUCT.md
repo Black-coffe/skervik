@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers responsible for enforcement by direct message to a maintainer on the project Discord (link in the README) or by email. <!-- TODO(owner): add a dedicated conduct@<domain> address once the project domain is registered (tracked by story S0.1.2). --> All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers responsible for enforcement by direct message to a maintainer on the project Discord (link in the README) or by email at **conduct@skervik.com**. All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

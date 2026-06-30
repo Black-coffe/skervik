@@ -5,9 +5,9 @@ related: [fair-rng-commit-reveal, server-authority]
 last-verified: 2026-06-30
 ---
 
-# Deterministic isomorphic rule core (`@arch/core`)
+# Deterministic isomorphic rule core (`@skervik/core`)
 
-`@arch/core` is a **pure** package: `reduce(state, event) → newState` and
+`@skervik/core` is a **pure** package: `reduce(state, event) → newState` and
 `validate(state, intent, playerId) → { ok, events } | { ok:false, reason }`.
 Same inputs → same outputs, on every device. This determinism is what makes
 replays, client prediction, crash recovery, async play, and RNG fairness possible.

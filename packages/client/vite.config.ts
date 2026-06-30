@@ -25,9 +25,9 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@arch/core': workspaceAlias('core'),
-      '@arch/protocol': workspaceAlias('protocol'),
-      '@arch/bots': workspaceAlias('bots'),
+      '@skervik/core': workspaceAlias('core'),
+      '@skervik/protocol': workspaceAlias('protocol'),
+      '@skervik/bots': workspaceAlias('bots'),
     },
   },
 });

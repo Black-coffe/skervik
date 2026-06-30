@@ -1,7 +1,7 @@
 # Security Policy
 
 We take the integrity of the game and the safety of players' data seriously.
-Thank you for helping keep Archipelago secure.
+Thank you for helping keep Skervik secure.
 
 ## Supported versions
 
@@ -17,16 +17,15 @@ Until 1.0 there are no released versions; report against `main`.
 **Please do not open a public issue, PR, or Discord message for a vulnerability.**
 
 Use **GitHub's private vulnerability reporting**: the repo's **Security** tab →
-**“Report a vulnerability.”** This opens a private advisory visible only to maintainers.
+**”Report a vulnerability.”** This opens a private advisory visible only to maintainers.
 
-<!-- TODO(owner): add a security@<domain> fallback address once the domain is
-     registered (tracked by story S0.1.2). -->
+You may also reach the security team at **security@skervik.com**.
 
 Please include:
 
 - a description and impact,
 - steps to reproduce (a minimal repro, match seed, or event log if relevant),
-- affected component (`@arch/core`, server, client, auth, infra),
+- affected component (`@skervik/core`, server, client, auth, infra),
 - any suggested fix.
 
 ### What to expect

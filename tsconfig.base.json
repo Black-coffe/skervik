@@ -18,11 +18,11 @@
     "esModuleInterop": false,
     "baseUrl": ".",
     "paths": {
-      "@arch/core": ["./packages/core/src/index.ts"],
-      "@arch/protocol": ["./packages/protocol/src/index.ts"],
-      "@arch/server": ["./packages/server/src/index.ts"],
-      "@arch/client": ["./packages/client/src/index.ts"],
-      "@arch/bots": ["./packages/bots/src/index.ts"]
+      "@skervik/core": ["./packages/core/src/index.ts"],
+      "@skervik/protocol": ["./packages/protocol/src/index.ts"],
+      "@skervik/server": ["./packages/server/src/index.ts"],
+      "@skervik/client": ["./packages/client/src/index.ts"],
+      "@skervik/bots": ["./packages/bots/src/index.ts"]
     }
   }
 }

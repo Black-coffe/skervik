@@ -7,6 +7,6 @@ if (!rootEl) throw new Error('No #root element found in index.html');
 
 createRoot(rootEl).render(
   <StrictMode>
-    <h1>Skerry — coming soon</h1>
+    <h1>Skervik — coming soon</h1>
   </StrictMode>,
 );

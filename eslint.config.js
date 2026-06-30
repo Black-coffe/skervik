@@ -28,7 +28,7 @@ export default tseslint.config(
     },
   },
 
-  // ADR-0003: @arch/core must be purely deterministic.
+  // ADR-0003: @skervik/core must be purely deterministic.
   // No wall-clock time, no ambient randomness — these break replays and
   // client-prediction. Randomness enters only as seeded PRNG event data.
   {
@@ -40,18 +40,18 @@ export default tseslint.config(
           selector:
             'CallExpression[callee.object.name="Math"][callee.property.name="random"]',
           message:
-            'Math.random() is non-deterministic — forbidden in @arch/core (ADR-0003). Use the seeded PRNG instead.',
+            'Math.random() is non-deterministic — forbidden in @skervik/core (ADR-0003). Use the seeded PRNG instead.',
         },
         {
           selector:
             'CallExpression[callee.object.name="Date"][callee.property.name="now"]',
           message:
-            'Date.now() is non-deterministic — forbidden in @arch/core (ADR-0003). Pass timestamps as event data.',
+            'Date.now() is non-deterministic — forbidden in @skervik/core (ADR-0003). Pass timestamps as event data.',
         },
         {
           selector: 'NewExpression[callee.name="Date"]',
           message:
-            'new Date() is non-deterministic — forbidden in @arch/core (ADR-0003). Pass timestamps as event data.',
+            'new Date() is non-deterministic — forbidden in @skervik/core (ADR-0003). Pass timestamps as event data.',
         },
       ],
     },

@@ -1,5 +1,5 @@
 {
-  "name": "@arch/client",
+  "name": "@skervik/client",
   "version": "0.0.1",
   "private": true,
   "description": "Pixi.js v8 2.5D canvas + React/Zustand HUD + Vite/PWA",
@@ -12,8 +12,8 @@
     "lint": "eslint src"
   },
   "dependencies": {
-    "@arch/core": "workspace:*",
-    "@arch/protocol": "workspace:*",
+    "@skervik/core": "workspace:*",
+    "@skervik/protocol": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

@@ -1,5 +1,5 @@
 {
-  "name": "@arch/core",
+  "name": "@skervik/core",
   "version": "0.0.1",
   "description": "Pure deterministic rule engine — zero runtime deps",
   "type": "module",
