@@ -5,10 +5,10 @@ Thank you for helping keep Archipelago secure.
 
 ## Supported versions
 
-| Version | Supported |
-|---|---|
+| Version                          | Supported                         |
+| -------------------------------- | --------------------------------- |
 | `main` (pre-1.0, in development) | ✅ — all security fixes land here |
-| tagged releases | ✅ from 1.0 onward |
+| tagged releases                  | ✅ from 1.0 onward                |
 
 Until 1.0 there are no released versions; report against `main`.
 

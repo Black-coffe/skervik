@@ -51,6 +51,11 @@ must be accepted before M1.
 | S0.3.2 | T2 | Core determinism test in CI (golden replay) | CI red if core nondeterministic (needs S0.5.4) |
 | S0.3.3 | T1 | Client preview deploy (Cloudflare Pages) | PR posts preview URL |
 | S0.3.4 | T0 | Dependabot/Renovate + CodeQL | configs merged; first scan runs |
+| S0.3.5 | T1 | **CI guard: `@arch/core` has no runtime `dependencies`** (enforces 2nd half of ADR-0003) — *from E0.2 review* | CI red if core gains a runtime dep |
+| S0.3.6 | T0 | `prettier --check` in CI — *from E0.2 review* | CI red on any unformatted file |
+
+> **E0.2 review follow-up (nit #3):** add a type-only cross-package import of `@arch/core`
+> from a sibling (in a smoke test) to prove the workspace+alias wiring end-to-end — fold into E0.5 S0.5.1.
 
 ### E0.4 — Render prototype gate (Pixi vs Three)
 | ID | Tier | Goal | Acceptance |

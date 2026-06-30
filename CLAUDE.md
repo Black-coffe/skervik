@@ -25,38 +25,43 @@ amplified; the chronic pains (swingy dice RNG, runaway-leader/kingmaking, dead
 time) are explicitly designed out.
 
 ### 🔴 Legal constraint (non-negotiable, applies to all art/text/naming)
-Game *mechanics* are not copyrightable, but the **CATAN brand, art, component
+
+Game _mechanics_ are not copyrightable, but the **CATAN brand, art, component
 trade dress, and specific texts are**. Never name anything "Catan", never copy its
 art or wording. All naming/lore/art must be original (setting A: "archipelago of
 explorers"). This is why the product exists as its own world.
 
 ## Fixed decisions (locked inputs — do not relitigate without the user)
 
-| Decision | Value |
-|---|---|
-| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: AGPL-3.0 (leaning) vs MIT — TBD. |
-| Setting | **A — archipelago of explorers** (sea trade, islands). |
-| Rendering | **2.5D isometric** — Pixi.js v8 primary, Three.js only if a perf prototype demands 3D depth. |
-| Scope at launch | **Multi-mode platform from day one** — modes are config, not separate builds; complexity is absorbed by onboarding, not by cutting features. |
-| Scale (1M CCU) | A **marketing ceiling, not a day-1 requirement.** Start cheap ($20–80/mo, one VPS). Architecture stays scalable but **do not over-engineer** for scale early. |
+| Decision           | Value                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: AGPL-3.0 (leaning) vs MIT — TBD.                                            |
+| Setting            | **A — archipelago of explorers** (sea trade, islands).                                                                                                        |
+| Rendering          | **2.5D isometric** — Pixi.js v8 primary, Three.js only if a perf prototype demands 3D depth.                                                                  |
+| Scope at launch    | **Multi-mode platform from day one** — modes are config, not separate builds; complexity is absorbed by onboarding, not by cutting features.                  |
+| Scale (1M CCU)     | A **marketing ceiling, not a day-1 requirement.** Start cheap ($20–80/mo, one VPS). Architecture stays scalable but **do not over-engineer** for scale early. |
 
 ## Planned architecture (the big picture)
 
 Five principles drive every design choice — preserve them in any code you write:
 
-1. **Authoritative server** — the server is the single source of truth (anti-cheat, fairness). The client only renders and sends *intents*; it never decides outcomes.
+1. **Authoritative server** — the server is the single source of truth (anti-cheat, fairness). The client only renders and sends _intents_; it never decides outcomes.
 2. **Deterministic isomorphic rule core** — the engine is a pure function `reduce(state, event) → newState`, runnable identically on server (authority) and client (prediction/animation). This is the foundation for replays, prediction, and fairness verification. **Determinism is a hard invariant** — no wall-clock, no ambient randomness in the core; all randomness flows from the seeded PRNG below.
 3. **Stateful game rooms, sticky-by-room** — a match lives in one node's memory; all players of a match route to that node (no cross-node match sync). Periphery (auth, lobby, matchmaking, presence) is **stateless** and scales horizontally.
 4. **Event sourcing** — every action is an immutable event in a log. This gives replays, RNG-fairness audit, crash recovery, async mode, and analytics for free.
 5. **Provably fair RNG (commit-reveal)** — at match start the server generates a crypto `seed`, shows players `seedHash = SHA256(seed)` (commit); all randomness derives deterministically from `seed` + event stream index; after the match the `seed` is revealed so anyone can recompute every roll from the event log. This directly answers the competitor's biggest reputational failure (perceived rigged dice).
 
 ### Core engine contract (from spec §4.1)
+
 ```typescript
-function reduce(state: GameState, event: GameEvent): GameState;   // pure, deterministic
-function validate(state: GameState, intent: PlayerIntent, playerId: PlayerId):
-  | { ok: true; events: GameEvent[] }
-  | { ok: false; reason: RejectReason };
+function reduce(state: GameState, event: GameEvent): GameState; // pure, deterministic
+function validate(
+  state: GameState,
+  intent: PlayerIntent,
+  playerId: PlayerId,
+): { ok: true; events: GameEvent[] } | { ok: false; reason: RejectReason };
 ```
+
 - **Intent** = player's wish (from client) → **validated** server-side → only the resulting **Events** mutate state.
 - **Rule Profiles are config objects, not code branches** (`classic | balanced | blitz | deep`): randomness mode (`dice | balanced_deck`), catch-up toggles (friendlyRobber, robinHood, finalRound, hiddenVP, catchUpEvents), VP threshold, board size, turn timers, parallel phases. The "multi-mode platform" is one engine configured differently.
 - **Adaptive duration**: 60 min is a **hard ceiling** for synchronous online play. Lobby computes the profile (VP threshold, board size, timers, parallelism) from player count × mode to fit the target window; if a config risks exceeding 60 min, the engine lowers VP / tightens timers and warns in the lobby.
@@ -64,6 +69,7 @@ function validate(state: GameState, intent: PlayerIntent, playerId: PlayerId):
 ## Planned stack & repo layout (from spec §3, §10)
 
 Monorepo via **pnpm workspaces**:
+
 - `packages/core` (`@arch/core`) — pure-TS rule engine, **zero runtime deps** (reused on client & server; this is what must stay deterministic & isomorphic).
 - `packages/protocol` — shared WS/REST message types.
 - `packages/server` — Node.js + **Colyseus** (stateful rooms, state-sync, reconnect, matchmaker) + **Fastify** (REST/OpenAPI 3.1).
@@ -75,10 +81,12 @@ Data: **PostgreSQL** (users, ratings, match metadata, seeds) · **Redis** (prese
 Transport: **WSS** for realtime (turn-based → no UDP needed), **HTTPS/REST** for the rest. Serialization **JSON** at start (contributor-friendly) → MessagePack later if traffic demands.
 
 ## Tooling (planned — none exists yet)
+
 When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core determinism tests** (replay an event log → identical state), e2e, build. There are no build/test/lint commands to run today; create them with the monorepo skeleton.
 
 ## Roadmap anchor (spec §11)
-- **M0** — prototype & gate decisions: Pixi vs Three.js perf prototype, monorepo skeleton, CI, core determinism test. *(This is the next concrete work.)*
+
+- **M0** — prototype & gate decisions: Pixi vs Three.js perf prototype, monorepo skeleton, CI, core determinism test. _(This is the next concrete work.)_
 - **M1** — vertical slice: `@arch/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online.
 - **M2** — rule profiles + adaptive duration + catch-up + reconnect/grace/bot-fill + matchmaking/lobby/Redis presence + heuristic bots.
 - **M3** — ranked (Glicko-2)/seasons, social, spectator/replays/post-match analytics, 7–10 player modes.
@@ -86,6 +94,7 @@ When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core deter
 - **M5** — horizontal scale (only on demand).
 
 ## Things to get right (recurring product intent, so code serves it)
+
 - **Trade UI is the heart of the product**, not a feature — fast, error-proof, expressive (competitors lose users to misclicks here).
 - **No "karmic bans" for disconnects** — reconnect with ≥120s grace + bot-fill; safe leave/rejoin.
 - **Accessibility from the start** — resources must be distinguishable by more than color (colorblind modes); i18n (UA/RU/EN) baked in, not retrofitted.

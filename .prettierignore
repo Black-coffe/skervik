@@ -1,0 +1,34 @@
+# Build output
+dist/
+build/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Lock files (formatting these is destructive)
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Generated / vendored assets
+*.svg
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.woff
+*.woff2
+*.ttf
+
+# Markdown files managed by VULYK (prose-heavy, not code)
+memory/
+docs/
+
+# Vendored VULYK framework files — keep pristine for clean upstream updates
+.claude/
+bootstrap/
+templates/
+AGENTS.md
+CLAUDE.vulyk.md

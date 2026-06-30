@@ -1,4 +1,4 @@
-# Archipelago *(codename — final brand TBD)*
+# Archipelago _(codename — final brand TBD)_
 
 > An open-source, online **"explore — trade — settle"** game. Mechanically inspired
 > by the trade-build-settle genre, but a **fully independent product** — its own
@@ -9,7 +9,7 @@
 This repo currently holds the design docs, the architecture decisions, and the
 build plan. See the roadmap below.
 
-> ⚖️ **Legal note:** "CATAN" is a trademark of Catan GmbH. Game *mechanics* are not
+> ⚖️ **Legal note:** "CATAN" is a trademark of Catan GmbH. Game _mechanics_ are not
 > copyrightable, but brand/art/text are — so this project uses entirely original
 > naming, lore, and art and is **not affiliated with or derived from** the Catan
 > brand. See [ADR-0001](docs/adr/0001-license.md).
@@ -24,14 +24,14 @@ build plan. See the roadmap below.
 
 ## Decisions (locked)
 
-| Area | Choice |
-|---|---|
-| License | **AGPL-3.0** ([ADR-0001](docs/adr/0001-license.md)) |
-| Render engine | **Pixi.js v8** (2.5D) ([ADR-0002](docs/adr/0002-render-engine.md)) |
-| Rule core | **Deterministic isomorphic** TS engine ([ADR-0003](docs/adr/0003-deterministic-core.md)) |
-| Realtime stack | **Node + Colyseus + Fastify** ([ADR-0004](docs/adr/0004-realtime-stack.md)) |
-| Auth | guest + Google + Discord ([ADR-0005](docs/adr/0005-auth-providers.md)) |
-| Funding | Open Collective ([ADR-0006](docs/adr/0006-donations-provider.md)) |
+| Area           | Choice                                                                                   |
+| -------------- | ---------------------------------------------------------------------------------------- |
+| License        | **AGPL-3.0** ([ADR-0001](docs/adr/0001-license.md))                                      |
+| Render engine  | **Pixi.js v8** (2.5D) ([ADR-0002](docs/adr/0002-render-engine.md))                       |
+| Rule core      | **Deterministic isomorphic** TS engine ([ADR-0003](docs/adr/0003-deterministic-core.md)) |
+| Realtime stack | **Node + Colyseus + Fastify** ([ADR-0004](docs/adr/0004-realtime-stack.md))              |
+| Auth           | guest + Google + Discord ([ADR-0005](docs/adr/0005-auth-providers.md))                   |
+| Funding        | Open Collective ([ADR-0006](docs/adr/0006-donations-provider.md))                        |
 
 ## Tech stack
 

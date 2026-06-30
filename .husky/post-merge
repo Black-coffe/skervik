@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# VULYK: flag the codebase map as stale after merges so /vulyk-status surfaces it.
+# Ported from .git/hooks/post-merge (which is bypassed once core.hooksPath=.husky/_).
+set -u
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -d "$ROOT/memory/map" ] && date +%Y-%m-%dT%H:%M:%S > "$ROOT/memory/map/.stale"
+exit 0

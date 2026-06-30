@@ -40,19 +40,19 @@ pnpm --filter @arch/client dev   # run the client locally
 
 ## Repository layout
 
-| Path | What |
-|---|---|
-| `packages/core` (`@arch/core`) | Pure deterministic rule engine — **zero runtime deps** |
-| `packages/protocol` | Shared WS/REST message types (zod) |
-| `packages/server` | Colyseus rooms + Fastify REST |
-| `packages/client` | Pixi.js v8 + React/Zustand + Vite |
-| `packages/bots` | AI (heuristic → MCTS) |
-| `docs/specs/` · `docs/adr/` · `docs/wiki/` | Plans/stories · decisions · invariants |
+| Path                                       | What                                                   |
+| ------------------------------------------ | ------------------------------------------------------ |
+| `packages/core` (`@arch/core`)             | Pure deterministic rule engine — **zero runtime deps** |
+| `packages/protocol`                        | Shared WS/REST message types (zod)                     |
+| `packages/server`                          | Colyseus rooms + Fastify REST                          |
+| `packages/client`                          | Pixi.js v8 + React/Zustand + Vite                      |
+| `packages/bots`                            | AI (heuristic → MCTS)                                  |
+| `docs/specs/` · `docs/adr/` · `docs/wiki/` | Plans/stories · decisions · invariants                 |
 
 ## Hard invariants (a PR that breaks these will be rejected)
 
 1. **Deterministic core** — no `Date.now()`, `new Date()`, `Math.random()`, I/O, or iteration-order-dependent logic in `@arch/core`. Randomness/time enter only as event data from the seeded PRNG. ([wiki](docs/wiki/deterministic-core.md), [ADR-0003](docs/adr/0003-deterministic-core.md))
-2. **Server authority** — clients send *intents*; only server-emitted *events* mutate state; hidden info is never sent to clients. ([wiki](docs/wiki/server-authority.md))
+2. **Server authority** — clients send _intents_; only server-emitted _events_ mutate state; hidden info is never sent to clients. ([wiki](docs/wiki/server-authority.md))
 3. **Provably fair RNG** — commit-reveal seed; all randomness recomputable from the event log. ([wiki](docs/wiki/fair-rng-commit-reveal.md))
 4. **No pay-to-win** — gameplay is never paywalled; monetization (if any) is cosmetic-only.
 

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "isolatedModules": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "esModuleInterop": false,
+    "baseUrl": ".",
+    "paths": {
+      "@arch/core": ["./packages/core/src/index.ts"],
+      "@arch/protocol": ["./packages/protocol/src/index.ts"],
+      "@arch/server": ["./packages/server/src/index.ts"],
+      "@arch/client": ["./packages/client/src/index.ts"],
+      "@arch/bots": ["./packages/bots/src/index.ts"]
+    }
+  }
+}
