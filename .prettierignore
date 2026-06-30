@@ -3,6 +3,9 @@ dist/
 build/
 coverage/
 
+# Local tool caches (not committed; ignore so `prettier --check .` stays clean)
+.impeccable/
+
 # Dependencies
 node_modules/
 

@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # npm/pnpm workspace — Dependabot reads pnpm-lock.yaml from the repo root.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # Collapse the dev-tooling churn (eslint/prettier/vitest/tsup/types) into
+      # one PR per week instead of a dozen.
+      dev-dependencies:
+        dependency-type: development
+        patterns: ['*']
+
+  # Keep the GitHub Actions used by our workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: ci

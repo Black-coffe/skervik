@@ -12,6 +12,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
+    "check:core-deps": "node scripts/check-core-no-runtime-deps.mjs",
     "format": "prettier --write .",
     "prepare": "husky"
   },
