@@ -103,3 +103,15 @@ domain notes in `docs/wiki/`. The full constitution (laws, complexity routing,
 token economy, memory protocol) is imported below.
 
 @CLAUDE.vulyk.md
+
+## Project profile (VULYK bootstrap)
+
+- **Project:** Archipelago — OSS online "explore-trade-settle" game (Catan-inspired, independent). One sentence: see `docs/specs/roadmap/ROADMAP.md`.
+- **Status:** greenfield — no code yet; plan-first. Master plan: `docs/specs/roadmap/ROADMAP.md`. Current milestone: **M0** (`docs/specs/m0-foundation/`).
+- **Stack (planned, ADR-0002/0003/0004):** TypeScript monorepo (pnpm workspaces) — `@arch/core` (pure deterministic engine), `@arch/protocol` (zod), `@arch/server` (Colyseus + Fastify), `@arch/client` (Pixi.js v8 + React/Zustand + Vite), `@arch/bots`. Node 22.
+- **Verification (real after M0 E0.2; targets until then):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @arch/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
+- **Hard invariants (never regress):** deterministic isomorphic core (no wall-clock / no ambient RNG); authoritative server; commit-reveal RNG; event sourcing; rule profiles as config not branches. See `docs/wiki/`.
+- **No-go zones (once they exist):** generated output (`dist/`,`build/`), lockfiles, migration history, vendored art assets.
+- **Budget posture:** BALANCED (cap ~4 parallel workers). `TOP_MODEL = claude-opus-4-8` (per constitution).
+- **Branch/commit:** conventional commits; agents may stage + commit to feature branches; human merges. Docs in RU; code/identifiers in EN.
+- **Test reality:** Vitest will be the runner (M0 E0.2) — keep `worker-test`.
