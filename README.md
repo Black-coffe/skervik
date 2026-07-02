@@ -42,9 +42,27 @@ TypeScript monorepo (pnpm): `@skervik/core` (pure rules) · `@skervik/protocol` 
 `@skervik/server` (Colyseus + Fastify) · `@skervik/client` (Pixi.js v8 + React + Vite) ·
 `@skervik/bots`.
 
+## Package status (honest read of "tests passing")
+
+CI is green across all five packages, but that doesn't mean all five carry equal
+weight yet — only `core` has real logic behind it:
+
+| Package             | State                                                                                                                                                                     | Real implementation lands at                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `@skervik/core`     | Real: deterministic engine contract (`reduce`/`validate`), seeded PRNG, event-log replay. No game rules (resource production, building, trading, robber) yet — that's M1. | engine contract done (E0.5); game rules → [`E1.1`–`E1.3`](docs/specs/roadmap/ROADMAP.md)                           |
+| `@skervik/protocol` | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`S1.5.1`](docs/specs/roadmap/ROADMAP.md)                                                                          |
+| `@skervik/server`   | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E1.4`](docs/specs/roadmap/ROADMAP.md)                                                                            |
+| `@skervik/client`   | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E0.4`](docs/specs/roadmap/ROADMAP.md) (render prototype) → [`E1.6`](docs/specs/roadmap/ROADMAP.md) (full client) |
+| `@skervik/bots`     | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E2.4`](docs/specs/roadmap/ROADMAP.md)                                                                            |
+
+The "one smoke test" on the four skeleton packages only asserts the package
+builds and its export exists — it's a package-exists check, not logic
+coverage. So the test count in CI isn't a proxy for how much game/network
+logic works; that's `core`'s test suite alone.
+
 ## Quickstart
 
-> Available once the M0 monorepo skeleton lands (story S0.2.1).
+> The client currently renders an M0 placeholder page — see "Package status" above.
 
 ```bash
 pnpm i
