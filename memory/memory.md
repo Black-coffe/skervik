@@ -4,24 +4,35 @@
      Maintained by drone-docs (pointers) and librarian (hygiene). Humans welcome too. -->
 
 ## ▶ Resume here (next session)
-- **NEXT ACTION: build E0.5 (core engine).** 4 stories materialized & approved in
-  `docs/specs/m0-foundation/S0.5.1..S0.5.4`. Build **sequentially** (all touch `packages/core/src` + `index.ts`):
-  S0.5.1 types → S0.5.2 reduce/validate → S0.5.3 seeded PRNG → S0.5.4 event-log + replay + golden fixture.
-  Then full verify + `lead-review` + commit. Run: `/vulyk-build` on E0.5 (Queen dispatches worker-code per story).
-- After E0.5: **E0.3** (CI — first create GitHub repo `Black-coffe/skervik`, then GH Actions) · **E0.4** (Pixi 2.5D prototype, validates ADR-0002).
+- **NEXT ACTION: execute `docs/specs/audit/FIX-PLAN-2026-07.md`** (audit 2026-07-02 @ 2d70e48).
+  Follow its §5 executor rules (one item = one branch/commit, scope-locked, CI green);
+  recommended order §6: A3 → A4 → A5 → B1 → B2 → **A1 (wire rollDie into validate.ts —
+  flagship fair-RNG is disconnected)** → A2 → B7 → B3 → B6 → B5 (B4 blocked on E0.4).
+- Then **E0.4** (Pixi 2.5D perf prototype — the LAST open M0 gate, validates ADR-0002): `/vulyk-plan E0.4`.
+- Then **M1** per `docs/specs/roadmap/ROADMAP-2026-H2.md` (month-by-month: Aug board+economy
+  E1.1/E1.2 → Sep robber/trade/victory E1.3 → Oct server+commit-reveal E1.4/E1.5 → Nov client
+  E1.6 → Dec M1 gate + closed alpha + M2 start).
 
 ## Project
 - **Skervik** — OSS online "explore-trade-settle" game (Catan-inspired, independent). Domain skervik.com (reg 2026-06-30, exp 2028).
+- Repo LIVE: github.com/Black-coffe/skervik (public, AGPL-3.0, CI green).
 - Monorepo: pnpm 10.29.1, Node 22, TS, scope `@skervik/*`. Windows dev — see global memory `vulyk-windows-hooks`.
 
 ## Active plan
-- Roadmap: `docs/specs/roadmap/ROADMAP.md` (zero → 1.0). Milestone **M0**, detail `docs/specs/m0-foundation/plan.md`.
-- M0: **E0.1 ✅** (governance+name) · **E0.2 ✅** (monorepo) · E0.3 ⏳ · E0.4 ⏳ · **E0.5 ⏳ NEXT**.
+- Master roadmap: `docs/specs/roadmap/ROADMAP.md` (zero → 1.0) · **H2-2026 plan:
+  `docs/specs/roadmap/ROADMAP-2026-H2.md`** (Jul–Dec, 7 directions: product/art/marketing/
+  SMM/funding/infra/process, KPIs, risks) · **fix backlog: `docs/specs/audit/FIX-PLAN-2026-07.md`**.
+- M0: **E0.1 ✅ · E0.2 ✅ · E0.3 ✅ (CI) · E0.5 ✅ (core contract) · E0.4 ⏳ LAST GATE**.
 - Why/what: `docs/catan-online-research-phase.md` · `docs/catan-online-tech-spec-phase2.md`.
 
-## Codebase map (skeleton only — NO game logic yet)
-- `packages/core` `@skervik/core` — pure engine, **zero runtime deps** (only a version placeholder).
-- `packages/{protocol,server,client,bots}` — `@skervik/*` skeletons; client = Vite+React+PWA placeholder page.
+## Codebase map (core is real; other 4 packages are stubs — NO game rules yet)
+- `packages/core` `@skervik/core` — REAL engine infra, **zero runtime deps** (CI-guarded):
+  types (GameState/GameEvent/PlayerIntent), pure reduce/validate, seeded PRNG (mulberry32
+  counter-mode, `rng.ts`), ndjson replay + golden determinism fixture. 36 tests.
+  **Known gap:** `validate.ts:64` dice = placeholder formula, NOT `rollDie` (FIX-PLAN A1).
+  Game rules (resources/build/trade/robber/VP) = 0%, scheduled M1.
+- `packages/{protocol,server,client,bots}` — stubs (version const + smoke test); real work:
+  protocol S1.5.1, server E1.4, client E0.4/E1.6, bots E2.4.
 - Tooling: ESLint flat (+ADR-0003 core guard), Prettier, Vitest 4, tsup(libs)+Vite(client), husky+commitlint.
 
 ## Decisions (docs/adr/) — all accepted
@@ -30,7 +41,7 @@
 ## Wiki (docs/wiki/) — hard invariants, enforce in every core change
 - `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md`.
 
-## Verification (REAL — all green as of 2026-06-30)
+## Verification (REAL — all green as of 2026-07-02, verified by audit)
 - `pnpm -r typecheck` · `pnpm -r lint` · `pnpm -r test` · `pnpm -r build` (core: `pnpm --filter @skervik/core test`).
 
 ## No-go zones

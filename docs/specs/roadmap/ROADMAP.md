@@ -23,6 +23,14 @@ horizon: zero → 1.0 public release
 > tier `[T0–T4]`, and acceptance criteria. Stories are materialized into
 > `docs/specs/<slug>/` per epic, **just-in-time** (via `/vulyk-plan`) right
 > before they're built — M0 is already materialized in `docs/specs/m0-foundation/`.
+>
+> **Related plans (2026-07-02):** `ROADMAP-2026-H2.md` (holistic Jul–Dec 2026 plan —
+> product/art/marketing/community/funding/infra — anchored to this file's epic IDs;
+> pulls a lore primer, logo/concept art, and an informal trade-dress check forward
+> of M4 as H2 additions, without changing this master plan) and
+> `../audit/FIX-PLAN-2026-07.md` (July hygiene backlog from the full audit; its A2
+> closes the deferred S0.3.2 named-determinism-gate, A1 wires the seeded PRNG into
+> `validate.ts`).
 
 ---
 

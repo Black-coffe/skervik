@@ -2,12 +2,27 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status: SPEC PHASE — no code yet
+## Project status: M0 foundation — engine core real, no gameplay yet (updated 2026-07-02)
 
-This repo currently contains **only design documents**, no source code, no build
-tooling, and no git history. The two specs in `docs/` are the source of truth and
-define everything below. Treat them as the authoritative plan; when you write the
-first code, it should realize this plan (start with M0 scaffolding — see Roadmap).
+Live pnpm monorepo at github.com/Black-coffe/skervik, CI green. M0 is almost
+closed: E0.1 governance, E0.2 monorepo, E0.3 CI, E0.5 deterministic engine
+contract (types, reduce/validate, seeded PRNG, event-log replay + golden
+determinism test) are done. **E0.4 (Pixi.js perf prototype) is the last open M0
+gate.** 4 of 5 packages (`protocol/server/client/bots`) are stubs; zero game
+rules exist yet (that's M1). Known flagship gap: the seeded PRNG is built but
+not wired into `validate.ts` (dice use a placeholder formula) — FIX-PLAN item A1.
+
+**Execution plan — when resuming work, start here (no other context needed):**
+
+1. `docs/specs/audit/FIX-PLAN-2026-07.md` — remediation backlog from the 2026-07-02
+   audit (A1–A5 technical, B1–B7 product). Execute per its §5 executor instructions,
+   recommended order in §6.
+2. `docs/specs/roadmap/ROADMAP-2026-H2.md` — holistic Jul–Dec 2026 plan (7 directions:
+   product → M1 slice + closed alpha in Dec, art/brand, marketing, SMM/community,
+   funding, infra, Claude Code process), anchored to master-roadmap epic IDs.
+3. `docs/specs/roadmap/ROADMAP.md` — engineering master plan M0→1.0 (milestones/epics/stories).
+
+The two specs in `docs/` remain the source of truth for _what & why_:
 
 - `docs/catan-online-research-phase.md` — Phase 1: product research & vision (player pains → feature answers).
 - `docs/catan-online-tech-spec-phase2.md` — Phase 2: full technical spec (architecture, stack, data model, API, roadmap). **Read this before designing anything.**
@@ -35,7 +50,7 @@ explorers"). This is why the product exists as its own world.
 
 | Decision           | Value                                                                                                                                                         |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: AGPL-3.0 (leaning) vs MIT — TBD.                                            |
+| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: **AGPL-3.0** (locked, ADR-0001). Donations: Open Collective (ADR-0006).     |
 | Setting            | **A — archipelago of explorers** (sea trade, islands).                                                                                                        |
 | Rendering          | **2.5D isometric** — Pixi.js v8 primary, Three.js only if a perf prototype demands 3D depth.                                                                  |
 | Scope at launch    | **Multi-mode platform from day one** — modes are config, not separate builds; complexity is absorbed by onboarding, not by cutting features.                  |
@@ -116,11 +131,11 @@ token economy, memory protocol) is imported below.
 ## Project profile (VULYK bootstrap)
 
 - **Project:** Skervik — OSS online "explore-trade-settle" game (Catan-inspired, independent). One sentence: see `docs/specs/roadmap/ROADMAP.md`.
-- **Status:** greenfield — no code yet; plan-first. Master plan: `docs/specs/roadmap/ROADMAP.md`. Current milestone: **M0** (`docs/specs/m0-foundation/`).
+- **Status:** M0 foundation (repo live, CI green; E0.4 = last open gate). Master plan: `docs/specs/roadmap/ROADMAP.md` · H2-2026 plan: `docs/specs/roadmap/ROADMAP-2026-H2.md` · fix backlog: `docs/specs/audit/FIX-PLAN-2026-07.md`. Current milestone: **M0 → M1** (`docs/specs/m0-foundation/`).
 - **Stack (planned, ADR-0002/0003/0004):** TypeScript monorepo (pnpm workspaces) — `@skervik/core` (pure deterministic engine), `@skervik/protocol` (zod), `@skervik/server` (Colyseus + Fastify), `@skervik/client` (Pixi.js v8 + React/Zustand + Vite), `@skervik/bots`. Node 22.
-- **Verification (real after M0 E0.2; targets until then):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @skervik/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
+- **Verification (real, all green as of 2026-07-02):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @skervik/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
 - **Hard invariants (never regress):** deterministic isomorphic core (no wall-clock / no ambient RNG); authoritative server; commit-reveal RNG; event sourcing; rule profiles as config not branches. See `docs/wiki/`.
 - **No-go zones (once they exist):** generated output (`dist/`,`build/`), lockfiles, migration history, vendored art assets.
 - **Budget posture:** BALANCED (cap ~4 parallel workers). `TOP_MODEL = claude-opus-4-8` (per constitution).
 - **Branch/commit:** conventional commits; agents may stage + commit to feature branches; human merges. Docs in RU; code/identifiers in EN.
-- **Test reality:** Vitest will be the runner (M0 E0.2) — keep `worker-test`.
+- **Test reality:** Vitest 4 is the runner; 41 tests green (36 real in core, 5 stub smoke-tests) — keep `worker-test`.
