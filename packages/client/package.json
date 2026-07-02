@@ -2,7 +2,7 @@
   "name": "@skervik/client",
   "version": "0.0.1",
   "private": true,
-  "description": "Pixi.js v8 2.5D canvas + React/Zustand HUD + Vite/PWA",
+  "description": "2.5D game client — React shell + Vite/PWA build (Pixi.js v8 rendering & Zustand state planned, E0.4/E1.6)",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",

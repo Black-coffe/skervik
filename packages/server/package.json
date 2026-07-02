@@ -2,7 +2,7 @@
   "name": "@skervik/server",
   "version": "0.0.1",
   "private": true,
-  "description": "Colyseus stateful rooms + Fastify REST (authoritative server)",
+  "description": "Authoritative server (Colyseus stateful rooms + Fastify REST planned, E1.4)",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
