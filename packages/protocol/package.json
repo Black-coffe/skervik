@@ -1,7 +1,7 @@
 {
   "name": "@skervik/protocol",
   "version": "0.0.1",
-  "description": "Shared WS/REST message types and runtime validation",
+  "description": "Shared WS/REST message types (zod runtime validation planned, S1.5.1)",
   "type": "module",
   "types": "./src/index.ts",
   "exports": {
