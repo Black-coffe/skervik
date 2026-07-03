@@ -6,30 +6,37 @@
 import {
   type BoardTopology,
   buildTopology,
+  type EdgeId,
   type EdgeTopology,
   findEdge,
   findVertex,
   type VertexTopology,
 } from './board.js';
+import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
 import { gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
   BuildingsState,
   CityBuiltEvent,
+  DevCardBoughtEvent,
+  DevCardKind,
   DiceRolledEvent,
   GameEvent,
   GamePhase,
   GameState,
+  MonopolyPlayedEvent,
   PlayerId,
   PlayerIntent,
   PlayerState,
   RejectReason,
   ResourcesProducedEvent,
   ResourceType,
+  RoadBuildingPlayedEvent,
   RoadBuiltEvent,
   RoadPlacedEvent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
   TurnEndedEvent,
+  YearOfPlentyPlayedEvent,
 } from './types.js';
 
 /**
@@ -565,6 +572,148 @@ export function validate(
         cost,
       };
       return { ok: true, events: [event] };
+    }
+    case 'intent.buyDevCard': {
+      const cost = CLASSIC_DEV_CARD_PROFILE.buyCost;
+      const player = findPlayer(state, playerId);
+      if (!player || !canAfford(player.resources, cost)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const deckSize = CLASSIC_DEV_CARD_PROFILE.deck.length;
+      const remainingBefore = state.devDeckRemaining ?? deckSize;
+      if (remainingBefore <= 0) {
+        return reject('DECK_EMPTY');
+      }
+
+      // Same "recompute from seed, never store the order" discipline as
+      // dice rolls (`devcards.ts` docstring) — the draw index is simply how
+      // many cards have already left the deck.
+      const drawIndex = deckSize - remainingBefore;
+      const card = shuffledDevDeck(seed)[drawIndex] as DevCardKind;
+
+      const event: DevCardBoughtEvent = {
+        type: 'devCard.bought',
+        index: state.eventIndex,
+        playerId,
+        card,
+        cost,
+        deckRemaining: remainingBefore - 1,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.playDevCard': {
+      if (intent.card === 'knight') {
+        // TODO(S1.3.1): the knight's effect (move robber + steal) is a
+        // robber action — S1.3.1 owns robber relocation for both the
+        // 7-roll and the knight, and will replace this unconditional
+        // rejection with the real play branch. Held/bought knight counts
+        // are already tracked in `state.devCards[playerId].held.knight`
+        // (incremented on buy) so S1.3.1/S1.3.4's largest-army calc has
+        // the data waiting.
+        return reject('KNIGHT_DEFERRED');
+      }
+      if (state.devCardPlayedThisTurn) {
+        return reject('DEV_CARD_ALREADY_PLAYED');
+      }
+      const holdings = state.devCards?.[playerId];
+      const held = holdings?.held[intent.card] ?? 0;
+      if (held <= 0) {
+        return reject('CARD_NOT_HELD');
+      }
+      const boughtThisTurn = holdings?.boughtThisTurn[intent.card] ?? 0;
+      if (held - boughtThisTurn <= 0) {
+        return reject('BOUGHT_THIS_TURN');
+      }
+
+      switch (intent.card) {
+        case 'roadBuilding': {
+          const buildings = state.buildings ?? { settlements: {}, roads: {} };
+          const workingRoads: Record<EdgeId, PlayerId> = { ...buildings.roads };
+          let ownedRoads = countOwned(buildings.roads, playerId);
+          const edgeIds: EdgeId[] = [];
+          for (const edgeId of intent.edgeIds) {
+            if (edgeIds.length >= 2) break; // road-building grants at most 2 roads
+            const edge = findEdge(topology(), edgeId);
+            if (!edge) {
+              return reject('MALFORMED_INTENT');
+            }
+            if (workingRoads[edgeId] !== undefined) continue; // occupied — place fewer
+            if (ownedRoads >= CLASSIC_BUILD_PROFILE.supply.roads) break; // supply exhausted
+            if (
+              !touchesOwnNetwork(edge, playerId, {
+                settlements: buildings.settlements,
+                roads: workingRoads,
+                ...(buildings.cities ? { cities: buildings.cities } : {}),
+              })
+            ) {
+              continue; // detached from the network so far — place fewer
+            }
+            workingRoads[edgeId] = playerId;
+            ownedRoads += 1;
+            edgeIds.push(edgeId);
+          }
+
+          const event: RoadBuildingPlayedEvent = {
+            type: 'devCard.roadBuildingPlayed',
+            index: state.eventIndex,
+            playerId,
+            edgeIds,
+          };
+          return { ok: true, events: [event] };
+        }
+        case 'yearOfPlenty': {
+          const bank = { ...(state.bank ?? {}) };
+          const requested: Record<ResourceType, number> = {};
+          for (const resource of intent.resources) {
+            requested[resource] = (requested[resource] ?? 0) + 1;
+          }
+          for (const [resource, amount] of Object.entries(requested)) {
+            const available =
+              bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+            if (available < amount) {
+              return reject('BANK_EXHAUSTED');
+            }
+          }
+          for (const [resource, amount] of Object.entries(requested)) {
+            bank[resource] =
+              (bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource) - amount;
+          }
+
+          const event: YearOfPlentyPlayedEvent = {
+            type: 'devCard.yearOfPlentyPlayed',
+            index: state.eventIndex,
+            playerId,
+            resources: requested,
+            bank,
+          };
+          return { ok: true, events: [event] };
+        }
+        case 'monopoly': {
+          const resource = intent.resource;
+          const transfers: Record<PlayerId, number> = {};
+          for (const other of state.players) {
+            if (other.id === playerId) continue;
+            const amount = other.resources[resource] ?? 0;
+            if (amount > 0) transfers[other.id] = amount;
+          }
+
+          const event: MonopolyPlayedEvent = {
+            type: 'devCard.monopolyPlayed',
+            index: state.eventIndex,
+            playerId,
+            resource,
+            transfers,
+          };
+          return { ok: true, events: [event] };
+        }
+        default: {
+          const exhaustive: never = intent;
+          throw new Error(
+            `unhandled playDevCard card kind: ${JSON.stringify(exhaustive)}`,
+          );
+        }
+      }
     }
     default: {
       const exhaustive: never = intent;

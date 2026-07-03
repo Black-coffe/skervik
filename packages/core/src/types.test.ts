@@ -5,24 +5,33 @@ import type {
   BuildCityIntent,
   BuildRoadIntent,
   BuildSettlementIntent,
+  BuyDevCardIntent,
   CityBuiltEvent,
+  DevCardBoughtEvent,
   DiceRolledEvent,
   EndTurnIntent,
   GameEvent,
   GameState,
   MatchStartedEvent,
+  MonopolyPlayedEvent,
   PlaceRoadIntent,
   PlaceSettlementIntent,
   PlayerIntent,
   PlayerState,
+  PlayKnightIntent,
+  PlayMonopolyIntent,
+  PlayRoadBuildingIntent,
+  PlayYearOfPlentyIntent,
   RejectReason,
   ResourcesProducedEvent,
+  RoadBuildingPlayedEvent,
   RoadBuiltEvent,
   RoadPlacedEvent,
   RollDiceIntent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
   TurnEndedEvent,
+  YearOfPlentyPlayedEvent,
 } from './types.js';
 
 const player: PlayerState = {
@@ -117,6 +126,34 @@ describe('GameEvent', () => {
       vertexId: 'vertex-1',
       cost: { iron: 3, barley: 2 },
     },
+    {
+      type: 'devCard.bought',
+      index: 10,
+      playerId: 'player-1',
+      card: 'knight',
+      cost: { fleece: 1, barley: 1, iron: 1 },
+      deckRemaining: 24,
+    },
+    {
+      type: 'devCard.roadBuildingPlayed',
+      index: 11,
+      playerId: 'player-1',
+      edgeIds: ['edge-1', 'edge-2'],
+    },
+    {
+      type: 'devCard.yearOfPlentyPlayed',
+      index: 12,
+      playerId: 'player-1',
+      resources: { timber: 2 },
+      bank: { timber: 17 },
+    },
+    {
+      type: 'devCard.monopolyPlayed',
+      index: 13,
+      playerId: 'player-1',
+      resource: 'timber',
+      transfers: { 'player-2': 3 },
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -172,6 +209,26 @@ describe('GameEvent', () => {
           expect(e.cost).toEqual({ iron: 3, barley: 2 });
           break;
         }
+        case 'devCard.bought': {
+          const e: DevCardBoughtEvent = event;
+          expect(e.card).toBe('knight');
+          break;
+        }
+        case 'devCard.roadBuildingPlayed': {
+          const e: RoadBuildingPlayedEvent = event;
+          expect(e.edgeIds).toEqual(['edge-1', 'edge-2']);
+          break;
+        }
+        case 'devCard.yearOfPlentyPlayed': {
+          const e: YearOfPlentyPlayedEvent = event;
+          expect(e.resources).toEqual({ timber: 2 });
+          break;
+        }
+        case 'devCard.monopolyPlayed': {
+          const e: MonopolyPlayedEvent = event;
+          expect(e.transfers).toEqual({ 'player-2': 3 });
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -194,6 +251,26 @@ describe('PlayerIntent', () => {
     { type: 'intent.buildRoad', playerId: 'player-1', edgeId: 'edge-1' },
     { type: 'intent.buildSettlement', playerId: 'player-1', vertexId: 'vertex-1' },
     { type: 'intent.buildCity', playerId: 'player-1', vertexId: 'vertex-1' },
+    { type: 'intent.buyDevCard', playerId: 'player-1' },
+    { type: 'intent.playDevCard', playerId: 'player-1', card: 'knight' },
+    {
+      type: 'intent.playDevCard',
+      playerId: 'player-1',
+      card: 'roadBuilding',
+      edgeIds: ['edge-1'],
+    },
+    {
+      type: 'intent.playDevCard',
+      playerId: 'player-1',
+      card: 'yearOfPlenty',
+      resources: ['timber', 'clay'],
+    },
+    {
+      type: 'intent.playDevCard',
+      playerId: 'player-1',
+      card: 'monopoly',
+      resource: 'timber',
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -234,6 +311,42 @@ describe('PlayerIntent', () => {
           expect(i.vertexId).toBe('vertex-1');
           break;
         }
+        case 'intent.buyDevCard': {
+          const i: BuyDevCardIntent = intent;
+          expect(i.playerId).toBe('player-1');
+          break;
+        }
+        case 'intent.playDevCard': {
+          switch (intent.card) {
+            case 'knight': {
+              const i: PlayKnightIntent = intent;
+              expect(i.card).toBe('knight');
+              break;
+            }
+            case 'roadBuilding': {
+              const i: PlayRoadBuildingIntent = intent;
+              expect(i.edgeIds).toContain('edge-1');
+              break;
+            }
+            case 'yearOfPlenty': {
+              const i: PlayYearOfPlentyIntent = intent;
+              expect(i.resources).toEqual(['timber', 'clay']);
+              break;
+            }
+            case 'monopoly': {
+              const i: PlayMonopolyIntent = intent;
+              expect(i.resource).toBe('timber');
+              break;
+            }
+            default: {
+              const exhaustive: never = intent;
+              throw new Error(
+                `unhandled playDevCard card kind: ${JSON.stringify(exhaustive)}`,
+              );
+            }
+          }
+          break;
+        }
         default: {
           const exhaustive: never = intent;
           throw new Error(`unhandled intent type: ${JSON.stringify(exhaustive)}`);
@@ -258,6 +371,12 @@ describe('RejectReason', () => {
       'NOT_CONNECTED',
       'NOT_OWN_SETTLEMENT',
       'SUPPLY_EXHAUSTED',
+      'DECK_EMPTY',
+      'CARD_NOT_HELD',
+      'BOUGHT_THIS_TURN',
+      'DEV_CARD_ALREADY_PLAYED',
+      'KNIGHT_DEFERRED',
+      'BANK_EXHAUSTED',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');
