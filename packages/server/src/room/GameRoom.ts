@@ -1,10 +1,12 @@
 // @skervik/server — the authoritative game room (S1.4.1 shell + S1.4.2
-// intent pipeline + S1.4.3 commit-reveal, ADR-0009). Holds the complete plain
-// `@skervik/core` `GameState` + a private crypto seed in room memory; the
-// `@colyseus/schema` mirrors ONLY the public lobby/late-join projection
-// (Fork 1). Gameplay flows as `event.batch` broadcasts of server-validated
-// events — never through the Schema. The secret seed is revealed to match
-// metadata ONLY after `game.ended` (S1.4.3); no ndjson persistence (S1.4.4).
+// intent pipeline + S1.4.3 commit-reveal + S1.4.4b durable persist, ADR-0009).
+// Holds the complete plain `@skervik/core` `GameState` + a private crypto seed
+// in room memory; the `@colyseus/schema` mirrors ONLY the public lobby/late-join
+// projection (Fork 1). Gameplay flows as `event.batch` broadcasts of
+// server-validated events — never through the Schema. Each validated batch is
+// PERSISTED to the event log BEFORE it is committed/broadcast (S1.4.4b): no
+// client ever observes an event that was not durably recorded first. The secret
+// seed is revealed to match metadata ONLY after `game.ended` (S1.4.3).
 import {
   type GameState,
   type PlayerId,
@@ -22,7 +24,7 @@ import { type Client, Room } from 'colyseus';
 import { InMemoryMatchMetadataStore, type MatchMetadataStore } from '../matchMetadata.js';
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
 import { generateSeed, sha256Hex } from '../seed.js';
-import { type GameEventSink, InMemoryEventSink } from './eventSink.js';
+import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
 const DEFAULT_MAX_SEATS = 4;
@@ -30,11 +32,20 @@ const DEFAULT_MAX_SEATS = 4;
 export interface GameRoomOptions {
   readonly maxSeats?: number;
   /**
-   * Where validated events are appended before broadcast (S1.4.2 seam).
-   * Defaults to an in-memory buffer; S1.4.4 injects the durable ndjson writer
-   * here without touching pipeline logic.
+   * Where validated events are appended before broadcast (S1.4.2 seam). When
+   * given, it wins over `matchesDir`; tests inject an in-memory buffer here.
+   * When omitted, the room builds an {@link FsEventSink} if `matchesDir` is set
+   * (production), else falls back to an in-memory buffer (the test/dev default,
+   * so no run touches the filesystem unless it asked to).
    */
   readonly sink?: GameEventSink;
+  /**
+   * Base directory for the durable ndjson log (S1.4.4b). When set (and no
+   * explicit `sink` is given), the room writes each validated batch to
+   * `{matchesDir}/{matchId}/events.ndjson` via {@link FsEventSink}. Production
+   * wiring passes this through `createGameServer({ matchesDir })`.
+   */
+  readonly matchesDir?: string;
   /**
    * Where the secret seed is revealed after `game.ended` (S1.4.3 seam).
    * Defaults to an in-memory store; S1.7.3 injects the durable
@@ -64,10 +75,10 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #seedRevealed = false;
 
   /**
-   * The log-append seam (S1.4.2): every validated batch is handed here BEFORE
-   * broadcast. Public so a test can read what the pipeline appended; S1.4.4
-   * swaps the default in-memory buffer for the durable ndjson writer via the
-   * `sink` room option.
+   * The log-append seam (S1.4.2): every validated batch is handed here and
+   * awaited BEFORE broadcast/commit. Public so a test can read/replace what the
+   * pipeline appended; production uses the durable {@link FsEventSink} (S1.4.4b)
+   * selected by the `matchesDir` room option, tests inject an in-memory buffer.
    */
   eventSink!: GameEventSink;
 
@@ -81,7 +92,15 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
 
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
-    this.eventSink = options?.sink ?? new InMemoryEventSink();
+    // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
+    // otherwise `matchesDir` (production) selects the durable ndjson writer keyed
+    // to this room's id; with neither, the in-memory default keeps dev/test runs
+    // off the filesystem.
+    this.eventSink =
+      options?.sink ??
+      (options?.matchesDir !== undefined
+        ? new FsEventSink({ matchId: this.roomId, matchesDir: options.matchesDir })
+        : new InMemoryEventSink());
     this.matchMetadataStore = options?.metadataStore ?? new InMemoryMatchMetadataStore();
 
     this.#seed = generateSeed();
@@ -169,14 +188,23 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     const playerId = seat.playerId as PlayerId;
 
     // `validate` never throws for an EXPECTED rejection, but its exhaustiveness
-    // guard DOES throw on a structurally-unknown intent type. Wrap so no input
-    // can throw out of the handler; state is assigned only AFTER a successful
-    // reduce, so a throw here leaves the authoritative state untouched.
+    // guard DOES throw on a structurally-unknown intent type. Narrow the catch
+    // (NIT-2): ONLY that known "unhandled intent type" throw maps to
+    // MALFORMED_INTENT. A genuinely unexpected throw is NOT silently relabelled
+    // as a malformed intent — it is debug-logged (surfaced) and answered with the
+    // same private `intent.error` this pipeline uses for a persist failure, so it
+    // is still defensive: nothing escapes this voided handler as an unhandled
+    // rejection / node crash, it's just no longer misreported as MALFORMED_INTENT.
     let result: ReturnType<typeof validate>;
     try {
       result = validate(this.gameState, message.payload, playerId, this.#seed);
-    } catch {
-      this.#sendReject(client, 'MALFORMED_INTENT');
+    } catch (error) {
+      if (isUnknownIntentError(error)) {
+        this.#sendReject(client, 'MALFORMED_INTENT');
+        return;
+      }
+      this.#logInternalError('validate threw unexpectedly', error);
+      this.#sendInternalError(client);
       return;
     }
 
@@ -187,54 +215,132 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       return;
     }
 
-    // Authoritative fold: only server-validated events change state.
-    this.gameState = result.events.reduce(
-      (state, event) => reduce(state, event),
-      this.gameState,
-    );
+    // --- Persist-before-commit pipeline (S1.4.4b / NIT-1) -------------------
+    // The whole state-advancing tail is wrapped so nothing (a rejecting durable
+    // sink, an unexpected throw) can either advance state past an unrecorded
+    // event OR escape this voided handler as an unhandled rejection / node
+    // crash. Ordering invariant: PERSIST first, and only on success COMMIT +
+    // broadcast — no client ever observes an event that was not durably logged.
+    try {
+      // 1. Fold the validated events into a LOCAL next state — do NOT assign
+      //    `this.gameState` yet, so a persist failure leaves it untouched.
+      const nextState = result.events.reduce(
+        (state, event) => reduce(state, event),
+        this.gameState,
+      );
 
-    // Order: reduce → persist-seam → broadcast. Persist BEFORE broadcast so a
-    // future durable sink (S1.4.4) can never emit to clients an event it failed
-    // to record — no client observes an event that isn't in the log. With the
-    // default in-memory sink `append` is synchronous, so there is no reordering
-    // gap today.
-    await this.eventSink.append(result.events);
+      // 2. Persist FIRST. If the durable sink rejects, we throw out of this
+      //    block below with state still uncommitted and nothing broadcast.
+      await this.eventSink.append(result.events);
 
-    // Commit-reveal (S1.4.3 / ADR-0009 Fork 3, invariant #4): the moment — and
-    // ONLY the moment — a validated batch carries `game.ended`, reveal the
-    // secret seed to durable match metadata, so anyone can later recompute
-    // every `dice.rolled` from the event log and check it against `seedHash`.
-    // The reveal goes to the metadata seam, NEVER the event log (Fork 3), never
-    // a broadcast. The `#seedRevealed` latch is set BEFORE the (possibly async)
-    // write so a re-entrant batch cannot double-reveal — though core freezes to
-    // `'finished'` at `game.ended`, so no further batch is even possible.
-    if (!this.#seedRevealed && result.events.some((e) => e.type === 'game.ended')) {
-      this.#seedRevealed = true;
-      await this.matchMetadataStore.recordSeedReveal(this.gameState.matchId, this.#seed);
+      // 3. ONLY on a successful persist: commit the authoritative state.
+      this.gameState = nextState;
+
+      // 4. Refresh the minimal public projection (Fork 1 / invariant #2): the
+      //    schema mirrors only phase + currentPlayerId — never gameplay state.
+      this.state.phase = this.gameState.phase;
+      this.state.currentPlayerId = this.gameState.currentPlayerId;
+
+      // 5. Broadcast the EXACT validated events to every client (sender
+      //    included); each folds them through its own bundled `@skervik/core`
+      //    reduce (Fork 1). Events are public — the seed never appears here.
+      const batch: EventBatchMessage = {
+        v: 1,
+        type: 'event.batch',
+        payload: result.events,
+      };
+      this.broadcast(batch.type, batch);
+
+      // 6. Commit-reveal (S1.4.3 / ADR-0009 Fork 3, invariant #4): the moment —
+      //    and ONLY the moment — a validated batch carries `game.ended`, reveal
+      //    the secret seed to durable match metadata, so anyone can later
+      //    recompute every `dice.rolled` from the event log and check it against
+      //    `seedHash`. The reveal goes to the metadata seam, NEVER the event log
+      //    (Fork 3), never a broadcast. The `#seedRevealed` latch is set BEFORE
+      //    the (possibly async) write so a re-entrant batch cannot double-reveal
+      //    — though core freezes to `'finished'` at `game.ended`, so no further
+      //    batch is even possible.
+      if (!this.#seedRevealed && result.events.some((e) => e.type === 'game.ended')) {
+        this.#seedRevealed = true;
+        await this.matchMetadataStore.recordSeedReveal(
+          this.gameState.matchId,
+          this.#seed,
+        );
+      }
+    } catch (error) {
+      // A durable-sink rejection (or any unexpected throw) fails the batch:
+      // state was NOT advanced (assignment happens only after `append` resolved
+      // in the happy path; a pre-commit throw leaves `this.gameState` as-is), no
+      // broadcast went out. Reply PRIVATELY to the sender and swallow the error
+      // here so nothing escapes this voided handler as an unhandled rejection /
+      // node crash. Logs carry the public `seedHash` only — never the raw seed.
+      this.#logInternalError(
+        'failed to persist a validated batch; state left uncommitted',
+        error,
+      );
+      this.#sendInternalError(client);
     }
-
-    // Refresh the minimal public projection (Fork 1 / invariant #2): the schema
-    // mirrors only phase + currentPlayerId (whose-turn is read from
-    // currentPlayerId against the seat list) — never any gameplay state.
-    this.state.phase = this.gameState.phase;
-    this.state.currentPlayerId = this.gameState.currentPlayerId;
-
-    // Broadcast the EXACT validated events to every client (sender included);
-    // each folds them through its own bundled `@skervik/core` reduce (Fork 1).
-    // Events are public — the seed never appears here (`validate` never returns
-    // it).
-    const batch: EventBatchMessage = {
-      v: 1,
-      type: 'event.batch',
-      payload: result.events,
-    };
-    this.broadcast(batch.type, batch);
   }
 
   #sendReject(client: Client, reason: RejectMessage['payload']['reason']): void {
     const message: RejectMessage = { v: 1, type: 'intent.rejected', payload: { reason } };
     client.send(message.type, message);
   }
+
+  /**
+   * Private, sender-only signal that a validated batch could NOT be durably
+   * recorded (sink rejection or an unexpected internal throw). Distinct from
+   * `intent.rejected` (a `validate` RejectReason): this is an infrastructure
+   * failure, and the authoritative state was NOT advanced. Server-local (not a
+   * core RejectReason) — the typed protocol/zod envelope lands in S1.5.1. Never
+   * carries a seed or any state.
+   */
+  #sendInternalError(client: Client): void {
+    const message: IntentErrorMessage = {
+      v: 1,
+      type: 'intent.error',
+      payload: { code: 'INTERNAL_ERROR' },
+    };
+    client.send(message.type, message);
+  }
+
+  /**
+   * Logs an internal-error path (a sink rejection, or a `validate` throw that
+   * wasn't the known unknown-intent-type case) with the PUBLIC seedHash only —
+   * the raw seed never leaks into logs.
+   */
+  #logInternalError(context: string, error: unknown): void {
+    console.error(
+      `[GameRoom ${this.roomId}] ${context} (seedHash=${this.gameState.seedHash}):`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+/**
+ * A private, sender-only error envelope (S1.4.4b): the room failed to durably
+ * record a validated batch. NOT a core {@link RejectMessage}/RejectReason (that
+ * channel is for `validate` rejections) — this is an infrastructure failure with
+ * state untouched. Lives server-side; the shared typed/zod envelope is S1.5.1.
+ */
+interface IntentErrorMessage {
+  readonly v: 1;
+  readonly type: 'intent.error';
+  readonly payload: { readonly code: 'INTERNAL_ERROR' };
+}
+
+/**
+ * True only for the exhaustiveness-guard throw `validate` raises on a
+ * structurally-unknown intent type (`"unhandled intent type: …"` /
+ * `"unhandled playDevCard card kind: …"`, core `validate.ts`). Any OTHER throw
+ * is unexpected (a real bug) and must surface, not be relabelled MALFORMED_INTENT.
+ */
+function isUnknownIntentError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.message.startsWith('unhandled intent type:') ||
+      error.message.startsWith('unhandled playDevCard card kind:'))
+  );
 }
 
 /**

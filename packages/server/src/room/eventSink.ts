@@ -1,9 +1,14 @@
-// @skervik/server — the log-append SEAM (S1.4.2, ADR-0009 Fork 2/S1.4.4).
-// The intent pipeline hands every validated `GameEvent[]` to a `GameEventSink`
-// BEFORE broadcasting it, so the durable ndjson writer S1.4.4 supplies can
-// drop in here with zero change to the pipeline. This file deliberately builds
-// NO persistence — only the interface plus in-memory/no-op defaults.
-import type { GameEvent } from '@skervik/core';
+// @skervik/server — the log-append SEAM (S1.4.2, ADR-0009 Fork 2) + the durable
+// ndjson writer (S1.4.4b). The intent pipeline hands every validated
+// `GameEvent[]` to a `GameEventSink` and `await`s it BEFORE broadcasting, so a
+// durable implementation can never let a client observe an event it failed to
+// record. This file holds the interface, the in-memory/no-op test defaults, and
+// `FsEventSink` — the production writer that appends bare-`GameEvent` ndjson to
+// `matches/{matchId}/events.ndjson` (tech spec §6.4).
+import { appendFile, mkdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
+import type { GameEvent, MatchId } from '@skervik/core';
 
 /**
  * Receives each batch of server-validated events the room is about to
@@ -33,5 +38,55 @@ export class InMemoryEventSink implements GameEventSink {
 
   append(events: readonly GameEvent[]): void {
     this.events.push(...events);
+  }
+}
+
+/** Default base directory for {@link FsEventSink} match logs (tech spec §6.4). */
+export const DEFAULT_MATCHES_DIR = './data/matches';
+
+export interface FsEventSinkOptions {
+  /** The match this log belongs to — becomes the `matches/{matchId}/` segment. */
+  readonly matchId: MatchId;
+  /** Base directory holding one folder per match. Defaults to {@link DEFAULT_MATCHES_DIR}. */
+  readonly matchesDir?: string;
+}
+
+/**
+ * The durable production writer (S1.4.4b, ADR-0009 Fork 2 / invariant #3):
+ * appends each validated {@link GameEvent} as one `JSON.stringify(event)` ndjson
+ * line to `matches/{matchId}/events.ndjson` — the BARE event shape `reduce`
+ * consumes, so `parseGameEventLog` → `replay` reconstructs the exact `GameState`
+ * (no separate wire schema to keep in lockstep). The dir/file are created lazily
+ * on the first append. `append` is awaited by the pipeline BEFORE any broadcast,
+ * so a rejecting write (disk error) leaves the room's state uncommitted and no
+ * client ever observes an event that was not durably recorded.
+ *
+ * Colyseus processes a room's messages serially, so appends arrive in order and
+ * do not interleave; each `appendFile` preserves that order on disk.
+ */
+export class FsEventSink implements GameEventSink {
+  /** Absolute-or-relative path of this match's ndjson log. */
+  readonly filePath: string;
+  /** Lazily flips true once the match directory has been created. */
+  #dirEnsured = false;
+
+  constructor(options: FsEventSinkOptions) {
+    this.filePath = join(
+      options.matchesDir ?? DEFAULT_MATCHES_DIR,
+      options.matchId,
+      'events.ndjson',
+    );
+  }
+
+  async append(events: readonly GameEvent[]): Promise<void> {
+    if (events.length === 0) {
+      return;
+    }
+    if (!this.#dirEnsured) {
+      await mkdir(dirname(this.filePath), { recursive: true });
+      this.#dirEnsured = true;
+    }
+    const lines = events.map((event) => JSON.stringify(event)).join('\n') + '\n';
+    await appendFile(this.filePath, lines, 'utf8');
   }
 }

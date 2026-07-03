@@ -2,12 +2,18 @@
 // and join/leave/seat-cap behavior. Uses the official `@colyseus/testing`
 // harness (a real Colyseus server + WS client) — this IS the Fork 4 ESM/Node
 // 22 spike, exercised end to end rather than by reaching into Room internals.
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import {
   buildTopology,
   type EdgeId,
+  parseGameEventLog,
   type PlayerId,
   type PlayerState,
+  replay,
   type VertexId,
 } from '@skervik/core';
 import type {
@@ -20,7 +26,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createGameServer, GAME_ROOM_NAME, type GameRoom } from '../index.js';
 import { InMemoryMatchMetadataStore } from '../matchMetadata.js';
 import { sha256Hex } from '../seed.js';
-import { InMemoryEventSink } from './eventSink.js';
+import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
 /** Gives the room's `onJoin`/`onLeave` sends a tick to reach the client. */
 function nextTick(): Promise<void> {
@@ -337,6 +343,41 @@ describe('GameRoom', () => {
     await c2.leave();
   });
 
+  it('turn-gate: a seated player acting under its OWN id on another player’s turn → NOT_YOUR_TURN (NIT-3)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    // It is B's turn. c1 acts under ITS OWN id (a) — no impersonation, so the
+    // identity check passes — but the turn-gate at the server boundary rejects
+    // it because the current turn belongs to B.
+    startMainTurn(room, a, b, b);
+    const before = JSON.stringify(room.gameState);
+
+    const rejects: RejectMessage[] = [];
+    const batches2: EventBatchMessage[] = [];
+    c1.onMessage('intent.rejected', (m: RejectMessage) => rejects.push(m));
+    c2.onMessage('event.batch', (m: EventBatchMessage) => batches2.push(m));
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0]?.payload.reason).toBe('NOT_YOUR_TURN');
+    expect(batches2).toHaveLength(0); // a rejection is never broadcast
+    expect(JSON.stringify(room.gameState)).toBe(before); // state untouched
+
+    await c1.leave();
+    await c2.leave();
+  });
+
   it('identity binding: an unseated sender is rejected', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
     const c1 = await testServer.connectTo(room);
@@ -507,5 +548,105 @@ describe('GameRoom', () => {
     expect(JSON.stringify(rejects[0])).not.toMatch(HEX64);
 
     await c1.leave();
+  });
+
+  // --- S1.4.4b durable persistence + persist-before-commit ordering --------
+
+  it('FsEventSink round-trip: the durable ndjson log replays back to the room’s exact gameState', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'skervik-events-'));
+    try {
+      const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+        matchesDir: tempDir,
+      });
+      // Production wiring: the `matchesDir` option selects the durable writer.
+      expect(room.eventSink).toBeInstanceOf(FsEventSink);
+
+      const c1 = await testServer.connectTo(room);
+      const c2 = await testServer.connectTo(room);
+      await nextTick();
+
+      const a = c1.sessionId;
+      const b = c2.sessionId;
+      startMainTurn(room, a, b, a);
+      // The state the log must replay FROM (before the intent's events).
+      const initialState = structuredClone(room.gameState);
+
+      c1.send('intent', {
+        v: 1,
+        type: 'intent',
+        payload: { type: 'intent.endTurn', playerId: a },
+      });
+      await nextTick();
+
+      // The batch was persisted as bare-GameEvent ndjson, one event per line.
+      const ndjson = await readFile(join(tempDir, room.roomId, 'events.ndjson'), 'utf8');
+      expect(ndjson.trimEnd().split('\n')).toHaveLength(1);
+
+      // Round-trip: parse the on-disk log and replay it from the pre-intent
+      // state — it reconstructs the room's exact post-intent gameState.
+      const events = parseGameEventLog(ndjson);
+      expect(events).toEqual([
+        { type: 'turn.ended', index: 0, playerId: a, nextPlayerId: b },
+      ]);
+      expect(replay(initialState, events)).toEqual(room.gameState);
+
+      // The durable log never leaks the seed (raw or hashed).
+      expect(ndjson).not.toMatch(HEX64);
+
+      await c1.leave();
+      await c2.leave();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('persist-before-commit: a rejecting sink → sender gets a private error, NO broadcast, state untouched, no crash (NIT-1)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    startMainTurn(room, a, b, a);
+
+    // Inject a sink that fails every write (a durable-FS error). The pipeline
+    // awaits `append` BEFORE committing/broadcasting, so this must degrade
+    // gracefully: reject to the sender, leave state untouched, never crash.
+    const throwingSink: GameEventSink = {
+      append() {
+        throw new Error('disk write failed');
+      },
+    };
+    room.eventSink = throwingSink;
+    const before = structuredClone(room.gameState);
+
+    const errors: unknown[] = [];
+    const batches2: EventBatchMessage[] = [];
+    c1.onMessage('intent.error', (m: unknown) => errors.push(m));
+    c2.onMessage('event.batch', (m: EventBatchMessage) => batches2.push(m));
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    // Two ticks: the (voided, async) handler must fully settle. A regression
+    // that let the sink rejection escape would surface here as an unhandled
+    // rejection, which Vitest fails the run on.
+    await nextTick();
+    await nextTick();
+
+    // The sender got a private infrastructure error (NOT a validation reject)...
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as { type?: string }).type).toBe('intent.error');
+    expect(JSON.stringify(errors[0])).not.toMatch(HEX64); // no seed in the reply
+    // ...no event.batch was broadcast (nothing was durably recorded)...
+    expect(batches2).toHaveLength(0);
+    // ...and the authoritative state was NOT advanced past the unpersisted event.
+    expect(room.gameState).toEqual(before);
+
+    await c1.leave();
+    await c2.leave();
   });
 });
