@@ -1,22 +1,39 @@
-// @skervik/server — the authoritative game room shell (S1.4.1, ADR-0009).
-// Holds the complete plain `@skervik/core` `GameState` + a private crypto
-// seed in room memory; the `@colyseus/schema` mirrors ONLY the public
-// lobby/late-join projection (Fork 1). No gameplay flows through the Schema
-// yet — that's `event.batch` broadcasts, S1.4.2. No seed reveal (S1.4.3), no
-// event-log persistence (S1.4.4).
+// @skervik/server — the authoritative game room (S1.4.1 shell + S1.4.2
+// intent pipeline, ADR-0009). Holds the complete plain `@skervik/core`
+// `GameState` + a private crypto seed in room memory; the `@colyseus/schema`
+// mirrors ONLY the public lobby/late-join projection (Fork 1). Gameplay flows
+// as `event.batch` broadcasts of server-validated events — never through the
+// Schema. No seed reveal (S1.4.3), no ndjson persistence (S1.4.4).
 import { createHash, randomBytes } from 'node:crypto';
 
-import type { GameState, PlayerId, Seed } from '@skervik/core';
-import type { StateSnapshotMessage } from '@skervik/protocol';
+import {
+  type GameState,
+  type PlayerId,
+  reduce,
+  type Seed,
+  validate,
+} from '@skervik/core';
+import type {
+  EventBatchMessage,
+  RejectMessage,
+  StateSnapshotMessage,
+} from '@skervik/protocol';
 import { type Client, Room } from 'colyseus';
 
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
+import { type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
 const DEFAULT_MAX_SEATS = 4;
 
 export interface GameRoomOptions {
   readonly maxSeats?: number;
+  /**
+   * Where validated events are appended before broadcast (S1.4.2 seam).
+   * Defaults to an in-memory buffer; S1.4.4 injects the durable ndjson writer
+   * here without touching pipeline logic.
+   */
+  readonly sink?: GameEventSink;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -31,8 +48,17 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   #seed!: Seed;
 
+  /**
+   * The log-append seam (S1.4.2): every validated batch is handed here BEFORE
+   * broadcast. Public so a test can read what the pipeline appended; S1.4.4
+   * swaps the default in-memory buffer for the durable ndjson writer via the
+   * `sink` room option.
+   */
+  eventSink!: GameEventSink;
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
+    this.eventSink = options?.sink ?? new InMemoryEventSink();
 
     this.#seed = randomBytes(32).toString('hex');
     const seedHash = sha256Hex(this.#seed);
@@ -51,6 +77,12 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       seedHash,
       phase: this.gameState.phase,
       currentPlayerId: this.gameState.currentPlayerId,
+    });
+
+    // The authoritative intent pipeline (S1.4.2). The handler never throws out
+    // (it returns rejections), so the floating promise is deliberately voided.
+    this.onMessage('intent', (client, message: unknown) => {
+      void this.#handleIntent(client, message);
     });
   }
 
@@ -83,7 +115,116 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   override onDispose(): void {
     // Nothing to release yet — no persistence, no timers (M1 shell only).
   }
+
+  /**
+   * The authoritative gameplay pipeline (S1.4.2): a client's intent is a WISH.
+   * Resolve the actor from the SENDER'S SEAT (never client-supplied identity),
+   * `validate` against the authoritative state + secret seed, and only on `ok`
+   * fold the produced events through `reduce` — nothing a client sends mutates
+   * state directly (ADR-0009 invariant #1).
+   */
+  async #handleIntent(client: Client, message: unknown): Promise<void> {
+    // Structural guard (S1.5.1 adds zod). A malformed envelope is REJECTED,
+    // never thrown out of the handler.
+    if (!isIntentEnvelope(message)) {
+      this.#sendReject(client, 'MALFORMED_INTENT');
+      return;
+    }
+
+    // Identity binding: the actor is the sender's SEAT, resolved from the
+    // connection's `sessionId` — never `payload.playerId`. An unseated sender
+    // has no identity to act under, so it is rejected before `validate`. A
+    // sender that NAMES a different player is caught by `validate`
+    // (`intent.playerId !== playerId` → MALFORMED_INTENT), since the seat id is
+    // what we pass, not the claimed one.
+    const seat = this.state.seats.find((s) => s.playerId === client.sessionId);
+    if (!seat) {
+      this.#sendReject(client, 'UNKNOWN_PLAYER');
+      return;
+    }
+    const playerId = seat.playerId as PlayerId;
+
+    // `validate` never throws for an EXPECTED rejection, but its exhaustiveness
+    // guard DOES throw on a structurally-unknown intent type. Wrap so no input
+    // can throw out of the handler; state is assigned only AFTER a successful
+    // reduce, so a throw here leaves the authoritative state untouched.
+    let result: ReturnType<typeof validate>;
+    try {
+      result = validate(this.gameState, message.payload, playerId, this.#seed);
+    } catch {
+      this.#sendReject(client, 'MALFORMED_INTENT');
+      return;
+    }
+
+    if (!result.ok) {
+      // Private reply to ONLY the sender — a rejection is not a state change,
+      // so it is never broadcast, and it never mutates `gameState`.
+      this.#sendReject(client, result.reason);
+      return;
+    }
+
+    // Authoritative fold: only server-validated events change state.
+    this.gameState = result.events.reduce(
+      (state, event) => reduce(state, event),
+      this.gameState,
+    );
+
+    // Order: reduce → persist-seam → broadcast. Persist BEFORE broadcast so a
+    // future durable sink (S1.4.4) can never emit to clients an event it failed
+    // to record — no client observes an event that isn't in the log. With the
+    // default in-memory sink `append` is synchronous, so there is no reordering
+    // gap today.
+    await this.eventSink.append(result.events);
+
+    // Refresh the minimal public projection (Fork 1 / invariant #2): the schema
+    // mirrors only phase + currentPlayerId (whose-turn is read from
+    // currentPlayerId against the seat list) — never any gameplay state.
+    this.state.phase = this.gameState.phase;
+    this.state.currentPlayerId = this.gameState.currentPlayerId;
+
+    // Broadcast the EXACT validated events to every client (sender included);
+    // each folds them through its own bundled `@skervik/core` reduce (Fork 1).
+    // Events are public — the seed never appears here (`validate` never returns
+    // it).
+    const batch: EventBatchMessage = {
+      v: 1,
+      type: 'event.batch',
+      payload: result.events,
+    };
+    this.broadcast(batch.type, batch);
+  }
+
+  #sendReject(client: Client, reason: RejectMessage['payload']['reason']): void {
+    const message: RejectMessage = { v: 1, type: 'intent.rejected', payload: { reason } };
+    client.send(message.type, message);
+  }
 }
+
+/**
+ * Minimal structural guard on an inbound `intent` envelope (no zod until
+ * S1.5.1): a non-null object with `type === 'intent'` and a `payload` object
+ * carrying a string `type`. Deep intent legality is `validate`'s job — this
+ * only screens out garbage the pipeline shouldn't hand to it.
+ */
+function isIntentEnvelope(
+  message: unknown,
+): message is { readonly type: 'intent'; readonly payload: PlayerIntentLike } {
+  if (typeof message !== 'object' || message === null) {
+    return false;
+  }
+  const envelope = message as Record<string, unknown>;
+  if (envelope['type'] !== 'intent') {
+    return false;
+  }
+  const payload = envelope['payload'];
+  if (typeof payload !== 'object' || payload === null) {
+    return false;
+  }
+  return typeof (payload as Record<string, unknown>)['type'] === 'string';
+}
+
+/** The shape the structural guard proves — narrowed to what `validate` needs. */
+type PlayerIntentLike = Parameters<typeof validate>[1];
 
 function sha256Hex(seed: Seed): string {
   return createHash('sha256').update(seed).digest('hex');

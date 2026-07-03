@@ -6,6 +6,11 @@ import { GameRoom } from './room/GameRoom.js';
 
 export const SERVER_VERSION = '0.0.1' as const;
 
+export {
+  type GameEventSink,
+  InMemoryEventSink,
+  NoopEventSink,
+} from './room/eventSink.js';
 export { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
 
 /** Matchmaking name the S1.4.1 `GameRoom` is registered under. */
