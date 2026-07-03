@@ -10,8 +10,10 @@ import type { GameEvent, GameState, PlayerIntent } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 
+import { isCompatibleProtocolVersion, PROTOCOL_VERSION } from './index.js';
 import {
   ClientMessageSchema,
+  ConnectOptionsSchema,
   ErrorEnvelopeSchema,
   EventBatchEnvelopeSchema,
   GameEventSchema,
@@ -19,6 +21,7 @@ import {
   RejectEnvelopeSchema,
   ServerMessageSchema,
   StateSnapshotEnvelopeSchema,
+  VersionErrorEnvelopeSchema,
 } from './messages.js';
 
 /** Every `PlayerIntent` variant (incl. all 4 `playDevCard` card kinds). */
@@ -394,6 +397,93 @@ describe('outbound envelopes (ServerMessageSchema, E1.6 client contract)', () =>
       EventBatchEnvelopeSchema.safeParse({ v: 9, type: 'event.batch', payload: [] })
         .success,
     ).toBe(false);
+  });
+});
+
+// --- S1.5.2 handshake + protocol version negotiation ------------------------
+
+describe('ConnectOptionsSchema (client join handshake)', () => {
+  it('accepts a valid { protocolVersion } string', () => {
+    expect(ConnectOptionsSchema.safeParse({ protocolVersion: '0.0.1' }).success).toBe(
+      true,
+    );
+    expect(
+      ConnectOptionsSchema.safeParse({ protocolVersion: PROTOCOL_VERSION }).success,
+    ).toBe(true);
+  });
+
+  it('rejects a missing protocolVersion', () => {
+    expect(ConnectOptionsSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects a non-string protocolVersion', () => {
+    expect(ConnectOptionsSchema.safeParse({ protocolVersion: 1 }).success).toBe(false);
+    expect(ConnectOptionsSchema.safeParse({ protocolVersion: null }).success).toBe(false);
+  });
+});
+
+describe('VersionErrorEnvelopeSchema (error.version, E1.6 client contract)', () => {
+  it('round-trips a mismatch message and parses under ServerMessageSchema', () => {
+    const msg = {
+      v: 1,
+      type: 'error.version',
+      payload: {
+        code: 'PROTOCOL_VERSION_MISMATCH',
+        serverVersion: PROTOCOL_VERSION,
+        clientVersion: '0.0.0-old',
+      },
+    };
+    const parsed = VersionErrorEnvelopeSchema.safeParse(msg);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data).toEqual(msg);
+    // error.version is a recognized inbound server message for the client.
+    expect(ServerMessageSchema.safeParse(msg).success).toBe(true);
+  });
+
+  it('accepts a null clientVersion (missing/malformed version reported as null)', () => {
+    const msg = {
+      v: 1,
+      type: 'error.version',
+      payload: {
+        code: 'PROTOCOL_VERSION_MISMATCH',
+        serverVersion: PROTOCOL_VERSION,
+        clientVersion: null,
+      },
+    };
+    expect(VersionErrorEnvelopeSchema.safeParse(msg).success).toBe(true);
+    expect(ServerMessageSchema.safeParse(msg).success).toBe(true);
+  });
+
+  it('rejects a wrong machine code', () => {
+    expect(
+      VersionErrorEnvelopeSchema.safeParse({
+        v: 1,
+        type: 'error.version',
+        payload: {
+          code: 'SOMETHING_ELSE',
+          serverVersion: PROTOCOL_VERSION,
+          clientVersion: null,
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe('isCompatibleProtocolVersion (the ONE compatibility gate)', () => {
+  it('is true only for exactly PROTOCOL_VERSION', () => {
+    expect(isCompatibleProtocolVersion(PROTOCOL_VERSION)).toBe(true);
+  });
+
+  it('is false for a bumped / garbage / empty version', () => {
+    expect(isCompatibleProtocolVersion('9.9.9')).toBe(false);
+    expect(isCompatibleProtocolVersion('not-a-version')).toBe(false);
+    expect(isCompatibleProtocolVersion('')).toBe(false);
+  });
+
+  it('is false for a missing / non-string version', () => {
+    expect(isCompatibleProtocolVersion(undefined)).toBe(false);
+    expect(isCompatibleProtocolVersion(null)).toBe(false);
+    expect(isCompatibleProtocolVersion(1)).toBe(false);
   });
 });
 
