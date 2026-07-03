@@ -185,7 +185,7 @@ victory — asserts determinism server-side and event-log replay equality;
 | S1.1.1 hex board model & graph | ✅ done — merged `c4cfc1a` (19/54/72 counts, adjacency graph, 9 port slots; 51/51 core tests) |
 | S1.1.2 fair board generation from seed | ✅ done — merged `ae67382` (event-sourced `board.generated`, RNG band 1M+, no-adjacent-red; lead-review MERGE WITH NITS; 58/58 tests). **Deferred nit → S1.2.1:** revisit 1M headroom when `eventIndex*K+slot` scheme lands |
 | S1.1.3 snake-draft initial placement | ✅ done — merged `1a6e51b` (placeSettlement/placeRoad, distance+detached-road legality, 2nd-settlement payout, setup→main FSM; lead-review MERGE WITH NITS; 69 tests). **✅ E1.1 CLOSED.** Deferred nit → S1.2.4: make snake seating-order coupling explicit |
-| S1.2.1 resource production on roll (+ gameplay RNG scheme `eventIndex*K+slot`, K=8, headroom guard) | ⏳ materialized, ready to dispatch (after E1.1) |
+| S1.2.1 resource production on roll (+ gameplay RNG scheme `eventIndex*K+slot`, K=8, headroom guard) | ✅ done — merged `4d5ddc9` (RNG scheme fixed: K=8, slots 0/1 dice, 2-7 reserved, headroom guard vs 1M band; DiceRolled single-die→dieA/dieB/total conscious re-golden; bank exhaustion all-or-nothing; 7→S1.3.1 seam; lead-review MERGE, re-golden recomputed authentic; 80 tests). **Deferred nit → S1.4.4:** wire-replay must map `RESOURCES_PRODUCED` (log/engine production divergence) |
 | S1.2.2 build actions road/settlement/city | ⏳ materialized (after S1.2.1) |
 | S1.2.3 dev cards deck/buy/play (knight play deferred to S1.3.1) | ⏳ materialized (after S1.2.2) |
 | S1.2.4 turn FSM roll→produce→main→end + guards | ⏳ materialized (after S1.2.1–.3) |
