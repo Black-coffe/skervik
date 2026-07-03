@@ -529,6 +529,34 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       );
       return { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
     }
+    case 'award.longestRoad': {
+      // The award moved (S1.3.4). A present `playerId` is the new holder; an
+      // ABSENT one means it vacated — drop the key entirely rather than set
+      // it `undefined` (same "absent key = nobody holds it" convention as
+      // `playersToDiscard`), so a vacated award and a never-awarded one share
+      // one representation and stay byte-identical on replay.
+      const { longestRoadHolder: _prev, ...rest } = state;
+      return {
+        ...rest,
+        ...(event.playerId !== undefined ? { longestRoadHolder: event.playerId } : {}),
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'award.largestArmy': {
+      // Largest army never vacates once earned (`event.playerId` is always
+      // present, see the event's docstring) — a plain assignment.
+      return {
+        ...state,
+        largestArmyHolder: event.playerId,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'game.ended': {
+      // Freeze the match (S1.3.4): `validate` rejects every later gameplay
+      // intent with `GAME_ALREADY_ENDED` once the phase is `'finished'`. The
+      // final standings live on the event/log (an audit fact), not on state.
+      return { ...state, phase: 'finished', eventIndex: event.index + 1 };
+    }
     default: {
       const exhaustive: never = event;
       throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);

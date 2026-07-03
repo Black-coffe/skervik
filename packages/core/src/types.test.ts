@@ -16,9 +16,12 @@ import type {
   DiceRolledEvent,
   DiscardIntent,
   EndTurnIntent,
+  GameEndedEvent,
   GameEvent,
   GameState,
   KnightPlayedEvent,
+  LargestArmyAwardedEvent,
+  LongestRoadAwardedEvent,
   MatchStartedEvent,
   MonopolyPlayedEvent,
   MoveRobberIntent,
@@ -220,6 +223,14 @@ describe('GameEvent', () => {
       get: 'ore',
       bank: { timber: 23, ore: 18 },
     },
+    { type: 'award.longestRoad', index: 22, playerId: 'player-1', length: 5 },
+    { type: 'award.largestArmy', index: 23, playerId: 'player-1', knights: 3 },
+    {
+      type: 'game.ended',
+      index: 24,
+      winnerId: 'player-1',
+      finalStandings: { 'player-1': 10, 'player-2': 4 },
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -333,6 +344,21 @@ describe('GameEvent', () => {
         case 'bank.trade': {
           const e: BankTradedEvent = event;
           expect(e.count).toBe(4);
+          break;
+        }
+        case 'award.longestRoad': {
+          const e: LongestRoadAwardedEvent = event;
+          expect(e.length).toBe(5);
+          break;
+        }
+        case 'award.largestArmy': {
+          const e: LargestArmyAwardedEvent = event;
+          expect(e.knights).toBe(3);
+          break;
+        }
+        case 'game.ended': {
+          const e: GameEndedEvent = event;
+          expect(e.winnerId).toBe('player-1');
           break;
         }
         default: {

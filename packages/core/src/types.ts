@@ -264,9 +264,29 @@ export interface GameState {
    * absent until the first `devCard.knightPlayed` lands, same "fact of an
    * event having landed" optionality as {@link GameState.devCards}. Never
    * reset by `turn.ended` (a match-long running total, unlike the per-turn
-   * markers) — feeds the largest-army calculation (S1.3.4), not yet built.
+   * markers) — feeds the largest-army calculation (S1.3.4).
    */
   readonly knightsPlayed?: Readonly<Record<PlayerId, number>>;
+  /**
+   * The current holder of the **longest road** award (S1.3.4), or absent
+   * when no player holds it (nobody's longest simple road path reaches the
+   * Classic minimum of 5, or a break left the lead tied — see
+   * `validate.ts`'s `computeLongestRoad`). Set/cleared by
+   * {@link LongestRoadAwardedEvent}; worth +2 toward the win threshold while
+   * held. Absent until the first award lands, the same "fact of an event
+   * having landed" optionality as {@link GameState.knightsPlayed}.
+   */
+  readonly longestRoadHolder?: PlayerId;
+  /**
+   * The current holder of the **largest army** award (S1.3.4), or absent
+   * when no player has yet played the Classic minimum of 3 knights. Set by
+   * {@link LargestArmyAwardedEvent}; worth +2 toward the win threshold.
+   * Unlike {@link GameState.longestRoadHolder} it never vacates once earned
+   * — a played knight can only be gained, so the count never falls; the
+   * award only ever transfers to a player with a STRICTLY higher count
+   * (`validate.ts`'s `computeLargestArmy`).
+   */
+  readonly largestArmyHolder?: PlayerId;
   /**
    * The currently open trade offer (S1.3.2), if any — absent means no
    * `proposeTrade`/`counterTrade` is pending, same "fact of an event having
@@ -630,11 +650,61 @@ export interface BankTradedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when the **longest road** award changes hands (S1.3.4) — the
+ * derived-fact counterpart of a build that reshaped the road graph
+ * (`road.built`, `devCard.roadBuildingPlayed`) or an opponent settlement
+ * that broke a road (`settlement.built`/`city.built`). `validate` recomputes
+ * every player's longest simple road path from the post-build state and
+ * emits this ONLY when the holder actually changes, so replay applies the
+ * fact rather than re-running the graph search (ADR-0003). `playerId` is the
+ * NEW holder; it is ABSENT when the award VACATES (no player ≥ the Classic
+ * minimum, or the lead is tied with no incumbent to keep it). `length` is the
+ * winning path length (the vacating event still carries the best remaining
+ * length as an audit fact).
+ */
+export interface LongestRoadAwardedEvent extends BaseGameEvent {
+  readonly type: 'award.longestRoad';
+  readonly playerId?: PlayerId;
+  readonly length: number;
+}
+
+/**
+ * Emitted when the **largest army** award changes hands (S1.3.4) — always
+ * paired right after the {@link KnightPlayedEvent}/{@link RobberMovedEvent}
+ * that bumped the actor's played-knight count past the incumbent's. Unlike
+ * {@link LongestRoadAwardedEvent} this never vacates (knight counts only
+ * rise, and the award only moves to a STRICTLY higher count), so `playerId`
+ * is always present. `knights` is the new holder's played-knight count.
+ */
+export interface LargestArmyAwardedEvent extends BaseGameEvent {
+  readonly type: 'award.largestArmy';
+  readonly playerId: PlayerId;
+  readonly knights: number;
+}
+
+/**
+ * Emitted when the acting player reaches the Classic victory threshold
+ * (`vpToWin`, 10) on THEIR OWN turn (S1.3.4) — the full tally includes
+ * hidden VP dev cards, which is why the win is only ever checked for the
+ * player currently acting (an opponent pushed to the threshold by someone
+ * else's turn does NOT win). `validate` appends this after the triggering
+ * action's events (and any award change it caused); `reduce` moves the phase
+ * to `'finished'` and every later gameplay intent is then rejected with
+ * `GAME_ALREADY_ENDED`. `finalStandings` is the full VP tally per player at
+ * match end (an audit fact, so replay never recomputes it).
+ */
+export interface GameEndedEvent extends BaseGameEvent {
+  readonly type: 'game.ended';
+  readonly winnerId: PlayerId;
+  readonly finalStandings: Readonly<Record<PlayerId, number>>;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
- * S1.2.2; dev cards, S1.2.3; robber/7 + knight, S1.3.1; trade/etc. still to
- * come).
+ * S1.2.2; dev cards, S1.2.3; robber/7 + knight, S1.3.1; trade, S1.3.2; bank
+ * trade, S1.3.3; awards + victory, S1.3.4).
  */
 export type GameEvent =
   | MatchStartedEvent
@@ -658,7 +728,10 @@ export type GameEvent =
   | TradeExecutedEvent
   | TradeRejectedEvent
   | TradeCancelledEvent
-  | BankTradedEvent;
+  | BankTradedEvent
+  | LongestRoadAwardedEvent
+  | LargestArmyAwardedEvent
+  | GameEndedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -945,4 +1018,6 @@ export type RejectReason =
   /** `intent.counterTrade` attempted when the open offer is already at the M1 counter bound (`depth 1`, S1.3.2). */
   | 'TRADE_COUNTER_LIMIT_REACHED'
   /** `intent.bankTrade`'s `count` doesn't equal the player's resolved rate for `give` (S1.3.3). */
-  | 'WRONG_RATE_COUNT';
+  | 'WRONG_RATE_COUNT'
+  /** Any gameplay intent attempted after `game.ended` moved the match to the `'finished'` phase (S1.3.4). */
+  | 'GAME_ALREADY_ENDED';

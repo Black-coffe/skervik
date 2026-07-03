@@ -12,9 +12,11 @@ import {
   findTile,
   findVertex,
   type TileId,
+  type VertexId,
   type VertexTopology,
 } from './board.js';
 import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
+import { reduce } from './reduce.js';
 import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
   BankTradedEvent,
@@ -23,10 +25,13 @@ import type {
   DevCardBoughtEvent,
   DevCardKind,
   DiceRolledEvent,
+  GameEndedEvent,
   GameEvent,
   GamePhase,
   GameState,
   KnightPlayedEvent,
+  LargestArmyAwardedEvent,
+  LongestRoadAwardedEvent,
   MonopolyPlayedEvent,
   PlayerId,
   PlayerIntent,
@@ -115,6 +120,33 @@ export const CLASSIC_BANK_TRADE_PROFILE = {
 } as const;
 
 /**
+ * Classic post-7 discard constants (rule-profile discipline, plan §1, S1.3.1
+ * spec — folded into a named object here per S1.3.4's cleanup of the inline
+ * magic numbers a lead-review nit flagged): a player holding MORE than
+ * `handLimit` cards discards `floor(handSize / halfDivisor)`. Physical-Catan
+ * parity (discard half your hand, rounded down, when holding 8+).
+ */
+const CLASSIC_ROBBER_PROFILE = {
+  handLimit: 7,
+  halfDivisor: 2,
+} as const;
+
+/**
+ * Classic victory + award constants (rule-profile discipline, plan §1,
+ * S1.3.4 spec): the win threshold, the two award minimums, and the VP each
+ * award is worth — a single swappable object, never magic numbers scattered
+ * through the award/victory helpers below. `vpToWin` 10, longest road ≥5,
+ * largest army ≥3, each award +2 VP (Classic).
+ */
+export const CLASSIC_VICTORY_PROFILE = {
+  vpToWin: 10,
+  longestRoadMin: 5,
+  largestArmyMin: 3,
+  longestRoadVP: 2,
+  largestArmyVP: 2,
+} as const;
+
+/**
  * The gameplay RNG stream's per-event slot map (S1.2.1, fixed here,
  * documented in `docs/wiki/rng-stream-map.md` §1 — **never renumber a slot
  * once shipped**, an auditor's recomputation depends on it). `validate.ts`
@@ -187,12 +219,41 @@ function violatesDistanceRule(
 }
 
 /**
- * Road-building network legality (S1.2.2 spec): true if `edge` touches the
- * player's own network at either endpoint — an own settlement/city sits on
- * that vertex, or an own road is already incident to it (`VertexTopology.edgeIds`,
- * S1.1.1). A single-hop check is sufficient: the network is built up
- * incrementally, so every prior own road already touched the network when
- * it was placed.
+ * The ONE shared graph rule of S1.3.4 (both the longest-road cut and the
+ * road-build enemy-cut deferred from S1.2.2): true if an OPPONENT's
+ * settlement or city sits on `vertexId`. Such a vertex severs a player's
+ * road network there — a chain of own roads cannot pass THROUGH it (longest
+ * road) and an own road incident to it no longer connects a new road built
+ * beyond it (build legality). An own building (or an empty vertex) never
+ * blocks — only an opponent's.
+ */
+function vertexHasOpponentBuilding(
+  vertexId: VertexId,
+  playerId: PlayerId,
+  buildings: BuildingsState,
+): boolean {
+  const settlementOwner = buildings.settlements[vertexId];
+  if (settlementOwner !== undefined && settlementOwner !== playerId) return true;
+  const cityOwner = buildings.cities?.[vertexId];
+  if (cityOwner !== undefined && cityOwner !== playerId) return true;
+  return false;
+}
+
+/**
+ * Road-building network legality (S1.2.2 spec + the S1.3.4 enemy-cut): true
+ * if `edge` touches the player's own network at either endpoint — an own
+ * settlement/city sits on that vertex, or an own road is already incident to
+ * it (`VertexTopology.edgeIds`, S1.1.1). A single-hop check is sufficient:
+ * the network is built up incrementally, so every prior own road already
+ * touched the network when it was placed.
+ *
+ * The enemy-cut (deferred here from S1.2.2, S1.3.4 spec): an OPPONENT's
+ * building on an endpoint SEVERS the connection there — an own road incident
+ * to that vertex no longer connects a road built beyond it (you can't extend
+ * a road THROUGH an opponent's settlement/city). This is the SAME
+ * {@link vertexHasOpponentBuilding} cut the longest-road DFS uses — one graph
+ * rule, two callers. An own building on the vertex is unaffected (you own it,
+ * nothing to cut).
  */
 function touchesOwnNetwork(
   edge: EdgeTopology,
@@ -202,11 +263,260 @@ function touchesOwnNetwork(
   return edge.vertexIds.some((vertexId) => {
     if (buildings.settlements[vertexId] === playerId) return true;
     if (buildings.cities?.[vertexId] === playerId) return true;
+    // Enemy-cut: an opponent building here severs the network — an incident
+    // own road can't reach through it, so this endpoint offers no connection.
+    if (vertexHasOpponentBuilding(vertexId, playerId, buildings)) return false;
     const vertex = findVertex(topology(), vertexId);
     return (
       vertex?.edgeIds.some((edgeId) => buildings.roads[edgeId] === playerId) ?? false
     );
   });
+}
+
+/**
+ * The length of the longest simple road (no repeated edge) in `playerId`'s
+ * own road subgraph (S1.3.4 longest-road spec). A bounded backtracking DFS
+ * from every own-road endpoint — the board is tiny (≤72 edges, ≤15 roads per
+ * player) so the exponential worst case is trivially bounded.
+ *
+ * An opponent building on an intervening vertex BREAKS the chain there (the
+ * shared {@link vertexHasOpponentBuilding} cut): the path may pass through
+ * own or empty vertices but never CONTINUE through a vertex an opponent
+ * occupies (an edge ENDING at one still counts — it just can't be extended
+ * past it). Deterministic: incident edges and start vertices are visited in
+ * sorted-id order — the max is order-independent, but a fixed order keeps
+ * replay/debug stable (plan §1, "no ambient ordering").
+ */
+function longestRoadLength(state: GameState, playerId: PlayerId): number {
+  const buildings: BuildingsState | undefined = state.buildings;
+  if (!buildings) return 0;
+  const known: BuildingsState = buildings;
+  const topo = topology();
+
+  const ownEdgeIds = Object.keys(known.roads).filter(
+    (edgeId) => known.roads[edgeId] === playerId,
+  );
+  if (ownEdgeIds.length === 0) return 0;
+
+  // Longest simple path LEAVING `vertexId`; `used` = edge ids already walked
+  // on this path. Returns the count of ADDITIONAL edges reachable.
+  function walk(vertexId: VertexId, used: ReadonlySet<EdgeId>): number {
+    // An opponent building here stops the chain — nothing may leave it.
+    if (vertexHasOpponentBuilding(vertexId, playerId, known)) {
+      return 0;
+    }
+    const vertex = findVertex(topo, vertexId);
+    if (!vertex) return 0;
+    let best = 0;
+    for (const edgeId of [...vertex.edgeIds].sort()) {
+      if (known.roads[edgeId] !== playerId) continue;
+      if (used.has(edgeId)) continue;
+      const edge = findEdge(topo, edgeId);
+      if (!edge) continue;
+      const nextVertex =
+        edge.vertexIds[0] === vertexId ? edge.vertexIds[1] : edge.vertexIds[0];
+      const nextUsed = new Set(used);
+      nextUsed.add(edgeId);
+      const candidate = 1 + walk(nextVertex, nextUsed);
+      if (candidate > best) best = candidate;
+    }
+    return best;
+  }
+
+  const endpoints = new Set<VertexId>();
+  for (const edgeId of ownEdgeIds) {
+    const edge = findEdge(topo, edgeId);
+    if (edge) {
+      endpoints.add(edge.vertexIds[0]);
+      endpoints.add(edge.vertexIds[1]);
+    }
+  }
+  let longest = 0;
+  for (const vertexId of [...endpoints].sort()) {
+    const len = walk(vertexId, new Set<EdgeId>());
+    if (len > longest) longest = len;
+  }
+  return longest;
+}
+
+/** The computed holder + winning length of the longest-road award (S1.3.4). */
+interface AwardResult {
+  readonly holder?: PlayerId;
+  readonly length: number;
+}
+
+/**
+ * Recomputes the longest-road award from the current state (S1.3.4): the
+ * sole player whose longest road is ≥ the Classic minimum AND strictly the
+ * longest. Ties keep the incumbent (`state.longestRoadHolder`); a tie with
+ * no incumbent among the leaders — or nobody reaching the minimum — vacates
+ * the award (`holder` absent). Iterates players in fixed array order
+ * (deterministic).
+ */
+function computeLongestRoad(state: GameState): AwardResult {
+  const incumbent = state.longestRoadHolder;
+  const lengths = state.players.map((player) => ({
+    id: player.id,
+    length: longestRoadLength(state, player.id),
+  }));
+  const maxLength = lengths.reduce((max, entry) => Math.max(max, entry.length), 0);
+  if (maxLength < CLASSIC_VICTORY_PROFILE.longestRoadMin) {
+    return { length: maxLength }; // nobody qualifies → vacated
+  }
+  const leaders = lengths.filter((entry) => entry.length === maxLength).map((e) => e.id);
+  // Ties keep the incumbent; otherwise a sole leader takes it; a tie with no
+  // incumbent among the leaders leaves it vacated (Classic longest-road rule).
+  if (incumbent !== undefined && leaders.includes(incumbent)) {
+    return { holder: incumbent, length: maxLength };
+  }
+  const sole = leaders[0];
+  if (leaders.length === 1 && sole !== undefined) {
+    return { holder: sole, length: maxLength };
+  }
+  return { length: maxLength };
+}
+
+/** The computed holder + played-knight count of the largest-army award (S1.3.4). */
+interface LargestArmyResult {
+  readonly holder?: PlayerId;
+  readonly knights: number;
+}
+
+/**
+ * Recomputes the largest-army award from the current state (S1.3.4): the
+ * first player to `largestArmyMin` played knights holds it, and it only ever
+ * transfers to a STRICTLY higher count (a mere tie keeps the incumbent). It
+ * never vacates once earned — played-knight counts only rise. Iterates
+ * players in fixed array order (deterministic).
+ */
+function computeLargestArmy(state: GameState): LargestArmyResult {
+  const incumbent = state.largestArmyHolder;
+  const counts = state.knightsPlayed ?? {};
+  let maxKnights = 0;
+  let leaders: PlayerId[] = [];
+  for (const player of state.players) {
+    const knights = counts[player.id] ?? 0;
+    if (knights > maxKnights) {
+      maxKnights = knights;
+      leaders = [player.id];
+    } else if (knights === maxKnights && knights > 0) {
+      leaders.push(player.id);
+    }
+  }
+  if (maxKnights < CLASSIC_VICTORY_PROFILE.largestArmyMin) {
+    // Threshold not reached — no holder yet (and none to keep).
+    return {
+      ...(incumbent !== undefined ? { holder: incumbent } : {}),
+      knights: maxKnights,
+    };
+  }
+  if (incumbent !== undefined && leaders.includes(incumbent)) {
+    return { holder: incumbent, knights: maxKnights };
+  }
+  const sole = leaders[0];
+  if (leaders.length === 1 && sole !== undefined) {
+    return { holder: sole, knights: maxKnights };
+  }
+  // A top tie with no incumbent among the leaders: keep the incumbent if any
+  // (largest army never vacates on a mere tie), else still unclaimed.
+  return {
+    ...(incumbent !== undefined ? { holder: incumbent } : {}),
+    knights: maxKnights,
+  };
+}
+
+/**
+ * The acting player's FULL victory-point tally (S1.3.4): settlement 1, city
+ * 2, each held award 2, each held VP dev card 1. Derived straight from
+ * buildings/awards/holdings so it's always correct (setup-draft settlements
+ * count too), and it deliberately includes HIDDEN VP dev cards — the win
+ * check sees the full tally, which is exactly why victory is only ever
+ * evaluated for the player on their OWN turn (an opponent can't see, and
+ * can't be pushed over the line by, someone else's hidden card).
+ */
+function computeVictoryPoints(state: GameState, playerId: PlayerId): number {
+  const buildings = state.buildings;
+  let vp = 0;
+  if (buildings) {
+    vp += Object.values(buildings.settlements).filter(
+      (owner) => owner === playerId,
+    ).length;
+    vp +=
+      Object.values(buildings.cities ?? {}).filter((owner) => owner === playerId).length *
+      2;
+  }
+  if (state.longestRoadHolder === playerId) vp += CLASSIC_VICTORY_PROFILE.longestRoadVP;
+  if (state.largestArmyHolder === playerId) vp += CLASSIC_VICTORY_PROFILE.largestArmyVP;
+  vp += state.devCards?.[playerId]?.held.victoryPoint ?? 0;
+  return vp;
+}
+
+/**
+ * Appends the award-change and victory events S1.3.4 derives AFTER a
+ * VP/award-affecting action (build road/settlement/city, road-building card,
+ * knight play, dev-card buy). `primaryEvents` are the action's own events;
+ * this projects them through the pure {@link reduce} to get the post-action
+ * state, recomputes both awards, and — ONLY when a holder actually changes —
+ * emits an `award.*` event (so replay applies the fact rather than re-running
+ * the graph search, ADR-0003). It then checks the acting player's full VP on
+ * the awards-applied state and, at the win threshold, appends `game.ended`.
+ * Event indices continue contiguously from the projected state's
+ * `eventIndex`. Pure: {@link reduce} never mutates, and the local projection
+ * is discarded.
+ */
+function appendAwardsAndVictory(
+  state: GameState,
+  primaryEvents: readonly GameEvent[],
+  actingPlayerId: PlayerId,
+): GameEvent[] {
+  let cursor = primaryEvents.reduce(reduce, state);
+  const extra: GameEvent[] = [];
+
+  const longestRoad = computeLongestRoad(cursor);
+  if (longestRoad.holder !== cursor.longestRoadHolder) {
+    const event: LongestRoadAwardedEvent = {
+      type: 'award.longestRoad',
+      index: cursor.eventIndex,
+      ...(longestRoad.holder !== undefined ? { playerId: longestRoad.holder } : {}),
+      length: longestRoad.length,
+    };
+    extra.push(event);
+    cursor = reduce(cursor, event);
+  }
+
+  const largestArmy = computeLargestArmy(cursor);
+  if (
+    largestArmy.holder !== undefined &&
+    largestArmy.holder !== cursor.largestArmyHolder
+  ) {
+    const event: LargestArmyAwardedEvent = {
+      type: 'award.largestArmy',
+      index: cursor.eventIndex,
+      playerId: largestArmy.holder,
+      knights: largestArmy.knights,
+    };
+    extra.push(event);
+    cursor = reduce(cursor, event);
+  }
+
+  // Victory is checked ONLY for the acting player, on their own turn (S1.3.4)
+  // — so a hidden VP card can complete a win, and an opponent pushed to the
+  // threshold by this action does NOT win.
+  if (computeVictoryPoints(cursor, actingPlayerId) >= CLASSIC_VICTORY_PROFILE.vpToWin) {
+    const finalStandings: Record<PlayerId, number> = {};
+    for (const player of cursor.players) {
+      finalStandings[player.id] = computeVictoryPoints(cursor, player.id);
+    }
+    const event: GameEndedEvent = {
+      type: 'game.ended',
+      index: cursor.eventIndex,
+      winnerId: actingPlayerId,
+      finalStandings,
+    };
+    extra.push(event);
+  }
+
+  return [...primaryEvents, ...extra];
 }
 
 /**
@@ -323,7 +633,7 @@ function handSize(resources: Readonly<Record<ResourceType, number>>): number {
  */
 function computePlayersOwingDiscard(state: GameState): PlayerId[] {
   return state.players
-    .filter((player) => handSize(player.resources) > 7)
+    .filter((player) => handSize(player.resources) > CLASSIC_ROBBER_PROFILE.handLimit)
     .map((player) => player.id);
 }
 
@@ -536,6 +846,13 @@ export function validate(
   }
   if (!state.players.some((player) => player.id === playerId)) {
     return reject('UNKNOWN_PLAYER');
+  }
+  // The match is over (S1.3.4): once `game.ended` moved the phase to
+  // `'finished'`, no gameplay intent is legal — checked before the per-intent
+  // phase logic so every intent earns the specific GAME_ALREADY_ENDED rather
+  // than a generic INVALID_PHASE.
+  if (state.phase === 'finished') {
+    return reject('GAME_ALREADY_ENDED');
   }
   // Phase-guard layer (S1.2.4, extended S1.3.1): every intent is legal in
   // exactly one canonical phase (or, for the knight, two). Setup-only
@@ -785,7 +1102,8 @@ export function validate(
         edgeId: intent.edgeId,
         cost,
       };
-      return { ok: true, events: [event] };
+      // A new road can extend the longest-road lead (S1.3.4).
+      return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buildSettlement': {
       const vertex = findVertex(topology(), intent.vertexId);
@@ -828,7 +1146,9 @@ export function validate(
         vertexId: intent.vertexId,
         cost,
       };
-      return { ok: true, events: [event] };
+      // The +1 VP can win, and a settlement on an intervening vertex can
+      // break an opponent's longest road (S1.3.4).
+      return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buildCity': {
       const vertex = findVertex(topology(), intent.vertexId);
@@ -861,7 +1181,8 @@ export function validate(
         vertexId: intent.vertexId,
         cost,
       };
-      return { ok: true, events: [event] };
+      // The +1 VP (net +2 for the city) can complete a win (S1.3.4).
+      return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buyDevCard': {
       const cost = CLASSIC_DEV_CARD_PROFILE.buyCost;
@@ -890,7 +1211,9 @@ export function validate(
         cost,
         deckRemaining: remainingBefore - 1,
       };
-      return { ok: true, events: [event] };
+      // A drawn VP card can silently complete a win on the buyer's own turn
+      // (S1.3.4) — the win check sees the hidden card.
+      return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.playDevCard': {
       // Un-deferred as of S1.3.1: the knight now shares the SAME
@@ -953,7 +1276,12 @@ export function validate(
                 }
               : {}),
           };
-          return { ok: true, events: [knightEvent, moveEvent] };
+          // The bumped knight count can take/steal largest army — and that
+          // +2 VP can complete a win (S1.3.4).
+          return {
+            ok: true,
+            events: appendAwardsAndVictory(state, [knightEvent, moveEvent], playerId),
+          };
         }
         case 'roadBuilding': {
           const buildings = state.buildings ?? { settlements: {}, roads: {} };
@@ -988,7 +1316,8 @@ export function validate(
             playerId,
             edgeIds,
           };
-          return { ok: true, events: [event] };
+          // Free roads can extend the longest-road lead (S1.3.4).
+          return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
         }
         case 'yearOfPlenty': {
           const bank = { ...(state.bank ?? {}) };
@@ -1055,7 +1384,9 @@ export function validate(
       if (!player) {
         return reject('UNKNOWN_PLAYER'); // unreachable: membership already checked above
       }
-      const required = Math.floor(handSize(player.resources) / 2);
+      const required = Math.floor(
+        handSize(player.resources) / CLASSIC_ROBBER_PROFILE.halfDivisor,
+      );
       const requestedTotal = handSize(intent.resources);
       if (requestedTotal !== required) {
         return reject('WRONG_DISCARD_COUNT');
