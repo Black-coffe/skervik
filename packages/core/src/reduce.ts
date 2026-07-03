@@ -115,15 +115,27 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       };
     }
     case 'dice.rolled': {
-      // Landing the phase on 'main' happens here (S1.2.4), not on the
-      // paired `resources.produced` event: `dice.rolled` is the ONE event
-      // every roll always emits (7 included), so it's the natural,
-      // single place the turn FSM exits 'roll'. Production (if any) is a
-      // zero-duration pass-through — there's no persisted "produce" phase to
-      // sit in — applied below via a separate `resources.produced` event
-      // (S1.2.1) that leaves phase untouched (it's already 'main' by then).
-      // A 7 (no production, robber deferred to S1.3.1 — see the documented
-      // `'robber'` phase seam) still lands on 'main' the same way.
+      // Landing the phase happens here (S1.2.4), not on the paired
+      // `resources.produced` event: `dice.rolled` is the ONE event every
+      // roll always emits, so it's the natural, single place the turn FSM
+      // exits 'roll'. A NON-7 roll always lands on 'main', production (if
+      // any) a zero-duration pass-through applied below via a separate
+      // `resources.produced` event (S1.2.1) that leaves phase untouched. A 7
+      // (S1.3.1) instead enters the `'robber'` phase seam — `playersToDiscard`
+      // travels with it ONLY when non-empty (dropped entirely otherwise,
+      // same "absent key = nothing pending" convention as
+      // `pendingRoadVertexId`), so `moveRobber` is immediately legal for a 7
+      // that happened to catch nobody over the hand limit.
+      if (event.total === 7) {
+        return {
+          ...state,
+          phase: 'robber',
+          ...(event.playersToDiscard && event.playersToDiscard.length > 0
+            ? { playersToDiscard: event.playersToDiscard }
+            : {}),
+          eventIndex: event.index + 1,
+        };
+      }
       return { ...state, phase: 'main', eventIndex: event.index + 1 };
     }
     case 'resources.produced': {
@@ -365,6 +377,72 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         players,
         devCards: decrementHeld(state.devCards, event.playerId, 'monopoly'),
         devCardPlayedThisTurn: true,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'resources.discarded': {
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? { ...player, resources: subtractResources(player.resources, event.resources) }
+          : player,
+      );
+      // Drop `playersToDiscard` entirely once nobody remains owing (not set
+      // to `[]`) — same "absent key = nothing pending" convention `dice.rolled`
+      // just established above.
+      const { playersToDiscard: _prevOwing, ...rest } = state;
+      return {
+        ...rest,
+        players,
+        ...(event.remainingToDiscard.length > 0
+          ? { playersToDiscard: event.remainingToDiscard }
+          : {}),
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'robber.moved': {
+      const board = state.board;
+      const stolenResource = event.stolenResource;
+      const players =
+        event.stolenFrom !== undefined && stolenResource !== undefined
+          ? state.players.map((player) => {
+              if (player.id === event.stolenFrom) {
+                return {
+                  ...player,
+                  resources: subtractResources(player.resources, { [stolenResource]: 1 }),
+                };
+              }
+              if (player.id === event.playerId) {
+                return {
+                  ...player,
+                  resources: addResources(player.resources, { [stolenResource]: 1 }),
+                };
+              }
+              return player;
+            })
+          : state.players;
+      // Discards are always fully resolved by the time a `robber.moved`
+      // lands (`validate`'s `MUST_DISCARD_FIRST` guard) — drop the marker
+      // defensively regardless, so it can never linger past the move.
+      const { playersToDiscard: _cleared, ...rest } = state;
+      return {
+        ...rest,
+        players,
+        ...(board ? { board: { ...board, robberTileId: event.tileId } } : {}),
+        phase: event.nextPhase,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'devCard.knightPlayed': {
+      const knightsPlayed = {
+        ...state.knightsPlayed,
+        [event.playerId]: (state.knightsPlayed?.[event.playerId] ?? 0) + 1,
+      };
+      return {
+        ...state,
+        devCards: decrementHeld(state.devCards, event.playerId, 'knight'),
+        devCardPlayedThisTurn: true,
+        knightsPlayed,
+        phase: 'robber',
         eventIndex: event.index + 1,
       };
     }

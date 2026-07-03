@@ -9,11 +9,14 @@ import type {
   CityBuiltEvent,
   DevCardBoughtEvent,
   DiceRolledEvent,
+  DiscardIntent,
   EndTurnIntent,
   GameEvent,
   GameState,
+  KnightPlayedEvent,
   MatchStartedEvent,
   MonopolyPlayedEvent,
+  MoveRobberIntent,
   PlaceRoadIntent,
   PlaceSettlementIntent,
   PlayerIntent,
@@ -23,10 +26,12 @@ import type {
   PlayRoadBuildingIntent,
   PlayYearOfPlentyIntent,
   RejectReason,
+  ResourcesDiscardedEvent,
   ResourcesProducedEvent,
   RoadBuildingPlayedEvent,
   RoadBuiltEvent,
   RoadPlacedEvent,
+  RobberMovedEvent,
   RollDiceIntent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
@@ -154,6 +159,23 @@ describe('GameEvent', () => {
       resource: 'timber',
       transfers: { 'player-2': 3 },
     },
+    {
+      type: 'resources.discarded',
+      index: 14,
+      playerId: 'player-1',
+      resources: { timber: 2 },
+      remainingToDiscard: ['player-2'],
+    },
+    {
+      type: 'robber.moved',
+      index: 15,
+      playerId: 'player-1',
+      tileId: '0,0',
+      stolenFrom: 'player-2',
+      stolenResource: 'timber',
+      nextPhase: 'main',
+    },
+    { type: 'devCard.knightPlayed', index: 16, playerId: 'player-1' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -229,6 +251,21 @@ describe('GameEvent', () => {
           expect(e.transfers).toEqual({ 'player-2': 3 });
           break;
         }
+        case 'resources.discarded': {
+          const e: ResourcesDiscardedEvent = event;
+          expect(e.resources).toEqual({ timber: 2 });
+          break;
+        }
+        case 'robber.moved': {
+          const e: RobberMovedEvent = event;
+          expect(e.stolenResource).toBe('timber');
+          break;
+        }
+        case 'devCard.knightPlayed': {
+          const e: KnightPlayedEvent = event;
+          expect(e.playerId).toBe('player-1');
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -252,7 +289,7 @@ describe('PlayerIntent', () => {
     { type: 'intent.buildSettlement', playerId: 'player-1', vertexId: 'vertex-1' },
     { type: 'intent.buildCity', playerId: 'player-1', vertexId: 'vertex-1' },
     { type: 'intent.buyDevCard', playerId: 'player-1' },
-    { type: 'intent.playDevCard', playerId: 'player-1', card: 'knight' },
+    { type: 'intent.playDevCard', playerId: 'player-1', card: 'knight', tileId: '0,0' },
     {
       type: 'intent.playDevCard',
       playerId: 'player-1',
@@ -270,6 +307,13 @@ describe('PlayerIntent', () => {
       playerId: 'player-1',
       card: 'monopoly',
       resource: 'timber',
+    },
+    { type: 'intent.discard', playerId: 'player-1', resources: { timber: 1 } },
+    {
+      type: 'intent.moveRobber',
+      playerId: 'player-1',
+      tileId: '0,0',
+      victimId: 'player-2',
     },
   ];
 
@@ -347,6 +391,16 @@ describe('PlayerIntent', () => {
           }
           break;
         }
+        case 'intent.discard': {
+          const i: DiscardIntent = intent;
+          expect(i.resources).toEqual({ timber: 1 });
+          break;
+        }
+        case 'intent.moveRobber': {
+          const i: MoveRobberIntent = intent;
+          expect(i.tileId).toBe('0,0');
+          break;
+        }
         default: {
           const exhaustive: never = intent;
           throw new Error(`unhandled intent type: ${JSON.stringify(exhaustive)}`);
@@ -379,6 +433,13 @@ describe('RejectReason', () => {
       'BANK_EXHAUSTED',
       'ALREADY_ROLLED',
       'MUST_ROLL_FIRST',
+      'MUST_DISCARD_FIRST',
+      'WRONG_DISCARD_COUNT',
+      'NOT_OWED_DISCARD',
+      'ROBBER_SAME_TILE',
+      'NO_SUCH_VICTIM',
+      'VICTIM_HAS_NO_CARDS',
+      'NOT_IN_ROBBER_PHASE',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');

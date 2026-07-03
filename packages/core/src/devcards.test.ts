@@ -594,22 +594,8 @@ describe('development cards (S1.2.3)', () => {
     });
   });
 
-  describe('knight deferral (S1.3.1)', () => {
-    it('rejects playDevCard(knight) with KNIGHT_DEFERRED even when a knight is held', () => {
-      const genesis = makeGenesis({
-        devCards: { 'player-1': { held: { knight: 1 }, boughtThisTurn: {} } },
-      });
-
-      const result = validate(
-        genesis,
-        { type: 'intent.playDevCard', playerId: 'player-1', card: 'knight' },
-        'player-1',
-        SEED,
-      );
-      expect(result).toEqual({ ok: false, reason: 'KNIGHT_DEFERRED' });
-    });
-
-    it('knight count is still tracked on buy, ready for S1.3.1/S1.3.4', () => {
+  describe('knight (un-deferred by S1.3.1 — full play/relocate/steal coverage lives in robber.test.ts)', () => {
+    it('knight count is tracked on buy, ready for the played-knight counter (S1.3.1/S1.3.4)', () => {
       // DECK[0] === 'knight' for the golden seed.
       const genesis = makeGenesis();
 

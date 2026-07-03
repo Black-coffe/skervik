@@ -227,6 +227,24 @@ export interface GameState {
    * owns formalizing the full per-turn-marker reset architecture.
    */
   readonly devCardPlayedThisTurn?: boolean;
+  /**
+   * Present only while `phase === 'robber'` and at least one player still
+   * owes a post-7 discard (S1.3.1) — the list of {@link PlayerId}s who must
+   * `intent.discard` before the mover may `intent.moveRobber`. Dropped
+   * entirely (not set to an empty array) once the last owing player
+   * discards, or was never set at all for a knight-triggered robber move
+   * (Classic: no discard step) — same "absent key = condition resolved /
+   * never applied" optionality as {@link GameState.pendingRoadVertexId}.
+   */
+  readonly playersToDiscard?: readonly PlayerId[];
+  /**
+   * Per-player count of knights played (S1.3.1), keyed by `PlayerId` —
+   * absent until the first `devCard.knightPlayed` lands, same "fact of an
+   * event having landed" optionality as {@link GameState.devCards}. Never
+   * reset by `turn.ended` (a match-long running total, unlike the per-turn
+   * markers) — feeds the largest-army calculation (S1.3.4), not yet built.
+   */
+  readonly knightsPlayed?: Readonly<Record<PlayerId, number>>;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -270,6 +288,16 @@ export interface DiceRolledEvent extends BaseGameEvent {
   readonly dieA: number;
   readonly dieB: number;
   readonly total: number;
+  /**
+   * Present ONLY when `total === 7` (S1.3.1): the players who must discard
+   * down to `floor(handSize / 2)` before the robber can move — a fact
+   * `validate` already computed from hand sizes, so `reduce`/replay never
+   * recompute it. An EMPTY array is itself a recorded fact ("a 7 landed, but
+   * nobody happened to be holding more than 7 cards") — same "still emitted
+   * so absence isn't inferred" discipline as {@link ResourcesProducedEvent.grants}.
+   * Absence of the field entirely means this roll wasn't a 7 at all.
+   */
+  readonly playersToDiscard?: readonly PlayerId[];
 }
 
 /**
@@ -429,10 +457,70 @@ export interface MonopolyPlayedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when an owing player discards half their hand after a 7 (S1.3.1
+ * spec: every player holding >7 resource cards discards `floor(handSize /
+ * 2)`, their OWN choice of which cards). `resources` is the exact discarded
+ * multiset (an explicit fact, not a count — `reduce` only subtracts, never
+ * re-derives it); `remainingToDiscard` is `GameState.playersToDiscard`
+ * AFTER this discard resolves (`validate` already recomputed the list once,
+ * the same "fact, not a recipe" discipline as {@link RoadPlacedEvent.nextPlayerId}) —
+ * an empty array means every owing player has now discarded and the mover
+ * may relocate the robber.
+ */
+export interface ResourcesDiscardedEvent extends BaseGameEvent {
+  readonly type: 'resources.discarded';
+  readonly playerId: PlayerId;
+  readonly resources: Readonly<Record<ResourceType, number>>;
+  readonly remainingToDiscard: readonly PlayerId[];
+}
+
+/**
+ * Emitted when the robber relocates and (maybe) steals — the shared
+ * resolution both a 7-roll (via `intent.moveRobber`, after any discards
+ * clear) and a played knight (paired right after {@link KnightPlayedEvent})
+ * land through (S1.3.1 spec). `stolenFrom`/`stolenResource` are BOTH present
+ * or BOTH absent: present when the mover named a victim who had ≥1 card (the
+ * resource is the PRNG's pick, a fact `validate` already drew — replay never
+ * re-draws it); absent when no adjacent victim held any cards (a documented
+ * no-op steal). `nextPhase` is the phase the turn resumes in: always `'main'`
+ * for the 7-roll path (rolling — 7 or not — already consumed the turn's
+ * roll), or whatever phase the knight was played FROM (`'roll'` pre-roll,
+ * `'main'` post-roll, Classic allows either) for the knight path — an
+ * explicit fact so `reduce` never has to remember which path produced this
+ * event.
+ */
+export interface RobberMovedEvent extends BaseGameEvent {
+  readonly type: 'robber.moved';
+  readonly playerId: PlayerId;
+  readonly tileId: TileId;
+  readonly stolenFrom?: PlayerId;
+  readonly stolenResource?: ResourceType;
+  readonly nextPhase: GamePhase;
+}
+
+/**
+ * Emitted when a player plays a knight (S1.3.1, un-deferred from S1.2.3's
+ * `KNIGHT_DEFERRED`): consumes the held card and marks the per-turn played
+ * marker exactly like every other dev-card play, and additionally bumps the
+ * player's played-knight count (largest army, S1.3.4). Always immediately
+ * followed by a {@link RobberMovedEvent} carrying the actual relocate+steal
+ * (`validate`'s `playDevCard` knight branch emits both events together,
+ * mirroring {@link DiceRolledEvent}/{@link ResourcesProducedEvent}'s
+ * roll+production pairing) — this event alone only enters the `'robber'`
+ * phase seam, the same "zero-duration pass-through" shape `dice.rolled` uses
+ * for production.
+ */
+export interface KnightPlayedEvent extends BaseGameEvent {
+  readonly type: 'devCard.knightPlayed';
+  readonly playerId: PlayerId;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
- * S1.2.2; dev cards, S1.2.3; trade/robber/etc. still to come).
+ * S1.2.2; dev cards, S1.2.3; robber/7 + knight, S1.3.1; trade/etc. still to
+ * come).
  */
 export type GameEvent =
   | MatchStartedEvent
@@ -448,7 +536,10 @@ export type GameEvent =
   | DevCardBoughtEvent
   | RoadBuildingPlayedEvent
   | YearOfPlentyPlayedEvent
-  | MonopolyPlayedEvent;
+  | MonopolyPlayedEvent
+  | ResourcesDiscardedEvent
+  | RobberMovedEvent
+  | KnightPlayedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -516,14 +607,17 @@ interface BasePlayDevCardIntent extends BaseIntent {
 }
 
 /**
- * A player's request to play a held knight card — always rejected with
- * `KNIGHT_DEFERRED` in S1.2.3 (the knight's effect, robber relocation +
- * steal, is a robber action owned by S1.3.1, which also owns the 7-roll's
- * robber move). This shape exists so the intent is well-typed and the
- * deferral is a documented, testable rejection rather than a missing case.
+ * A player's request to play a held knight card (S1.3.1 — un-defers
+ * S1.2.3's unconditional `KNIGHT_DEFERRED` rejection): names the SAME
+ * relocate+steal target a plain {@link MoveRobberIntent} would (no discard
+ * step — Classic knights never trigger discards), and is legal from `'roll'`
+ * OR `'main'` (Classic allows playing a knight before or after rolling,
+ * unlike every other dev card, which is main-phase-only).
  */
 export interface PlayKnightIntent extends BasePlayDevCardIntent {
   readonly card: 'knight';
+  readonly tileId: TileId;
+  readonly victimId?: PlayerId;
 }
 
 /** A player's request to play a road-building card: up to 2 free roads at the given edges (S1.2.3). */
@@ -553,12 +647,38 @@ export type PlayDevCardIntent =
   PlayKnightIntent | PlayRoadBuildingIntent | PlayYearOfPlentyIntent | PlayMonopolyIntent;
 
 /**
+ * A player's request to discard part of their hand after a 7 (S1.3.1,
+ * `GameState.playersToDiscard`) — the player's OWN choice of which cards,
+ * so `resources` names the exact multiset to discard (must sum to
+ * `floor(handSize / 2)`). Unlike every other intent, this one is legal for
+ * ANY owing player, not just `GameState.currentPlayerId` — several players
+ * may need to discard in the same 7-resolution, order-independent
+ * (`validate.ts`'s phase-guard layer carves out this one exception).
+ */
+export interface DiscardIntent extends BaseIntent {
+  readonly type: 'intent.discard';
+  readonly resources: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * The current player's request to relocate the robber and (maybe) steal,
+ * once every owing player has discarded (S1.3.1) — the 7-roll path's
+ * counterpart to {@link PlayKnightIntent}, which carries the same
+ * `tileId`/`victimId` shape but resolves through a dev-card play instead.
+ */
+export interface MoveRobberIntent extends BaseIntent {
+  readonly type: 'intent.moveRobber';
+  readonly tileId: TileId;
+  readonly victimId?: PlayerId;
+}
+
+/**
  * A player's wish, sent from the client. Discriminated by `type`. Passed
  * through `validate` (S0.5.2), which turns a legal intent into
  * {@link GameEvent}s or rejects it with a {@link RejectReason} — an intent
  * never mutates state directly (ADR-0003). M1 Classic rules keep extending
- * this set (build lands here, S1.2.2; dev cards, S1.2.3; trade/etc. still
- * to come).
+ * this set (build lands here, S1.2.2; dev cards, S1.2.3; robber/7 + knight,
+ * S1.3.1; trade/etc. still to come).
  */
 export type PlayerIntent =
   | RollDiceIntent
@@ -569,7 +689,9 @@ export type PlayerIntent =
   | BuildSettlementIntent
   | BuildCityIntent
   | BuyDevCardIntent
-  | PlayDevCardIntent;
+  | PlayDevCardIntent
+  | DiscardIntent
+  | MoveRobberIntent;
 
 /**
  * Why `validate` refused an intent. An enumerated string-literal union so
@@ -593,9 +715,26 @@ export type RejectReason =
   | 'CARD_NOT_HELD'
   | 'BOUGHT_THIS_TURN'
   | 'DEV_CARD_ALREADY_PLAYED'
+  /** No longer emitted as of S1.3.1 (the knight is un-deferred) — kept as a
+   * historical variant per the append-only-union discipline (ADR-0003):
+   * never repurpose a shipped reject-reason name. */
   | 'KNIGHT_DEFERRED'
   | 'BANK_EXHAUSTED'
   /** rollDice attempted from `main` — this turn already rolled (S1.2.4). */
   | 'ALREADY_ROLLED'
   /** A post-roll intent (build/buy/play/endTurn) attempted from `roll` — this turn hasn't rolled yet (S1.2.4). */
-  | 'MUST_ROLL_FIRST';
+  | 'MUST_ROLL_FIRST'
+  /** `intent.moveRobber` attempted while `GameState.playersToDiscard` is still non-empty (S1.3.1). */
+  | 'MUST_DISCARD_FIRST'
+  /** `intent.discard`'s `resources` don't sum to `floor(handSize / 2)` (S1.3.1). */
+  | 'WRONG_DISCARD_COUNT'
+  /** `intent.discard` from a player not currently listed in `GameState.playersToDiscard` (S1.3.1). */
+  | 'NOT_OWED_DISCARD'
+  /** Robber relocation named its own current tile — must move to a DIFFERENT tile (S1.3.1). */
+  | 'ROBBER_SAME_TILE'
+  /** Named `victimId` owns no settlement/city adjacent to the robber's new tile (S1.3.1). */
+  | 'NO_SUCH_VICTIM'
+  /** Named `victimId` is adjacent but holds 0 resource cards — pick a different eligible victim (S1.3.1). */
+  | 'VICTIM_HAS_NO_CARDS'
+  /** `intent.discard` / `intent.moveRobber` attempted outside the `'robber'` phase (S1.3.1). */
+  | 'NOT_IN_ROBBER_PHASE';

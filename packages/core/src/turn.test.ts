@@ -23,10 +23,12 @@ import { validate } from './validate.js';
 
 // The turn FSM never draws from the PRNG itself (guards/rotation are
 // deterministic) — SEED only satisfies the fixed `validate` signature (plan
-// §1) and, via `shuffledDevDeck`, is chosen so DECK[0] is 'yearOfPlenty' (a
-// non-knight, immediately-playable-next-turn kind — see the round-2 play
-// below).
-const SEED = 'skervik-turn-fsm-seed-1';
+// §1) and is chosen so NONE of the 6 scripted rolls below total 7 (S1.3.1:
+// a 7 now diverts into the `'robber'` phase seam, which is out of THIS
+// file's scope — see `robber.test.ts`) and, via `shuffledDevDeck`, DECK[0]
+// is 'yearOfPlenty' (a non-knight, immediately-playable-next-turn kind — see
+// the round-2 play below).
+const SEED = 'skervik-turn-fsm-seed-32';
 
 const topology = buildTopology();
 
@@ -256,7 +258,7 @@ describe('turn FSM: phases, turn order, phase guards (S1.2.4)', () => {
       expect(result).toEqual({ ok: false, reason: 'NOT_YOUR_TURN' });
     });
 
-    it('a rolled 7 still lands the phase on main (robber phase seam documented, not entered — S1.3.1)', () => {
+    it('a rolled 7 diverts into the robber phase seam instead of main (S1.3.1 — see robber.test.ts for the full discard/relocate/steal flow)', () => {
       // eventIndex 6 resolves to total 7 with this seed (documented in
       // production.test.ts's file-header table).
       const SEVEN_SEED = 'skervik-production-seed-1';
@@ -274,7 +276,7 @@ describe('turn FSM: phases, turn order, phase guards (S1.2.4)', () => {
       expect(result.events[0]).toMatchObject({ type: 'dice.rolled', total: 7 });
 
       const next = reduce(state, result.events[0] as GameEvent);
-      expect(next.phase).toBe('main');
+      expect(next.phase).toBe('robber');
     });
   });
 });
