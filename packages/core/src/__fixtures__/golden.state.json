@@ -3,7 +3,6 @@
   "phase": "roll",
   "turn": 3,
   "currentPlayerId": "player-1",
-  "playerOrder": ["player-1", "player-2"],
   "players": [
     {
       "id": "player-1",
@@ -19,5 +18,6 @@
     }
   ],
   "eventIndex": 5,
-  "seedHash": "sha256:skervik-golden-seed-3"
+  "seedHash": "sha256:skervik-golden-seed-3",
+  "playerOrder": ["player-1", "player-2"]
 }

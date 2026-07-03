@@ -1,145 +1,34 @@
-// @skervik/core — event-LOG layer (S0.5.4): the on-disk/wire shape of a
-// recorded match (tech spec §6.4, `matches/{id}/events.ndjson`) and the pure
-// functions that turn it back into a {@link GameState}.
+// @skervik/core — event-LOG layer: the on-disk/wire shape of a recorded match
+// (tech spec §6.4, `matches/{id}/events.ndjson`, ADR-0009 Fork 2) and the pure
+// function that turns it back into a {@link GameState}.
+//
+// The persisted line format is the BARE {@link GameEvent}: exactly the object
+// `reduce` consumes, one `JSON.stringify(event)` per ndjson line — no separate
+// UPPER_CASE wire schema to keep in lockstep with the event union. This retires
+// the pre-E1.1 `EventLogLine` union, which only encoded 3 of ~18 event types
+// (and, e.g., couldn't persist `resources.produced` at all); the bare format
+// round-trips every event `reduce` understands, losslessly.
 //
 // This module stays browser-safe/isomorphic (ADR-0003): no `node:fs`, no
-// `node:path`, no file I/O, no `Date.now`/`Math.random`. Every function here
-// takes already-in-memory data (a string or parsed entries) — reading the
-// log off disk/S3 is the caller's job (server, or a test's fixture loader).
-//
-// `replayLog` does not reimplement the fold: it maps {@link EventLogLine}s to
-// {@link GameEvent}s and delegates to `replay`/`reduce` from `./reduce.js`
-// (S0.5.2), the single source of truth for "apply one event".
+// `node:path`, no file I/O, no `Date.now`/`Math.random`. It takes the log
+// content as an in-memory string — reading it off disk/S3 is the caller's job
+// (server, or a test's fixture loader). Reconstruction delegates to `replay`
+// (`./reduce.js`), the single source of truth for the fold.
 
-import { replay } from './reduce.js';
-import type { GameEvent, GameState, MatchId, PlayerId } from './types.js';
-
-/** `data` payload of a `MATCH_STARTED` log line — mirrors {@link MatchStartedEvent}. */
-export interface MatchStartedLogData {
-  readonly matchId: MatchId;
-  readonly seedHash: string;
-  readonly playerIds: readonly PlayerId[];
-}
+import type { GameEvent } from './types.js';
 
 /**
- * `data` payload of a `DICE_ROLLED` log line — mirrors {@link DiceRolledEvent}
- * (S1.2.1: Classic play is 2d6, both faces + the total are recorded so
- * replay never recomputes them). The line's `rngStreamIndex` (sibling of
- * `data`, required on this variant) is the base index the gameplay scheme's
- * `gameplayStreamIndex(rngStreamIndex, slot)` derives both draws from —
- * anyone with the revealed `seed` can call `rollDie(seed,
- * gameplayStreamIndex(rngStreamIndex, 0|1))` and confirm it equals
- * `dieA`/`dieB` (`docs/wiki/rng-stream-map.md` §1,
- * `docs/wiki/fair-rng-commit-reveal.md`).
+ * Parses an ndjson event log (tech spec §6.4, ADR-0009 Fork 2) — one
+ * `JSON.stringify(GameEvent)` per line — into the bare {@link GameEvent}[]
+ * that `reduce`/`replay` consume directly. Pure: takes the log content as a
+ * string, never a path — reading the file/object is the caller's concern.
+ * Blank lines are skipped (trailing-newline tolerance). Feed the result to
+ * `replay(initialState, events)` to reconstruct the final {@link GameState}.
  */
-export interface DiceRolledLogData {
-  readonly playerId: PlayerId;
-  readonly dieA: number;
-  readonly dieB: number;
-  readonly total: number;
-}
-
-/** `data` payload of a `TURN_ENDED` log line — mirrors {@link TurnEndedEvent}. */
-export interface TurnEndedLogData {
-  readonly playerId: PlayerId;
-  readonly nextPlayerId: PlayerId;
-}
-
-/** Fields shared by every {@link EventLogLine} variant (tech spec §6.4). */
-interface BaseLogLine {
-  /** Position in the log / PRNG stream — becomes `GameEvent.index` on replay. */
-  readonly seq: number;
-  /** Recording timestamp (unix seconds). Metadata only — never read by replay logic. */
-  readonly ts: number;
-  /** Who caused the event: a `PlayerId`, or `"system"` for server-resolved facts. */
-  readonly actor: string;
-}
-
-/**
- * One line of a recorded match event log (tech spec §6.4): `{ seq, ts, type,
- * actor, data, rngStreamIndex }`, one JSON object per ndjson line. A
- * discriminated union on `type` so a random-event line (`DICE_ROLLED`) is
- * required to carry `rngStreamIndex` at the type level — the fair-RNG audit
- * field can't be silently omitted.
- */
-export type EventLogLine =
-  | (BaseLogLine & { readonly type: 'MATCH_STARTED'; readonly data: MatchStartedLogData })
-  | (BaseLogLine & {
-      readonly type: 'DICE_ROLLED';
-      readonly data: DiceRolledLogData;
-      readonly rngStreamIndex: number;
-    })
-  | (BaseLogLine & { readonly type: 'TURN_ENDED'; readonly data: TurnEndedLogData });
-
-/**
- * Parses an ndjson event log (one JSON object per line, tech spec §6.4) into
- * typed {@link EventLogLine}s. Pure: takes the log content as a string, never
- * a path — reading the file/object is the caller's concern. Blank lines are
- * skipped (trailing newline tolerance).
- */
-export function parseEventLog(ndjson: string): EventLogLine[] {
+export function parseGameEventLog(ndjson: string): GameEvent[] {
   return ndjson
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as EventLogLine);
-}
-
-/**
- * Maps one {@link EventLogLine} to the {@link GameEvent} `reduce` understands.
- * `seq` becomes `index`; the random-event line's `dieA`/`dieB`/`total`
- * become the event's fields verbatim (the facts `reduce` applies —
- * recomputing/verifying them against `rngStreamIndex` is the audit step,
- * not part of replay itself). Note: this wire-format replay path does not
- * (yet) synthesize the `resources.produced` event `validate.ts` pairs with
- * a live roll — persisting that as its own `RESOURCES_PRODUCED` log-line
- * type is follow-up scope (tech spec §6.4), not part of S1.2.1's in-memory
- * `validate`/`reduce` contract this module wraps.
- */
-function toGameEvent(line: EventLogLine): GameEvent {
-  switch (line.type) {
-    case 'MATCH_STARTED':
-      return {
-        type: 'match.started',
-        index: line.seq,
-        matchId: line.data.matchId,
-        seedHash: line.data.seedHash,
-        playerIds: line.data.playerIds,
-      };
-    case 'DICE_ROLLED':
-      return {
-        type: 'dice.rolled',
-        index: line.seq,
-        playerId: line.data.playerId,
-        dieA: line.data.dieA,
-        dieB: line.data.dieB,
-        total: line.data.total,
-      };
-    case 'TURN_ENDED':
-      return {
-        type: 'turn.ended',
-        index: line.seq,
-        playerId: line.data.playerId,
-        nextPlayerId: line.data.nextPlayerId,
-      };
-    default: {
-      const exhaustive: never = line;
-      throw new Error(`unhandled event-log line type: ${JSON.stringify(exhaustive)}`);
-    }
-  }
-}
-
-/**
- * Replays a parsed event log from `initialState` to the final
- * {@link GameState}: maps each {@link EventLogLine} to a `GameEvent` (in
- * order) and folds them through `reduce` via `replay` from `./reduce.js` —
- * "replay = truth" (`docs/wiki/deterministic-core.md`). Named distinctly
- * from `replay` (which folds already-typed `GameEvent`s) so both stay
- * exported without colliding.
- */
-export function replayLog(
-  initialState: GameState,
-  entries: readonly EventLogLine[],
-): GameState {
-  return replay(initialState, entries.map(toGameEvent));
+    .map((line) => JSON.parse(line) as GameEvent);
 }
