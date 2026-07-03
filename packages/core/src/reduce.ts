@@ -515,6 +515,20 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       const { openTradeOffer: _closed, ...rest } = state;
       return { ...rest, eventIndex: event.index + 1 };
     }
+    case 'bank.trade': {
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? {
+              ...player,
+              resources: addResources(
+                subtractResources(player.resources, { [event.give]: event.count }),
+                { [event.get]: 1 },
+              ),
+            }
+          : player,
+      );
+      return { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
+    }
     default: {
       const exhaustive: never = event;
       throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);

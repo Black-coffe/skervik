@@ -611,6 +611,25 @@ export interface TradeCancelledEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when a player trades with the bank at their resolved rate
+ * (S1.3.3): `count` of `give` leaves the player for exactly 1 unit of
+ * `get` — `count` is the RATE `validate` already resolved from the
+ * player's owned ports (best of 2:1/3:1/4:1, `validate.ts`'s
+ * `bestBankRate`), an explicit fact so `reduce` never re-derives port
+ * ownership. `bank` is the FULL resultant pool after the trade (both the
+ * `get` debit and the `give` credit), the same explicit-fact discipline as
+ * {@link ResourcesProducedEvent}/{@link YearOfPlentyPlayedEvent}.
+ */
+export interface BankTradedEvent extends BaseGameEvent {
+  readonly type: 'bank.trade';
+  readonly playerId: PlayerId;
+  readonly give: ResourceType;
+  readonly count: number;
+  readonly get: ResourceType;
+  readonly bank: Readonly<Record<ResourceType, number>>;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
@@ -638,7 +657,8 @@ export type GameEvent =
   | TradeOfferedEvent
   | TradeExecutedEvent
   | TradeRejectedEvent
-  | TradeCancelledEvent;
+  | TradeCancelledEvent
+  | BankTradedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -827,6 +847,22 @@ export interface CancelTradeIntent extends BaseIntent {
 }
 
 /**
+ * The current player's request to trade `count` of `give` for exactly 1
+ * unit of `get` with the bank (S1.3.3) — `count` must equal the player's
+ * resolved rate for `give` (always 4:1; 3:1 with any owned generic port;
+ * 2:1 with an owned port matching `give` specifically, `validate.ts`'s
+ * `bestBankRate`). M1 simplification: always exactly 1 unit of `get` per
+ * trade (repeat the intent for more) — multi-unit gets aren't needed yet
+ * and would only add an unused `getCount` field.
+ */
+export interface BankTradeIntent extends BaseIntent {
+  readonly type: 'intent.bankTrade';
+  readonly give: ResourceType;
+  readonly count: number;
+  readonly get: ResourceType;
+}
+
+/**
  * A player's wish, sent from the client. Discriminated by `type`. Passed
  * through `validate` (S0.5.2), which turns a legal intent into
  * {@link GameEvent}s or rejects it with a {@link RejectReason} — an intent
@@ -850,7 +886,8 @@ export type PlayerIntent =
   | AcceptTradeIntent
   | RejectTradeIntent
   | CounterTradeIntent
-  | CancelTradeIntent;
+  | CancelTradeIntent
+  | BankTradeIntent;
 
 /**
  * Why `validate` refused an intent. An enumerated string-literal union so
@@ -906,4 +943,6 @@ export type RejectReason =
   /** `intent.cancelTrade` from a player who isn't `GameState.openTradeOffer.proposerId` (S1.3.2). */
   | 'NOT_TRADE_PROPOSER'
   /** `intent.counterTrade` attempted when the open offer is already at the M1 counter bound (`depth 1`, S1.3.2). */
-  | 'TRADE_COUNTER_LIMIT_REACHED';
+  | 'TRADE_COUNTER_LIMIT_REACHED'
+  /** `intent.bankTrade`'s `count` doesn't equal the player's resolved rate for `give` (S1.3.3). */
+  | 'WRONG_RATE_COUNT';

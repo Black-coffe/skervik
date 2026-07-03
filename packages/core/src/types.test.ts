@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   AcceptTradeIntent,
+  BankTradedEvent,
+  BankTradeIntent,
   BoardGeneratedEvent,
   BuildCityIntent,
   BuildRoadIntent,
@@ -209,6 +211,15 @@ describe('GameEvent', () => {
       remainingTargets: [],
     },
     { type: 'trade.cancelled', index: 20, playerId: 'player-1' },
+    {
+      type: 'bank.trade',
+      index: 21,
+      playerId: 'player-1',
+      give: 'timber',
+      count: 4,
+      get: 'ore',
+      bank: { timber: 23, ore: 18 },
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -319,6 +330,11 @@ describe('GameEvent', () => {
           expect(e.playerId).toBe('player-1');
           break;
         }
+        case 'bank.trade': {
+          const e: BankTradedEvent = event;
+          expect(e.count).toBe(4);
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -383,6 +399,13 @@ describe('PlayerIntent', () => {
       get: { timber: 1 },
     },
     { type: 'intent.cancelTrade', playerId: 'player-1' },
+    {
+      type: 'intent.bankTrade',
+      playerId: 'player-1',
+      give: 'timber',
+      count: 4,
+      get: 'ore',
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -494,6 +517,11 @@ describe('PlayerIntent', () => {
           expect(i.playerId).toBe('player-1');
           break;
         }
+        case 'intent.bankTrade': {
+          const i: BankTradeIntent = intent;
+          expect(i.count).toBe(4);
+          break;
+        }
         default: {
           const exhaustive: never = intent;
           throw new Error(`unhandled intent type: ${JSON.stringify(exhaustive)}`);
@@ -538,6 +566,7 @@ describe('RejectReason', () => {
       'NOT_A_TRADE_TARGET',
       'NOT_TRADE_PROPOSER',
       'TRADE_COUNTER_LIMIT_REACHED',
+      'WRONG_RATE_COUNT',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');
