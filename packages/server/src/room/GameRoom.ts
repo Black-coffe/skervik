@@ -10,14 +10,16 @@
 import {
   type GameState,
   type PlayerId,
+  type PlayerIntent,
   reduce,
   type Seed,
   validate,
 } from '@skervik/core';
-import type {
-  EventBatchMessage,
-  RejectMessage,
-  StateSnapshotMessage,
+import {
+  ClientMessageSchema,
+  type EventBatchMessage,
+  type RejectMessage,
+  type StateSnapshotMessage,
 } from '@skervik/protocol';
 import { type Client, Room } from 'colyseus';
 
@@ -210,12 +212,23 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * state directly (ADR-0009 invariant #1).
    */
   async #handleIntent(client: Client, message: unknown): Promise<void> {
-    // Structural guard (S1.5.1 adds zod). A malformed envelope is REJECTED,
-    // never thrown out of the handler.
-    if (!isIntentEnvelope(message)) {
+    // Wire-shape guard (S1.5.1): zod-parse the inbound envelope at the trust
+    // boundary BEFORE core `validate`. A malformed envelope OR payload (bad `v`,
+    // unknown `type`, missing/wrong-typed intent fields) is REJECTED privately,
+    // never thrown out of the handler. This REPLACES the S1.4.2 ad-hoc structural
+    // guard; core `validate` remains the authoritative SEMANTIC validator
+    // (turn / affordability / adjacency …) — zod only enforces the wire shape.
+    const parsed = ClientMessageSchema.safeParse(message);
+    if (!parsed.success) {
       this.#sendReject(client, 'MALFORMED_INTENT');
       return;
     }
+    // zod validated the wire shape; the intent's discriminant is one of core's
+    // known variants, so the cast to the canonical union is sound (the schema is
+    // pinned to `PlayerIntent` at compile time — see @skervik/protocol
+    // messages.ts). The cast is needed only because zod infers optional fields
+    // as `T | undefined`, which `exactOptionalPropertyTypes` treats as distinct.
+    const intent = parsed.data.payload as PlayerIntent;
 
     // Identity binding: the actor is the sender's SEAT, resolved from the
     // connection's `sessionId` — never `payload.playerId`. An unseated sender
@@ -240,7 +253,7 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // rejection / node crash, it's just no longer misreported as MALFORMED_INTENT.
     let result: ReturnType<typeof validate>;
     try {
-      result = validate(this.gameState, message.payload, playerId, this.#seed);
+      result = validate(this.gameState, intent, playerId, this.#seed);
     } catch (error) {
       if (isUnknownIntentError(error)) {
         this.#sendReject(client, 'MALFORMED_INTENT');
@@ -385,29 +398,3 @@ function isUnknownIntentError(error: unknown): boolean {
       error.message.startsWith('unhandled playDevCard card kind:'))
   );
 }
-
-/**
- * Minimal structural guard on an inbound `intent` envelope (no zod until
- * S1.5.1): a non-null object with `type === 'intent'` and a `payload` object
- * carrying a string `type`. Deep intent legality is `validate`'s job — this
- * only screens out garbage the pipeline shouldn't hand to it.
- */
-function isIntentEnvelope(
-  message: unknown,
-): message is { readonly type: 'intent'; readonly payload: PlayerIntentLike } {
-  if (typeof message !== 'object' || message === null) {
-    return false;
-  }
-  const envelope = message as Record<string, unknown>;
-  if (envelope['type'] !== 'intent') {
-    return false;
-  }
-  const payload = envelope['payload'];
-  if (typeof payload !== 'object' || payload === null) {
-    return false;
-  }
-  return typeof (payload as Record<string, unknown>)['type'] === 'string';
-}
-
-/** The shape the structural guard proves — narrowed to what `validate` needs. */
-type PlayerIntentLike = Parameters<typeof validate>[1];

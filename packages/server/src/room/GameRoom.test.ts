@@ -20,10 +20,13 @@ import {
   validate,
   type VertexId,
 } from '@skervik/core';
-import type {
-  EventBatchMessage,
-  RejectMessage,
-  StateSnapshotMessage,
+import {
+  EventBatchEnvelopeSchema,
+  type EventBatchMessage,
+  type RejectMessage,
+  ServerMessageSchema,
+  StateSnapshotEnvelopeSchema,
+  type StateSnapshotMessage,
 } from '@skervik/protocol';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -408,7 +411,7 @@ describe('GameRoom', () => {
     await c1.leave();
   });
 
-  it('a malformed envelope is rejected without throwing', async () => {
+  it('a malformed envelope/payload is rejected by zod without throwing (S1.5.1)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
     const c1 = await testServer.connectTo(room);
     await nextTick();
@@ -416,21 +419,80 @@ describe('GameRoom', () => {
     const rejects: RejectMessage[] = [];
     c1.onMessage('intent.rejected', (m: RejectMessage) => rejects.push(m));
 
-    // Unknown envelope type, then a missing payload — both must be rejected,
-    // never thrown out of the handler.
+    // (1) unknown envelope type, (2) missing payload, and — the S1.5.1 upgrade
+    // over the old structural guard — (3) a KNOWN intent type with a WRONG-TYPED
+    // payload field (`count` a string, not a number). The old guard only checked
+    // `payload.type` was a string and would have handed (3) to `validate`; zod
+    // now rejects it as MALFORMED_INTENT at the wire boundary. All three are
+    // rejected, never thrown out of the handler.
     c1.send('intent', {
       v: 1,
       type: 'not-an-intent',
       payload: { type: 'intent.endTurn' },
     });
     c1.send('intent', { v: 1, type: 'intent' });
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.bankTrade',
+        playerId: c1.sessionId,
+        give: 'timber',
+        count: 'four',
+        get: 'ore',
+      },
+    });
     await nextTick();
 
-    expect(rejects).toHaveLength(2);
+    expect(rejects).toHaveLength(3);
     expect(rejects[0]?.payload.reason).toBe('MALFORMED_INTENT');
     expect(rejects[1]?.payload.reason).toBe('MALFORMED_INTENT');
+    expect(rejects[2]?.payload.reason).toBe('MALFORMED_INTENT');
 
     await c1.leave();
+  });
+
+  it('real server-sent event.batch / state.snapshot payloads parse against the outbound schemas (S1.5.1, E1.6 contract)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+
+    // Attach the state.snapshot listener BEFORE connecting c1 (and before
+    // connecting c2) — onJoin sends the snapshot immediately, so a listener
+    // registered after another awaited `connectTo` can miss it (it isn't
+    // buffered for late subscribers).
+    const c1 = await testServer.connectTo(room);
+    const snapshots: StateSnapshotMessage[] = [];
+    c1.onMessage('state.snapshot', (m: StateSnapshotMessage) => snapshots.push(m));
+    await nextTick();
+
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    startMainTurn(room, a, b, a);
+
+    // ...and the real event.batch it broadcasts from a valid intent.
+    const batches: EventBatchMessage[] = [];
+    c1.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+
+    expect(snapshots).toHaveLength(1);
+    expect(batches).toHaveLength(1);
+
+    // The exact messages the server put on the wire satisfy the schemas E1.6's
+    // client will validate them against — the contract holds end to end.
+    expect(StateSnapshotEnvelopeSchema.safeParse(snapshots[0]).success).toBe(true);
+    expect(ServerMessageSchema.safeParse(snapshots[0]).success).toBe(true);
+    expect(EventBatchEnvelopeSchema.safeParse(batches[0]).success).toBe(true);
+    expect(ServerMessageSchema.safeParse(batches[0]).success).toBe(true);
+
+    await c1.leave();
+    await c2.leave();
   });
 
   // --- S1.4.3 commit-reveal: reveal at game end + leak checklist ------------
