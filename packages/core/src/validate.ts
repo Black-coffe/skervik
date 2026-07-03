@@ -6,22 +6,28 @@
 import {
   type BoardTopology,
   buildTopology,
+  type EdgeTopology,
   findEdge,
   findVertex,
   type VertexTopology,
 } from './board.js';
 import { gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
+  BuildingsState,
+  CityBuiltEvent,
   DiceRolledEvent,
   GameEvent,
   GamePhase,
   GameState,
   PlayerId,
   PlayerIntent,
+  PlayerState,
   RejectReason,
   ResourcesProducedEvent,
   ResourceType,
+  RoadBuiltEvent,
   RoadPlacedEvent,
+  SettlementBuiltEvent,
   SettlementPlacedEvent,
   TurnEndedEvent,
 } from './types.js';
@@ -60,6 +66,25 @@ const CLASSIC_PRODUCTION_PROFILE = {
 } as const;
 
 /**
+ * Classic build costs + per-player piece-supply limits (rule-profile
+ * discipline, plan §1, S1.2.2 spec): the price list and caps live here as a
+ * single swappable object, never scattered magic numbers through the build
+ * branches below.
+ */
+export const CLASSIC_BUILD_PROFILE = {
+  costs: {
+    road: { timber: 1, clay: 1 },
+    settlement: { timber: 1, clay: 1, fleece: 1, barley: 1 },
+    city: { iron: 3, barley: 2 },
+  },
+  supply: {
+    roads: 15,
+    settlements: 5,
+    cities: 4,
+  },
+} as const;
+
+/**
  * The gameplay RNG stream's per-event slot map (S1.2.1, fixed here,
  * documented in `docs/wiki/rng-stream-map.md` §1 — **never renumber a slot
  * once shipped**, an auditor's recomputation depends on it). `validate.ts`
@@ -89,6 +114,82 @@ function topology(): BoardTopology {
  */
 function snakeOrder(playerIds: readonly PlayerId[]): PlayerId[] {
   return [...playerIds, ...[...playerIds].reverse()];
+}
+
+/**
+ * Distance rule (S1.1.3 spec): true if any vertex adjacent to `vertex`
+ * already holds a settlement or a city — no two buildings may ever sit next
+ * to each other. Shared by the free setup placement and the paid S1.2.2
+ * build branch below so the adjacency walk is written once (`vertex.adjacentVertexIds`,
+ * S1.1.1 embedded topology), never duplicated.
+ */
+function violatesDistanceRule(
+  vertex: VertexTopology,
+  buildings: BuildingsState,
+): boolean {
+  return vertex.adjacentVertexIds.some(
+    (adjacentId) =>
+      buildings.settlements[adjacentId] !== undefined ||
+      buildings.cities?.[adjacentId] !== undefined,
+  );
+}
+
+/**
+ * Road-building network legality (S1.2.2 spec): true if `edge` touches the
+ * player's own network at either endpoint — an own settlement/city sits on
+ * that vertex, or an own road is already incident to it (`VertexTopology.edgeIds`,
+ * S1.1.1). A single-hop check is sufficient: the network is built up
+ * incrementally, so every prior own road already touched the network when
+ * it was placed.
+ */
+function touchesOwnNetwork(
+  edge: EdgeTopology,
+  playerId: PlayerId,
+  buildings: BuildingsState,
+): boolean {
+  return edge.vertexIds.some((vertexId) => {
+    if (buildings.settlements[vertexId] === playerId) return true;
+    if (buildings.cities?.[vertexId] === playerId) return true;
+    const vertex = findVertex(topology(), vertexId);
+    return (
+      vertex?.edgeIds.some((edgeId) => buildings.roads[edgeId] === playerId) ?? false
+    );
+  });
+}
+
+/**
+ * Settlement-building road legality (S1.2.2 spec, the gameplay rule setup
+ * waives): true if any edge incident to `vertex` is the player's own road.
+ */
+function touchesOwnRoad(
+  vertex: VertexTopology,
+  playerId: PlayerId,
+  buildings: BuildingsState,
+): boolean {
+  return vertex.edgeIds.some((edgeId) => buildings.roads[edgeId] === playerId);
+}
+
+/** How many of `record`'s entries this player already owns — the piece-supply count (S1.2.2). */
+function countOwned(
+  record: Readonly<Record<string, PlayerId>> | undefined,
+  playerId: PlayerId,
+): number {
+  if (!record) return 0;
+  return Object.values(record).filter((owner) => owner === playerId).length;
+}
+
+/** True if `resources` covers every line of `cost` (S1.2.2 affordability check). */
+function canAfford(
+  resources: Readonly<Record<ResourceType, number>>,
+  cost: Readonly<Record<ResourceType, number>>,
+): boolean {
+  return Object.entries(cost).every(
+    ([resource, amount]) => (resources[resource] ?? 0) >= amount,
+  );
+}
+
+function findPlayer(state: GameState, playerId: PlayerId): PlayerState | undefined {
+  return state.players.find((player) => player.id === playerId);
 }
 
 /**
@@ -125,10 +226,9 @@ interface ProductionResult {
  * nobody gets that resource this roll. Returns empty grants (bank
  * unchanged) if `board`/`buildings` are absent — never throws.
  *
- * TODO(S1.2.2): once `BuildingsState` gains a city marker, a city here
- * should pay 2 instead of 1 — this function only knows "settlement" today
- * (`BuildingsState.settlements`), so every producing vertex pays the
- * settlement amount; the seam is the `amount = 1` line below.
+ * A city (S1.2.2, `BuildingsState.cities`) pays double a settlement — see
+ * the `amount` line below (this fills the seam an earlier TODO left here
+ * before cities existed).
  */
 function computeProduction(state: GameState, total: number): ProductionResult {
   const board = state.board;
@@ -145,9 +245,10 @@ function computeProduction(state: GameState, total: number): ProductionResult {
       if (tile.id === board.robberTileId) continue; // robber blocks the tile entirely
 
       for (const vertexId of tile.vertexIds) {
-        const owner = buildings.settlements[vertexId];
+        const cityOwner = buildings.cities?.[vertexId];
+        const owner = cityOwner ?? buildings.settlements[vertexId];
         if (owner === undefined) continue;
-        const amount = 1; // TODO(S1.2.2): city -> 2, see docstring above.
+        const amount = cityOwner !== undefined ? 2 : 1; // S1.2.2: a city pays double
         owed[kind] ??= {};
         owed[kind][owner] = (owed[kind][owner] ?? 0) + amount;
       }
@@ -295,12 +396,9 @@ export function validate(
       if (buildings.settlements[intent.vertexId] !== undefined) {
         return reject('OCCUPIED');
       }
-      // Distance rule: no vertex adjacent to the target may already hold a
-      // settlement (setup phase has no road-connection requirement).
-      const hasAdjacentSettlement = vertex.adjacentVertexIds.some(
-        (adjacentId) => buildings.settlements[adjacentId] !== undefined,
-      );
-      if (hasAdjacentSettlement) {
+      // Distance rule (setup phase has no road-connection requirement,
+      // unlike the S1.2.2 build branch below).
+      if (violatesDistanceRule(vertex, buildings)) {
         return reject('DISTANCE_VIOLATION');
       }
 
@@ -357,6 +455,114 @@ export function validate(
         edgeId: intent.edgeId,
         nextPlayerId,
         nextPhase,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.buildRoad': {
+      const edge = findEdge(topology(), intent.edgeId);
+      if (!edge) {
+        return reject('MALFORMED_INTENT');
+      }
+
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      if (buildings.roads[intent.edgeId] !== undefined) {
+        return reject('OCCUPIED');
+      }
+      if (!touchesOwnNetwork(edge, playerId, buildings)) {
+        return reject('NOT_CONNECTED');
+      }
+      if (countOwned(buildings.roads, playerId) >= CLASSIC_BUILD_PROFILE.supply.roads) {
+        return reject('SUPPLY_EXHAUSTED');
+      }
+
+      const cost = CLASSIC_BUILD_PROFILE.costs.road;
+      const player = findPlayer(state, playerId);
+      if (!player || !canAfford(player.resources, cost)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const event: RoadBuiltEvent = {
+        type: 'road.built',
+        index: state.eventIndex,
+        playerId,
+        edgeId: intent.edgeId,
+        cost,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.buildSettlement': {
+      const vertex = findVertex(topology(), intent.vertexId);
+      if (!vertex) {
+        return reject('MALFORMED_INTENT');
+      }
+
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      if (
+        buildings.settlements[intent.vertexId] !== undefined ||
+        buildings.cities?.[intent.vertexId] !== undefined
+      ) {
+        return reject('OCCUPIED');
+      }
+      // Distance rule reuses the S1.1.3 helper; the road-connection check is
+      // the gameplay rule setup waives (S1.2.2 spec).
+      if (violatesDistanceRule(vertex, buildings)) {
+        return reject('DISTANCE_VIOLATION');
+      }
+      if (!touchesOwnRoad(vertex, playerId, buildings)) {
+        return reject('NOT_CONNECTED');
+      }
+      if (
+        countOwned(buildings.settlements, playerId) >=
+        CLASSIC_BUILD_PROFILE.supply.settlements
+      ) {
+        return reject('SUPPLY_EXHAUSTED');
+      }
+
+      const cost = CLASSIC_BUILD_PROFILE.costs.settlement;
+      const player = findPlayer(state, playerId);
+      if (!player || !canAfford(player.resources, cost)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const event: SettlementBuiltEvent = {
+        type: 'settlement.built',
+        index: state.eventIndex,
+        playerId,
+        vertexId: intent.vertexId,
+        cost,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.buildCity': {
+      const vertex = findVertex(topology(), intent.vertexId);
+      if (!vertex) {
+        return reject('MALFORMED_INTENT');
+      }
+
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      // A city upgrades the player's OWN existing settlement — this also
+      // covers "vertex is empty" and "vertex already a city" (a city vertex
+      // is no longer a key in `settlements`, see BuildingsState docstring),
+      // both correctly read as "you have no settlement here".
+      if (buildings.settlements[intent.vertexId] !== playerId) {
+        return reject('NOT_OWN_SETTLEMENT');
+      }
+      if (countOwned(buildings.cities, playerId) >= CLASSIC_BUILD_PROFILE.supply.cities) {
+        return reject('SUPPLY_EXHAUSTED');
+      }
+
+      const cost = CLASSIC_BUILD_PROFILE.costs.city;
+      const player = findPlayer(state, playerId);
+      if (!player || !canAfford(player.resources, cost)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const event: CityBuiltEvent = {
+        type: 'city.built',
+        index: state.eventIndex,
+        playerId,
+        vertexId: intent.vertexId,
+        cost,
       };
       return { ok: true, events: [event] };
     }

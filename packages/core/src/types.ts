@@ -77,6 +77,14 @@ export interface BoardState {
 export interface BuildingsState {
   readonly settlements: Readonly<Record<VertexId, PlayerId>>;
   readonly roads: Readonly<Record<EdgeId, PlayerId>>;
+  /**
+   * Vertices upgraded from a settlement to a city (S1.2.2 `city.built`) —
+   * absent until the first city lands, the same "fact of an event having
+   * landed" optionality as the rest of `GameState` (ADR-0003). A city
+   * vertex is removed from {@link settlements} when it moves here — a city
+   * replaces its settlement, it never coexists with one at the same vertex.
+   */
+  readonly cities?: Readonly<Record<VertexId, PlayerId>>;
 }
 
 /**
@@ -230,10 +238,53 @@ export interface RoadPlacedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when a player builds a road during the main phase (S1.2.2,
+ * distinct from the free {@link RoadPlacedEvent} of the setup draft — this
+ * one costs resources). `cost` is the debit `validate` already computed
+ * (affordability was checked before emitting) — an explicit fact, so
+ * `reduce` only subtracts, never re-derives the Classic price list
+ * (ADR-0003).
+ */
+export interface RoadBuiltEvent extends BaseGameEvent {
+  readonly type: 'road.built';
+  readonly playerId: PlayerId;
+  readonly edgeId: EdgeId;
+  readonly cost: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * Emitted when a player builds a settlement during the main phase (S1.2.2,
+ * distinct from the free {@link SettlementPlacedEvent} of the setup draft —
+ * this one costs resources and requires an own road connection). `cost` is
+ * the debit `validate` already computed, the same explicit-fact discipline
+ * as {@link RoadBuiltEvent}.
+ */
+export interface SettlementBuiltEvent extends BaseGameEvent {
+  readonly type: 'settlement.built';
+  readonly playerId: PlayerId;
+  readonly vertexId: VertexId;
+  readonly cost: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * Emitted when a player upgrades their own settlement into a city (S1.2.2).
+ * `reduce` moves `vertexId` from {@link BuildingsState.settlements} to
+ * {@link BuildingsState.cities} and debits `cost` — both mechanical facts
+ * this event already carries, per the same discipline as every other build
+ * event.
+ */
+export interface CityBuiltEvent extends BaseGameEvent {
+  readonly type: 'city.built';
+  readonly playerId: PlayerId;
+  readonly vertexId: VertexId;
+  readonly cost: Readonly<Record<ResourceType, number>>;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
- * (ADR-0003). This is a minimal M0 set; M1 Classic rules add
- * build/trade/robber/etc.
+ * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
+ * S1.2.2; trade/robber/etc. still to come).
  */
 export type GameEvent =
   | MatchStartedEvent
@@ -242,7 +293,10 @@ export type GameEvent =
   | ResourcesProducedEvent
   | TurnEndedEvent
   | SettlementPlacedEvent
-  | RoadPlacedEvent;
+  | RoadPlacedEvent
+  | RoadBuiltEvent
+  | SettlementBuiltEvent
+  | CityBuiltEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -275,14 +329,45 @@ export interface PlaceRoadIntent extends BaseIntent {
 }
 
 /**
+ * A player's request to build a road during the main phase (S1.2.2, costs
+ * resources — unlike {@link PlaceRoadIntent}'s free setup placement).
+ */
+export interface BuildRoadIntent extends BaseIntent {
+  readonly type: 'intent.buildRoad';
+  readonly edgeId: EdgeId;
+}
+
+/**
+ * A player's request to build a settlement during the main phase (S1.2.2,
+ * costs resources and requires an own road connection — unlike
+ * {@link PlaceSettlementIntent}'s free setup placement).
+ */
+export interface BuildSettlementIntent extends BaseIntent {
+  readonly type: 'intent.buildSettlement';
+  readonly vertexId: VertexId;
+}
+
+/** A player's request to upgrade their own settlement at `vertexId` into a city (S1.2.2). */
+export interface BuildCityIntent extends BaseIntent {
+  readonly type: 'intent.buildCity';
+  readonly vertexId: VertexId;
+}
+
+/**
  * A player's wish, sent from the client. Discriminated by `type`. Passed
  * through `validate` (S0.5.2), which turns a legal intent into
  * {@link GameEvent}s or rejects it with a {@link RejectReason} — an intent
- * never mutates state directly (ADR-0003). This is a minimal M0 set; M1
- * Classic rules add build/trade/etc.
+ * never mutates state directly (ADR-0003). M1 Classic rules keep extending
+ * this set (build lands here, S1.2.2; trade/etc. still to come).
  */
 export type PlayerIntent =
-  RollDiceIntent | EndTurnIntent | PlaceSettlementIntent | PlaceRoadIntent;
+  | RollDiceIntent
+  | EndTurnIntent
+  | PlaceSettlementIntent
+  | PlaceRoadIntent
+  | BuildRoadIntent
+  | BuildSettlementIntent
+  | BuildCityIntent;
 
 /**
  * Why `validate` refused an intent. An enumerated string-literal union so
@@ -297,4 +382,8 @@ export type RejectReason =
   | 'OCCUPIED'
   | 'DISTANCE_VIOLATION'
   | 'DETACHED_ROAD'
-  | 'WRONG_PHASE';
+  | 'WRONG_PHASE'
+  | 'CANNOT_AFFORD'
+  | 'NOT_CONNECTED'
+  | 'NOT_OWN_SETTLEMENT'
+  | 'SUPPLY_EXHAUSTED';

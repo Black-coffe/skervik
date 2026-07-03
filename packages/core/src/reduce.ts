@@ -20,6 +20,22 @@ function addResources(
 }
 
 /**
+ * Debits a resource cost from a player's holdings. Pure — returns a new
+ * `resources` object, never mutates `base` (ADR-0003); the inverse of
+ * {@link addResources}.
+ */
+function subtractResources(
+  base: Readonly<Record<ResourceType, number>>,
+  cost: Readonly<Record<ResourceType, number>>,
+): Record<ResourceType, number> {
+  const result: Record<ResourceType, number> = { ...base };
+  for (const [resource, amount] of Object.entries(cost)) {
+    result[resource] = (result[resource] ?? 0) - amount;
+  }
+  return result;
+}
+
+/**
  * Applies one {@link GameEvent} to {@link GameState}, returning a *new*
  * state. Pure and deterministic (ADR-0003): no `Date.now`/`Math.random`/I/O,
  * and `state` is never mutated — every branch returns a fresh object built
@@ -114,6 +130,74 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         },
         currentPlayerId: event.nextPlayerId,
         phase: event.nextPhase,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'road.built': {
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? { ...player, resources: subtractResources(player.resources, event.cost) }
+          : player,
+      );
+      return {
+        ...state,
+        players,
+        buildings: {
+          settlements: buildings.settlements,
+          roads: { ...buildings.roads, [event.edgeId]: event.playerId },
+          ...(buildings.cities ? { cities: buildings.cities } : {}),
+        },
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'settlement.built': {
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? {
+              ...player,
+              resources: subtractResources(player.resources, event.cost),
+              victoryPoints: player.victoryPoints + 1,
+            }
+          : player,
+      );
+      return {
+        ...state,
+        players,
+        buildings: {
+          settlements: { ...buildings.settlements, [event.vertexId]: event.playerId },
+          roads: buildings.roads,
+          ...(buildings.cities ? { cities: buildings.cities } : {}),
+        },
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'city.built': {
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      // The city replaces its settlement — drop the vertex from
+      // `settlements` entirely rather than leaving it in both records
+      // (BuildingsState.cities docstring: a city never coexists with a
+      // settlement at the same vertex).
+      const { [event.vertexId]: _upgraded, ...remainingSettlements } =
+        buildings.settlements;
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? {
+              ...player,
+              resources: subtractResources(player.resources, event.cost),
+              victoryPoints: player.victoryPoints + 1,
+            }
+          : player,
+      );
+      return {
+        ...state,
+        players,
+        buildings: {
+          settlements: remainingSettlements,
+          roads: buildings.roads,
+          cities: { ...buildings.cities, [event.vertexId]: event.playerId },
+        },
         eventIndex: event.index + 1,
       };
     }
