@@ -61,8 +61,12 @@ export interface FsEventSinkOptions {
  * so a rejecting write (disk error) leaves the room's state uncommitted and no
  * client ever observes an event that was not durably recorded.
  *
- * Colyseus processes a room's messages serially, so appends arrive in order and
- * do not interleave; each `appendFile` preserves that order on disk.
+ * Append-order safety: Colyseus does NOT serialize a room's async message
+ * handlers for you (it dispatches via a synchronous EventEmitter and does not
+ * await the handler) — `GameRoom` is responsible for serializing the intent
+ * pipeline itself (its per-room `#queue`) so this sink only ever sees one
+ * `append` in flight at a time. This class does not defend against concurrent
+ * calls on its own.
  */
 export class FsEventSink implements GameEventSink {
   /** Absolute-or-relative path of this match's ndjson log. */
@@ -71,9 +75,25 @@ export class FsEventSink implements GameEventSink {
   #dirEnsured = false;
 
   constructor(options: FsEventSinkOptions) {
+    const matchId = options.matchId;
+    // Defensive path-safety (fairness/anti-cheat boundary): `matchId` becomes a
+    // filesystem path segment. It is the Colyseus `roomId` today (never
+    // client-controlled), but assert it can't smuggle a path separator or `..`
+    // traversal rather than trust that invariant silently.
+    if (
+      matchId.length === 0 ||
+      matchId.includes('/') ||
+      matchId.includes('\\') ||
+      matchId === '..' ||
+      matchId.includes('..')
+    ) {
+      throw new Error(
+        `FsEventSink: unsafe matchId for a filesystem path: ${JSON.stringify(matchId)}`,
+      );
+    }
     this.filePath = join(
       options.matchesDir ?? DEFAULT_MATCHES_DIR,
-      options.matchId,
+      matchId,
       'events.ndjson',
     );
   }

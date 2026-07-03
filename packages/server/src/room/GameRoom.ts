@@ -90,6 +90,27 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   matchMetadataStore!: MatchMetadataStore;
 
+  /**
+   * The per-room intent SERIALIZATION queue (lead-review fix, post-S1.4.4b):
+   * Colyseus dispatches `onMessage` handlers via a synchronous EventEmitter —
+   * it does NOT await or serialize an async handler, so two `intent`s arriving
+   * in the same tick would otherwise both call `#handleIntent` concurrently.
+   * With a genuinely async sink (`FsEventSink`'s `await appendFile`), that opens
+   * a TOCTOU window: a second intent's `validate` would run against the FIRST
+   * intent's still-uncommitted `this.gameState` (commit happens only after the
+   * first `append` resolves), so both could validate against the same stale
+   * state — a double-spend / duplicate-`eventIndex` fairness break. Chaining
+   * every intent onto this promise ensures intent N's ENTIRE pipeline
+   * (validate → persist → commit → broadcast → reveal) fully settles before
+   * intent N+1 begins — one queue per room instance (an own field, not static),
+   * so rooms never serialize against each other. `#handleIntent` itself never
+   * throws (every path is caught internally, S1.4.4b), so the `.catch` here is
+   * a pure safety net: it exists ONLY so a future regression that lets an error
+   * through can never wedge the queue for subsequent intents or escape as an
+   * unhandled rejection.
+   */
+  #queue: Promise<void> = Promise.resolve();
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
@@ -122,11 +143,33 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       currentPlayerId: this.gameState.currentPlayerId,
     });
 
-    // The authoritative intent pipeline (S1.4.2). The handler never throws out
-    // (it returns rejections), so the floating promise is deliberately voided.
+    // The authoritative intent pipeline (S1.4.2), SERIALIZED per room (see
+    // `#queue` doc): each intent is chained onto the room's queue rather than
+    // dispatched as an independent floating promise, so a durable async sink
+    // can never open a window where a second intent validates against a
+    // not-yet-committed state.
     this.onMessage('intent', (client, message: unknown) => {
-      void this.#handleIntent(client, message);
+      this.#enqueueIntent(client, message);
     });
+  }
+
+  /**
+   * Chains one intent's handling onto the room's serialization queue (see
+   * `#queue` doc) — never dispatches `#handleIntent` directly. The `.catch` is
+   * a safety net only: `#handleIntent` already catches everything it can throw,
+   * so this exists purely to guarantee the queue can never wedge (a rejected
+   * link would otherwise permanently stall every subsequent intent) or escape
+   * as an unhandled rejection.
+   */
+  #enqueueIntent(client: Client, message: unknown): void {
+    this.#queue = this.#queue
+      .then(() => this.#handleIntent(client, message))
+      .catch((error: unknown) => {
+        this.#logInternalError(
+          'intent queue link threw unexpectedly (should be unreachable)',
+          error,
+        );
+      });
   }
 
   override onJoin(client: Client): void {

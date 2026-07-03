@@ -67,4 +67,26 @@ describe('FsEventSink', () => {
     const sink = new FsEventSink({ matchId: MATCH });
     expect(sink.filePath).toBe(join(DEFAULT_MATCHES_DIR, MATCH, 'events.ndjson'));
   });
+
+  // --- lead-review hardening: matchId is a fairness/anti-cheat boundary -----
+  // `matchId` becomes a filesystem path segment; it's the Colyseus `roomId`
+  // today (never client-controlled), but the constructor asserts this rather
+  // than trusting that invariant silently.
+  it.each([
+    ['a path separator (/)', 'abc/def'],
+    ['a Windows path separator (\\)', 'abc\\def'],
+    ['a parent-directory traversal (..)', '../escape'],
+    ['exactly ..', '..'],
+    ['the empty string', ''],
+  ])('rejects an unsafe matchId containing %s', (_label, unsafeMatchId) => {
+    expect(
+      () => new FsEventSink({ matchId: unsafeMatchId as MatchId, matchesDir: tempDir }),
+    ).toThrow();
+  });
+
+  it('accepts a normal Colyseus-style roomId (alphanumeric)', () => {
+    expect(
+      () => new FsEventSink({ matchId: 'aB3xYz9' as MatchId, matchesDir: tempDir }),
+    ).not.toThrow();
+  });
 });
