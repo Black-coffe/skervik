@@ -16,6 +16,12 @@ export type {
 export { buildTopology, findEdge, findTile, findVertex, tileId } from './board.js';
 export type { BoardLayout } from './boardgen.js';
 export { BOARD_GEN_STREAM, CLASSIC_BOARD_PROFILE, generateBoard } from './boardgen.js';
+export {
+  CLASSIC_DEV_CARD_PROFILE,
+  DEV_DECK_STREAM,
+  publicDevCardCount,
+  shuffledDevDeck,
+} from './devcards.js';
 export { reduce, replay } from './reduce.js';
 export type { EventLogLine } from './replay.js';
 export { parseEventLog, replayLog } from './replay.js';

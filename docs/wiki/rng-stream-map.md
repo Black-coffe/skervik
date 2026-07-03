@@ -74,13 +74,47 @@ realistic `eventIndex` value, defined as `BOARD_GEN_STREAM` in `boardgen.ts`:
 All three shuffles are independent draws from the same `seed` — recomputable by
 anyone with the revealed seed, same as gameplay rolls ([[fair-rng-commit-reveal]]).
 
-### Golden-seed regression point
+### Golden-seed regression point (board)
 
 For `seed = 'skervik-golden-seed-1'` (the same golden seed `rng.test.ts` uses),
 `generateBoard` satisfies the red-token constraint on **attempt 4** (`attemptsUsed
 === 4`, i.e. stream indices `1_001_300..1_001_316` were the winning token
 shuffle). Asserted in `boardgen.test.ts`'s golden test — a change to the
 algorithm, the profile constants, or this stream-index map will fail that test.
+
+## 2.5. Development-card deck — reserved band (S1.2.3, `devcards.ts`)
+
+The Classic dev-card deck (25 cards) is shuffled once at game start, the same
+"reserved band, not `state.eventIndex`" reasoning as board generation (§2) —
+buying happens via an `intent.buyDevCard` mid-match, but the deck's ORDER is
+fixed once at genesis, like the board layout, not once per event. Unlike
+`board.generated` (applied outside `validate` entirely, at match creation),
+the dev-card buy branch lives inside `validate.ts` and calls
+`devcards.ts`'s `shuffledDevDeck(seed)` on every buy, indexing into the
+result at `CLASSIC_DEV_CARD_PROFILE.deck.length - devDeckRemaining-before-
+the-draw` (i.e. how many cards have already left the deck) — the shuffled
+order itself is **never stored in `GameState`** (only a remaining COUNT,
+`GameState.devDeckRemaining`), so a serialized state snapshot can never
+predict a future draw before its `devCard.bought` event lands (the same
+reasoning that keeps the raw `seed` out of `GameState`).
+
+| Draw | Stream index | Slots consumed |
+|---|---|---|
+| Dev-card deck shuffle (25 items → 24 draws) | `DEV_DECK_STREAM.SHUFFLE = 1_010_000` | `1_010_000 .. 1_010_023` |
+
+**Disjointness:** `1_010_000` sits comfortably above board generation's own
+worst-case ceiling (`TOKEN_SHUFFLE_BASE + (TOKEN_RETRY_BOUND-1) *
+TOKEN_SHUFFLE_STRIDE + 16 = 1_007_316`, §2 above) and far above any
+`state.eventIndex`-derived gameplay index (`headroom-guarded below
+1_000_000`, §1 above) — none of the three reserved/gameplay ranges can ever
+collide with another.
+
+### Golden-seed regression point (dev-card deck)
+
+For `seed = 'skervik-devcards-golden-seed-1'`, `shuffledDevDeck` produces a
+fixed 25-card order asserted verbatim in `devcards.test.ts`'s golden test —
+a change to the algorithm, the profile constants, or this stream-index map
+will fail that test.
 
 ## 3. Event-sourcing note
 
