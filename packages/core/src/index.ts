@@ -23,8 +23,7 @@ export {
   shuffledDevDeck,
 } from './devcards.js';
 export { reduce, replay } from './reduce.js';
-export type { EventLogLine } from './replay.js';
-export { parseEventLog, replayLog } from './replay.js';
+export { parseGameEventLog } from './replay.js';
 export type { Seed } from './rng.js';
 export {
   deriveValue,
