@@ -7,9 +7,15 @@
 >
 > **Domain:** [skervik.com](https://skervik.com) (registered 2026-06-30, active).
 
-**Status:** 🚧 Greenfield / pre-M0 — planning complete, implementation starting.
-This repo currently holds the design docs, the architecture decisions, and the
-build plan. See the roadmap below.
+**Status:** ✅ **M0 complete** (2026-07-03) — deterministic engine contract, CI
+with a named determinism gate, and the E0.4 render prototype are all done.
+Next: **M1 vertical slice** (real game rules + server + playable client).
+
+![E0.4 Pixi.js v8 prototype — 19-hex isometric board](docs/assets/e04-pixi-prototype.png)
+
+_First real render (E0.4 gate): Pixi.js v8, 19-hex isometric board, WebGPU.
+100 FPS desktop, LCP 1.14 s on emulated Fast 4G + 4× CPU — full numbers in
+[`S0.4.3-perf-results.md`](docs/specs/m0-foundation/S0.4.3-perf-results.md)._
 
 > ⚖️ **Legal note:** "CATAN" is a trademark of Catan GmbH. Game _mechanics_ are not
 > copyrightable, but brand/art/text are — so this project uses entirely original
@@ -47,13 +53,13 @@ TypeScript monorepo (pnpm): `@skervik/core` (pure rules) · `@skervik/protocol` 
 CI is green across all five packages, but that doesn't mean all five carry equal
 weight yet — only `core` has real logic behind it:
 
-| Package             | State                                                                                                                                                                     | Real implementation lands at                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `@skervik/core`     | Real: deterministic engine contract (`reduce`/`validate`), seeded PRNG, event-log replay. No game rules (resource production, building, trading, robber) yet — that's M1. | engine contract done (E0.5); game rules → [`E1.1`–`E1.3`](docs/specs/roadmap/ROADMAP.md)                           |
-| `@skervik/protocol` | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`S1.5.1`](docs/specs/roadmap/ROADMAP.md)                                                                          |
-| `@skervik/server`   | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E1.4`](docs/specs/roadmap/ROADMAP.md)                                                                            |
-| `@skervik/client`   | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E0.4`](docs/specs/roadmap/ROADMAP.md) (render prototype) → [`E1.6`](docs/specs/roadmap/ROADMAP.md) (full client) |
-| `@skervik/bots`     | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E2.4`](docs/specs/roadmap/ROADMAP.md)                                                                            |
+| Package             | State                                                                                                                                                                     | Real implementation lands at                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `@skervik/core`     | Real: deterministic engine contract (`reduce`/`validate`), seeded PRNG, event-log replay. No game rules (resource production, building, trading, robber) yet — that's M1. | engine contract done (E0.5); game rules → [`E1.1`–`E1.3`](docs/specs/roadmap/ROADMAP.md) |
+| `@skervik/protocol` | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`S1.5.1`](docs/specs/roadmap/ROADMAP.md)                                                |
+| `@skervik/server`   | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E1.4`](docs/specs/roadmap/ROADMAP.md)                                                  |
+| `@skervik/client`   | E0.4 render prototype: Pixi.js v8 19-hex isometric board + perf harness (see screenshot above). No game UI yet.                                                           | [`E1.6`](docs/specs/roadmap/ROADMAP.md) (full client)                                    |
+| `@skervik/bots`     | M0 skeleton — one version constant, one smoke test.                                                                                                                       | [`E2.4`](docs/specs/roadmap/ROADMAP.md)                                                  |
 
 The "one smoke test" on the four skeleton packages only asserts the package
 builds and its export exists — it's a package-exists check, not logic
@@ -62,7 +68,8 @@ logic works; that's `core`'s test suite alone.
 
 ## Quickstart
 
-> The client currently renders an M0 placeholder page — see "Package status" above.
+> The client currently renders the E0.4 prototype board (drag to pan, wheel to
+> zoom, stress-test toggle in the corner overlay).
 
 ```bash
 pnpm i

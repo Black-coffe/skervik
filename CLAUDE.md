@@ -2,15 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status: M0 foundation — engine core real, no gameplay yet (updated 2026-07-02)
+## Project status: M0 CLOSED — next is M1 vertical slice (updated 2026-07-03)
 
-Live pnpm monorepo at github.com/Black-coffe/skervik, CI green. M0 is almost
-closed: E0.1 governance, E0.2 monorepo, E0.3 CI, E0.5 deterministic engine
-contract (types, reduce/validate, seeded PRNG, event-log replay + golden
-determinism test) are done. **E0.4 (Pixi.js perf prototype) is the last open M0
-gate.** 4 of 5 packages (`protocol/server/client/bots`) are stubs; zero game
-rules exist yet (that's M1). Known flagship gap: the seeded PRNG is built but
-not wired into `validate.ts` (dice use a placeholder formula) — FIX-PLAN item A1.
+Live pnpm monorepo at github.com/Black-coffe/skervik, CI green. **All M0 gates
+are done**: E0.1 governance, E0.2 monorepo, E0.3 CI (incl. named core-determinism
+gate), E0.5 deterministic engine contract (types, reduce/validate, seeded PRNG
+wired into validate per fix-plan A1, event-log replay + golden test), and E0.4 —
+Pixi.js v8 perf prototype **validated** (19-hex isometric board in
+`packages/client/src/proto/`; benchmark `docs/specs/m0-foundation/S0.4.3-perf-results.md`;
+ADR-0002 locked). Lore primer approved (`docs/wiki/lore-primer.md` — realism ≈1900,
+no mysticism) and trilingual RU/UA/EN mandate locked (ADR-0008). `protocol/server/bots`
+are still stubs; zero game rules exist yet — **that's M1** (start at E1.1 per
+`docs/specs/roadmap/ROADMAP-2026-H2.md` August plan).
 
 **Execution plan — when resuming work, start here (no other context needed):**
 
@@ -104,8 +107,8 @@ When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core deter
 
 ## Roadmap anchor (spec §11)
 
-- **M0** — prototype & gate decisions: Pixi vs Three.js perf prototype, monorepo skeleton, CI, core determinism test. _(This is the next concrete work.)_
-- **M1** — vertical slice: `@skervik/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online.
+- **M0** — ✅ done (2026-07-03): monorepo, CI, core determinism contract, Pixi perf prototype (ADR-0002 validated).
+- **M1** — vertical slice: `@skervik/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online. _(This is the next concrete work.)_
 - **M2** — rule profiles + adaptive duration + catch-up + reconnect/grace/bot-fill + matchmaking/lobby/Redis presence + heuristic bots.
 - **M3** — ranked (Glicko-2)/seasons, social, spectator/replays/post-match analytics, 7–10 player modes.
 - **M4** — async mode, Deep profile, themes/skins, a11y (colorblind modes), locale QA (RU/UA/EN locales themselves live from M1, ADR-0008), PWA wrappers → 1.0.

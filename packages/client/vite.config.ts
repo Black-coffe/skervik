@@ -15,8 +15,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Skerry',
-        short_name: 'Skerry',
+        name: 'Skervik',
+        short_name: 'Skervik',
         description: 'Explore, trade, settle.',
         theme_color: '#1a1a2e',
         icons: [],
