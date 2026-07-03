@@ -1,5 +1,5 @@
 // @skervik/protocol — shared WS/REST message types.
-// Message types and zod validation land in E1.5.
+// The WS envelope lands in E1.4 (S1.4.1); zod runtime validation in E1.5.
 import type { PlayerId } from '@skervik/core';
 
 export const PROTOCOL_VERSION = '0.0.1' as const;
@@ -10,3 +10,11 @@ export const PROTOCOL_VERSION = '0.0.1' as const;
  * Real protocol message types land in E1.5.
  */
 export type ProtocolPlayerId = PlayerId;
+
+export type {
+  EventBatchMessage,
+  IntentMessage,
+  PublicGameState,
+  StateSnapshotMessage,
+  WsMessage,
+} from './messages.js';

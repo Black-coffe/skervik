@@ -11,10 +11,13 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@colyseus/schema": "^4.0.27",
     "@skervik/core": "workspace:*",
-    "@skervik/protocol": "workspace:*"
+    "@skervik/protocol": "workspace:*",
+    "colyseus": "^0.17.10"
   },
   "devDependencies": {
+    "@colyseus/testing": "^0.17.11",
     "tsup": "^8",
     "typescript": "^5"
   }
