@@ -176,7 +176,7 @@ victory — asserts determinism server-side and event-log replay equality;
 
 | Story | Status |
 |---|---|
-| S1.1.1 hex board model & graph | ⏳ materialized, ready to dispatch |
+| S1.1.1 hex board model & graph | ✅ done — merged `c4cfc1a` (19/54/72 counts, adjacency graph, 9 port slots; 51/51 core tests) |
 | S1.1.2 fair board generation from seed | ⏳ materialized, ready to dispatch (after S1.1.1) |
 | S1.1.3 snake-draft initial placement | ⏳ materialized, ready to dispatch (after S1.1.1–.2) |
 | S1.2.1–S1.2.4 | not materialized |
