@@ -31,6 +31,18 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         eventIndex: event.index + 1,
       };
     }
+    case 'board.generated': {
+      return {
+        ...state,
+        board: {
+          tileKinds: event.tileKinds,
+          tileTokens: event.tileTokens,
+          portContents: event.portContents,
+          robberTileId: event.robberTileId,
+        },
+        eventIndex: event.index + 1,
+      };
+    }
     case 'dice.rolled': {
       // M0 skeleton: GameState carries no per-roll field yet (M1 Classic
       // rules add resource production from the roll). Applying the event

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  BoardGeneratedEvent,
   DiceRolledEvent,
   EndTurnIntent,
   GameEvent,
@@ -53,8 +54,16 @@ describe('GameEvent', () => {
       seedHash: 'deadbeef',
       playerIds: ['player-1'],
     },
-    { type: 'dice.rolled', index: 1, playerId: 'player-1', value: 8 },
-    { type: 'turn.ended', index: 2, playerId: 'player-1', nextPlayerId: 'player-2' },
+    {
+      type: 'board.generated',
+      index: 1,
+      tileKinds: { '0,0': 'desert' },
+      tileTokens: {},
+      portContents: [{ kind: 'generic', rate: 3 }],
+      robberTileId: '0,0',
+    },
+    { type: 'dice.rolled', index: 2, playerId: 'player-1', value: 8 },
+    { type: 'turn.ended', index: 3, playerId: 'player-1', nextPlayerId: 'player-2' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -63,6 +72,11 @@ describe('GameEvent', () => {
         case 'match.started': {
           const e: MatchStartedEvent = event;
           expect(e.playerIds).toContain('player-1');
+          break;
+        }
+        case 'board.generated': {
+          const e: BoardGeneratedEvent = event;
+          expect(e.robberTileId).toBe('0,0');
           break;
         }
         case 'dice.rolled': {
