@@ -9,11 +9,13 @@ import {
   type EdgeId,
   type EdgeTopology,
   findEdge,
+  findTile,
   findVertex,
+  type TileId,
   type VertexTopology,
 } from './board.js';
 import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
-import { gameplayStreamIndex, rollDie, type Seed } from './rng.js';
+import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
   BuildingsState,
   CityBuiltEvent,
@@ -23,16 +25,19 @@ import type {
   GameEvent,
   GamePhase,
   GameState,
+  KnightPlayedEvent,
   MonopolyPlayedEvent,
   PlayerId,
   PlayerIntent,
   PlayerState,
   RejectReason,
+  ResourcesDiscardedEvent,
   ResourcesProducedEvent,
   ResourceType,
   RoadBuildingPlayedEvent,
   RoadBuiltEvent,
   RoadPlacedEvent,
+  RobberMovedEvent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
   TurnEndedEvent,
@@ -102,7 +107,16 @@ export const CLASSIC_BUILD_PROFILE = {
 const GAMEPLAY_SLOT = {
   DICE_A: 0,
   DICE_B: 1,
-  // 2-7 reserved for later same-event draws (e.g. the robber steal-pick, S1.3.1).
+  /**
+   * The robber steal-pick (S1.3.1): indexes into the victim's
+   * sorted-deterministic hand (`expandHand` below). Keyed to the `index` of
+   * the {@link RobberMovedEvent} that actually resolves the steal — for the
+   * 7-roll path that's `intent.moveRobber`'s own event index; for the
+   * knight path it's the SECOND of the 2 events `playDevCard`'s knight
+   * branch emits (see {@link resolveRobberMove}'s callers).
+   */
+  STEAL: 2,
+  // 3-7 still reserved for later same-event draws.
 } as const;
 
 // `buildTopology()` is pure and its result never changes for a given board
@@ -210,6 +224,121 @@ function canAfford(
 
 function findPlayer(state: GameState, playerId: PlayerId): PlayerState | undefined {
   return state.players.find((player) => player.id === playerId);
+}
+
+/** Total resource-card count across all kinds — the discard-owing/steal-eligibility measure (S1.3.1). */
+function handSize(resources: Readonly<Record<ResourceType, number>>): number {
+  return Object.values(resources).reduce((sum, amount) => sum + amount, 0);
+}
+
+/**
+ * Players who must discard after a 7 (S1.3.1 spec): every player holding
+ * >7 resource cards, each owing `floor(handSize / 2)` (the exact multiset
+ * to discard is the owing player's OWN choice via `intent.discard`, not
+ * computed here). Iterates `state.players`' own fixed array order —
+ * deterministic, like every other derivation in this module.
+ */
+function computePlayersOwingDiscard(state: GameState): PlayerId[] {
+  return state.players
+    .filter((player) => handSize(player.resources) > 7)
+    .map((player) => player.id);
+}
+
+/**
+ * Expands a hand into one entry per held card, sorted by resource kind —
+ * the deterministic ordering the robber steal-pick indexes into (S1.3.1
+ * spec: "index into the victim's sorted hand"). Which physical card is
+ * "the Nth one" is arbitrary (cards of the same kind are fungible); only a
+ * FIXED order matters, so the same `(seed, streamIndex)` always names the
+ * same resource kind.
+ */
+function expandHand(resources: Readonly<Record<ResourceType, number>>): ResourceType[] {
+  const hand: ResourceType[] = [];
+  for (const resource of Object.keys(resources).sort()) {
+    const count = resources[resource] ?? 0;
+    for (let i = 0; i < count; i++) hand.push(resource);
+  }
+  return hand;
+}
+
+/** Result of {@link resolveRobberMove}: either the relocate+steal facts, or why it's illegal. */
+type RobberMoveResolution =
+  | {
+      readonly ok: true;
+      readonly stolenFrom?: PlayerId;
+      readonly stolenResource?: ResourceType;
+    }
+  | { readonly ok: false; readonly reason: RejectReason };
+
+/**
+ * Shared relocate+steal resolution (S1.3.1 spec) — both the 7-roll's
+ * `intent.moveRobber` and a played knight's `intent.playDevCard` branch
+ * call this, so the legality/steal logic is written exactly once. Pure:
+ * never mutates `state`, only computes the facts the eventual
+ * {@link RobberMovedEvent} will carry.
+ *
+ * `stealEventIndex` is the `index` the resulting `robber.moved` EVENT will
+ * carry — not necessarily `state.eventIndex` (the knight path pairs it
+ * right after a {@link KnightPlayedEvent}, so it's `state.eventIndex + 1`
+ * there) — because the steal-pick's PRNG stream index is keyed to that
+ * event's own position in the log (`docs/wiki/rng-stream-map.md` §1), the
+ * same discipline `intent.rollDice` uses for dice draws.
+ */
+function resolveRobberMove(
+  state: GameState,
+  seed: Seed,
+  stealEventIndex: number,
+  playerId: PlayerId,
+  tileId: TileId,
+  victimId: PlayerId | undefined,
+): RobberMoveResolution {
+  const board = state.board;
+  if (!board) {
+    return { ok: false, reason: 'MALFORMED_INTENT' };
+  }
+  if (tileId === board.robberTileId) {
+    return { ok: false, reason: 'ROBBER_SAME_TILE' };
+  }
+  const tile = findTile(topology(), tileId);
+  if (!tile) {
+    return { ok: false, reason: 'MALFORMED_INTENT' };
+  }
+
+  const buildings = state.buildings ?? { settlements: {}, roads: {} };
+  const eligibleOwners: PlayerId[] = [];
+  for (const vertexId of tile.vertexIds) {
+    const owner = buildings.cities?.[vertexId] ?? buildings.settlements[vertexId];
+    if (owner !== undefined && owner !== playerId && !eligibleOwners.includes(owner)) {
+      eligibleOwners.push(owner);
+    }
+  }
+  const eligibleWithCards = eligibleOwners.filter(
+    (id) => handSize(findPlayer(state, id)?.resources ?? {}) > 0,
+  );
+
+  if (eligibleWithCards.length === 0) {
+    // Documented no-op (S1.3.1 spec): nobody adjacent to the new tile has a
+    // card to steal, regardless of whether a victimId was even named.
+    return { ok: true };
+  }
+  if (victimId === undefined || !eligibleOwners.includes(victimId)) {
+    return { ok: false, reason: 'NO_SUCH_VICTIM' };
+  }
+  const hand = expandHand(findPlayer(state, victimId)?.resources ?? {});
+  if (hand.length === 0) {
+    return { ok: false, reason: 'VICTIM_HAS_NO_CARDS' };
+  }
+
+  // Fair-RNG draw (S1.3.1): the same `gameplayStreamIndex` scheme dice
+  // rolls use, keyed to `stealEventIndex` — recomputable by anyone with the
+  // revealed seed from the event log alone (commit-reveal,
+  // `docs/wiki/fair-rng-commit-reveal.md`).
+  const draw = deriveValue(
+    seed,
+    gameplayStreamIndex(stealEventIndex, GAMEPLAY_SLOT.STEAL),
+  );
+  const stolenResource = hand[Math.floor(draw * hand.length)] as ResourceType;
+  return { ok: true, stolenFrom: victimId, stolenResource };
 }
 
 /**
@@ -325,18 +454,23 @@ export function validate(
   if (!state.players.some((player) => player.id === playerId)) {
     return reject('UNKNOWN_PLAYER');
   }
-  // Phase-guard layer (S1.2.4): every intent is legal in exactly one
-  // canonical phase. Setup-only intents (the snake draft, S1.1.3) require
-  // 'setup'; `intent.rollDice` requires 'roll' (the turn's mandatory first
-  // step — attempting a 2nd roll means phase has already advanced to 'main',
-  // which earns the more specific ALREADY_ROLLED over a generic
-  // INVALID_PHASE); every other intent (endTurn, build*, buyDevCard,
+  // Phase-guard layer (S1.2.4, extended S1.3.1): every intent is legal in
+  // exactly one canonical phase (or, for the knight, two). Setup-only
+  // intents (the snake draft, S1.1.3) require 'setup'; `intent.rollDice`
+  // requires 'roll' (the turn's mandatory first step — attempting a 2nd roll
+  // means phase has already advanced to 'main', which earns the more
+  // specific ALREADY_ROLLED over a generic INVALID_PHASE); `intent.discard`/
+  // `intent.moveRobber` require the 'robber' seam a rolled 7 enters
+  // (S1.3.1); playing a knight is legal from EITHER 'roll' or 'main' (Classic
+  // allows a knight before or after rolling, unlike every other dev card);
+  // every remaining intent (endTurn, build*, buyDevCard, non-knight
   // playDevCard) is the post-roll 'main' group — attempting one from 'roll'
   // earns MUST_ROLL_FIRST, this guard's other named reason. Any phase
   // outside an intent's legal/adjacent pair (mid-setup, 'finished', ...)
   // falls through to the generic INVALID_PHASE, same as before this story.
   const isSetupIntent =
     intent.type === 'intent.placeSettlement' || intent.type === 'intent.placeRoad';
+  const isKnightPlay = intent.type === 'intent.playDevCard' && intent.card === 'knight';
   if (isSetupIntent) {
     if (state.phase !== 'setup') {
       return reject('INVALID_PHASE');
@@ -348,6 +482,14 @@ export function validate(
     if (state.phase !== 'roll') {
       return reject('INVALID_PHASE');
     }
+  } else if (intent.type === 'intent.discard' || intent.type === 'intent.moveRobber') {
+    if (state.phase !== 'robber') {
+      return reject('NOT_IN_ROBBER_PHASE');
+    }
+  } else if (isKnightPlay) {
+    if (state.phase !== 'roll' && state.phase !== 'main') {
+      return reject('INVALID_PHASE');
+    }
   } else {
     if (state.phase === 'roll') {
       return reject('MUST_ROLL_FIRST');
@@ -356,7 +498,11 @@ export function validate(
       return reject('INVALID_PHASE');
     }
   }
-  if (state.currentPlayerId !== playerId) {
+  // `intent.discard` is the one exception to "only the current player acts":
+  // several players may owe a discard in the same 7-resolution, in any order
+  // (S1.3.1 spec) — checked instead inside the branch below (`playersToDiscard`
+  // membership).
+  if (intent.type !== 'intent.discard' && state.currentPlayerId !== playerId) {
     return reject('NOT_YOUR_TURN');
   }
 
@@ -386,16 +532,20 @@ export function validate(
         total,
       };
 
-      // TODO(S1.3.1): a 7 moves the robber + triggers discards for players
-      // holding >7 cards — that's the robber story's job, not this one's.
-      // Production is a deliberate no-op on 7 (nobody's tiles pay out while
-      // the robber relocates); only `dice.rolled` is emitted, no
-      // `resources.produced`. S1.2.4 adds a documented `'robber'` phase seam
-      // (`types.ts`'s `GamePhase`) for S1.3.1 to enter here, but doesn't wire
-      // it up — `reduce.ts`'s `dice.rolled` case still lands phase on `main`
-      // for every roll, 7 included, exactly like before this story.
+      // A 7 moves the robber (S1.3.1): production is a deliberate no-op
+      // (nobody's tiles pay out while the robber relocates) — only
+      // `dice.rolled` is emitted, no `resources.produced`. `playersToDiscard`
+      // is computed HERE (a fact `reduce` only applies, never recomputes,
+      // ADR-0003) and carried on the event even when empty — `reduce.ts`'s
+      // `dice.rolled` case reads it to decide whether the turn FSM enters the
+      // `'robber'` phase seam (S1.2.4) still waiting on discards, or can go
+      // straight to a `moveRobber` (nobody happened to be holding >7 cards).
       if (total === 7) {
-        return { ok: true, events: [diceEvent] };
+        const playersToDiscard = computePlayersOwingDiscard(state);
+        return {
+          ok: true,
+          events: [{ ...diceEvent, playersToDiscard }],
+        };
       }
 
       const production = computeProduction(state, total);
@@ -646,16 +796,11 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.playDevCard': {
-      if (intent.card === 'knight') {
-        // TODO(S1.3.1): the knight's effect (move robber + steal) is a
-        // robber action — S1.3.1 owns robber relocation for both the
-        // 7-roll and the knight, and will replace this unconditional
-        // rejection with the real play branch. Held/bought knight counts
-        // are already tracked in `state.devCards[playerId].held.knight`
-        // (incremented on buy) so S1.3.1/S1.3.4's largest-army calc has
-        // the data waiting.
-        return reject('KNIGHT_DEFERRED');
-      }
+      // Un-deferred as of S1.3.1: the knight now shares the SAME
+      // one-per-turn / not-bought-this-turn gating every other dev card
+      // goes through below — it just also, uniquely, routes through the
+      // robber's relocate+steal resolution afterward (see the `case
+      // 'knight':` branch).
       if (state.devCardPlayedThisTurn) {
         return reject('DEV_CARD_ALREADY_PLAYED');
       }
@@ -670,6 +815,49 @@ export function validate(
       }
 
       switch (intent.card) {
+        case 'knight': {
+          // The knight never triggers a discard step (S1.3.1 spec) — it
+          // resolves relocate+steal in the SAME `validate` call, emitting 2
+          // events: `devCard.knightPlayed` (consumes the card, bumps the
+          // knight counter, enters the `'robber'` phase seam — mirrors
+          // `dice.rolled`'s zero-duration production pass-through) then
+          // `robber.moved` at `state.eventIndex + 1` (the actual move+steal
+          // — the steal-pick's stream index is keyed to THIS event's own
+          // position, see {@link resolveRobberMove}). `nextPhase` carries
+          // the phase we were in BEFORE this play ('roll' pre-roll or
+          // 'main' post-roll, Classic allows either) so the turn resumes
+          // exactly where it left off.
+          const resolution = resolveRobberMove(
+            state,
+            seed,
+            state.eventIndex + 1,
+            playerId,
+            intent.tileId,
+            intent.victimId,
+          );
+          if (!resolution.ok) {
+            return reject(resolution.reason);
+          }
+          const knightEvent: KnightPlayedEvent = {
+            type: 'devCard.knightPlayed',
+            index: state.eventIndex,
+            playerId,
+          };
+          const moveEvent: RobberMovedEvent = {
+            type: 'robber.moved',
+            index: state.eventIndex + 1,
+            playerId,
+            tileId: intent.tileId,
+            nextPhase: state.phase,
+            ...(resolution.stolenFrom !== undefined
+              ? {
+                  stolenFrom: resolution.stolenFrom,
+                  stolenResource: resolution.stolenResource,
+                }
+              : {}),
+          };
+          return { ok: true, events: [knightEvent, moveEvent] };
+        }
         case 'roadBuilding': {
           const buildings = state.buildings ?? { settlements: {}, roads: {} };
           const workingRoads: Record<EdgeId, PlayerId> = { ...buildings.roads };
@@ -757,6 +945,72 @@ export function validate(
           );
         }
       }
+    }
+    case 'intent.discard': {
+      // Any owing player may discard, in any order (S1.3.1 spec) — the
+      // top-level guard above deliberately skipped the `currentPlayerId`
+      // check for this intent; ownership is checked here instead.
+      const owing = state.playersToDiscard ?? [];
+      if (!owing.includes(playerId)) {
+        return reject('NOT_OWED_DISCARD');
+      }
+      const player = findPlayer(state, playerId);
+      if (!player) {
+        return reject('UNKNOWN_PLAYER'); // unreachable: membership already checked above
+      }
+      const required = Math.floor(handSize(player.resources) / 2);
+      const requestedTotal = handSize(intent.resources);
+      if (requestedTotal !== required) {
+        return reject('WRONG_DISCARD_COUNT');
+      }
+      if (!canAfford(player.resources, intent.resources)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const event: ResourcesDiscardedEvent = {
+        type: 'resources.discarded',
+        index: state.eventIndex,
+        playerId,
+        resources: intent.resources,
+        remainingToDiscard: owing.filter((id) => id !== playerId),
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.moveRobber': {
+      // Only reachable once every owing player has discarded (S1.3.1 spec)
+      // — a knight play never leaves this window open, it resolves
+      // relocate+steal in its own single `validate` call (see the
+      // `playDevCard` knight branch above), so this intent is exclusively
+      // the 7-roll path's finishing move. `nextPhase` is therefore always
+      // `'main'`: rolling — 7 or not — already consumed this turn's roll.
+      if ((state.playersToDiscard ?? []).length > 0) {
+        return reject('MUST_DISCARD_FIRST');
+      }
+      const resolution = resolveRobberMove(
+        state,
+        seed,
+        state.eventIndex,
+        playerId,
+        intent.tileId,
+        intent.victimId,
+      );
+      if (!resolution.ok) {
+        return reject(resolution.reason);
+      }
+      const event: RobberMovedEvent = {
+        type: 'robber.moved',
+        index: state.eventIndex,
+        playerId,
+        tileId: intent.tileId,
+        nextPhase: 'main',
+        ...(resolution.stolenFrom !== undefined
+          ? {
+              stolenFrom: resolution.stolenFrom,
+              stolenResource: resolution.stolenResource,
+            }
+          : {}),
+      };
+      return { ok: true, events: [event] };
     }
     default: {
       const exhaustive: never = intent;

@@ -2,7 +2,8 @@
 // stream scheme. Exercises the full `intent.rollDice` -> `validate` ->
 // events -> `reduce` pipeline: dice determinism, Classic production math
 // (settlement payout, multi-owner tiles, robber block, bank exhaustion),
-// the 7-deferral seam (TODO(S1.3.1)), and phase/turn-order legality.
+// the 7 short-circuit (no production — robber resolution itself is S1.3.1,
+// see `robber.test.ts`), and phase/turn-order legality.
 
 import { describe, expect, it } from 'vitest';
 
@@ -198,7 +199,7 @@ describe('resource production on roll (S1.2.1)', () => {
     expect(produced.bank).toEqual({ timber: 1 }); // untouched — the whole point of all-or-nothing
   });
 
-  it('defers the robber to S1.3.1: a total of 7 emits only dice.rolled, no resources.produced', () => {
+  it('a total of 7 emits only dice.rolled (with playersToDiscard), no resources.produced — robber resolution itself is S1.3.1, see robber.test.ts', () => {
     const state = makeState({ eventIndex: 6 }); // resolves to total 7 with SEED
 
     const result = validate(
@@ -210,7 +211,11 @@ describe('resource production on roll (S1.2.1)', () => {
     if (!result.ok) throw new Error('expected ok result');
 
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]).toMatchObject({ type: 'dice.rolled', total: 7 });
+    expect(result.events[0]).toMatchObject({
+      type: 'dice.rolled',
+      total: 7,
+      playersToDiscard: [], // makeState's players all start with empty hands
+    });
   });
 
   it('advances state correctly end-to-end via reduce: eventIndex bumps by 2, phase stays main, resources + bank land', () => {

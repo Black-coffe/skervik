@@ -32,7 +32,15 @@ generic — knows only `K`). `validate.ts` owns the actual slot map (parallel to
 |---|---|---|
 | `dice.rolled` (roll production) | `0` | die A |
 | `dice.rolled` (roll production) | `1` | die B |
-| _reserved_ | `2`–`7` | later same-event draws (e.g. robber steal-pick, S1.3.1) |
+| `robber.moved` (robber steal-pick, S1.3.1) | `2` | index into the victim's sorted-deterministic hand (`expandHand`, `validate.ts`) |
+| _reserved_ | `3`–`7` | later same-event draws |
+
+The steal-pick's `eventIndex` is the `robber.moved` EVENT's own `index` — for
+the 7-roll path (`intent.moveRobber`) that's the same `state.eventIndex` the
+intent was validated against; for a played knight it's `state.eventIndex + 1`
+(knight resolution emits `devCard.knightPlayed` first, then `robber.moved`
+right after — the same "the event's own index, not the call's `state.eventIndex`"
+rule dice production already follows for its own `resources.produced` pairing).
 
 ### Headroom guard
 
