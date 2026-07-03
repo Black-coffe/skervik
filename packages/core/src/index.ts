@@ -35,4 +35,9 @@ export {
 } from './rng.js';
 export type * from './types.js';
 export type { ValidateResult } from './validate.js';
-export { CLASSIC_BUILD_PROFILE, CLASSIC_SETUP_PROFILE, validate } from './validate.js';
+export {
+  CLASSIC_BANK_TRADE_PROFILE,
+  CLASSIC_BUILD_PROFILE,
+  CLASSIC_SETUP_PROFILE,
+  validate,
+} from './validate.js';

@@ -17,6 +17,7 @@ import {
 import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
 import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
+  BankTradedEvent,
   BuildingsState,
   CityBuiltEvent,
   DevCardBoughtEvent,
@@ -30,6 +31,7 @@ import type {
   PlayerId,
   PlayerIntent,
   PlayerState,
+  PortContent,
   RejectReason,
   ResourcesDiscardedEvent,
   ResourcesProducedEvent,
@@ -98,6 +100,18 @@ export const CLASSIC_BUILD_PROFILE = {
     settlements: 5,
     cities: 4,
   },
+} as const;
+
+/**
+ * Classic bank-trade rate (rule-profile discipline, plan §1, S1.3.3 spec):
+ * the rate always available with no port at all. Port rates (3:1 generic,
+ * 2:1 resource-specific) live on {@link PortContent} itself (S1.1.2,
+ * `boardgen.ts`'s `CLASSIC_BOARD_PROFILE.ports`) — this is the ONE rate
+ * that isn't board-generated data, so it gets its own small profile object
+ * rather than a magic `4` inside {@link bestBankRate}.
+ */
+export const CLASSIC_BANK_TRADE_PROFILE = {
+  baseRate: 4,
 } as const;
 
 /**
@@ -214,6 +228,58 @@ function countOwned(
 ): number {
   if (!record) return 0;
   return Object.values(record).filter((owner) => owner === playerId).length;
+}
+
+/**
+ * The port contents the player owns (S1.3.3 spec): a port slot is owned if
+ * the player holds a settlement or city on EITHER of that slot's edge
+ * endpoints. Reuses the S1.1.1 port-slot geometry (`board.ts`'s
+ * `portSlots`) paired 1:1 by index with `GameState.board.portContents`
+ * (S1.1.2 — see {@link PortContent}'s docstring) — never re-derives either.
+ */
+function ownedPortContents(state: GameState, playerId: PlayerId): readonly PortContent[] {
+  const board = state.board;
+  const buildings = state.buildings;
+  if (!board || !buildings) return [];
+  const owned: PortContent[] = [];
+  topology().portSlots.forEach((slot, index) => {
+    const edge = findEdge(topology(), slot.edgeId);
+    const ownsEndpoint =
+      edge?.vertexIds.some(
+        (vertexId) =>
+          buildings.settlements[vertexId] === playerId ||
+          buildings.cities?.[vertexId] === playerId,
+      ) ?? false;
+    if (!ownsEndpoint) return;
+    const content = board.portContents[index];
+    if (content) owned.push(content);
+  });
+  return owned;
+}
+
+/**
+ * The player's best (lowest) bank-trade rate for GIVING `resource`
+ * (S1.3.3 spec): 2:1 if they own a port whose content specifically matches
+ * `resource`; else 3:1 if they own ANY generic port; else the
+ * always-available 4:1. Owning a 2:1 port for a DIFFERENT resource does
+ * NOT help `resource` here — it still falls through to the generic/base
+ * rate, exactly like owning no relevant port at all.
+ */
+function bestBankRate(
+  state: GameState,
+  playerId: PlayerId,
+  resource: ResourceType,
+): number {
+  const owned = ownedPortContents(state, playerId);
+  if (
+    owned.some((content) => content.kind === 'resource' && content.resource === resource)
+  ) {
+    return 2;
+  }
+  if (owned.some((content) => content.kind === 'generic')) {
+    return 3;
+  }
+  return CLASSIC_BANK_TRADE_PROFILE.baseRate;
 }
 
 /** True if `resources` covers every line of `cost` (S1.2.2 affordability check). */
@@ -1170,6 +1236,47 @@ export function validate(
         playerId,
       };
       return { ok: true, events: [event] };
+    }
+    case 'intent.bankTrade': {
+      if (!Number.isInteger(intent.count) || intent.count <= 0) {
+        return reject('MALFORMED_INTENT');
+      }
+      // Rate check first: independent of the player's own hand, so a
+      // wrong `count` earns the specific WRONG_RATE_COUNT reason rather
+      // than a misleading CANNOT_AFFORD if it happens to also be too much.
+      const rate = bestBankRate(state, playerId, intent.give);
+      if (intent.count !== rate) {
+        return reject('WRONG_RATE_COUNT');
+      }
+      const player = findPlayer(state, playerId);
+      if (!player || !canAfford(player.resources, { [intent.give]: intent.count })) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const bank = { ...(state.bank ?? {}) };
+      const availableGet = bank[intent.get] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+      if (availableGet < 1) {
+        return reject('BANK_EXHAUSTED');
+      }
+      // `give`'s pool is read back off `nextBank` (not the pre-trade
+      // `bank`) so a same-resource trade (give === get, degenerate but not
+      // forbidden) nets out correctly instead of double-counting.
+      const nextBank = { ...bank };
+      nextBank[intent.get] = availableGet - 1;
+      nextBank[intent.give] =
+        (nextBank[intent.give] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource) +
+        intent.count;
+
+      const tradeEvent: BankTradedEvent = {
+        type: 'bank.trade',
+        index: state.eventIndex,
+        playerId,
+        give: intent.give,
+        count: intent.count,
+        get: intent.get,
+        bank: nextBank,
+      };
+      return { ok: true, events: [tradeEvent] };
     }
     default: {
       const exhaustive: never = intent;
