@@ -17,13 +17,16 @@ are still stubs; zero game rules exist yet — **that's M1** (start at E1.1 per
 
 **Execution plan — when resuming work, start here (no other context needed):**
 
-1. `docs/specs/audit/FIX-PLAN-2026-07.md` — remediation backlog from the 2026-07-02
-   audit (A1–A5 technical, B1–B7 product). Execute per its §5 executor instructions,
-   recommended order in §6.
+1. `docs/specs/m1-vertical-slice/plan.md` — **the active plan**: M1 execution
+   playbook for the Queen (epic order, tier routing, domain notes per epic,
+   invariant checklists, first stories materialized). The Queen writes NO code —
+   specs/docs/orchestration only; all code goes through `worker-code` subagents.
 2. `docs/specs/roadmap/ROADMAP-2026-H2.md` — holistic Jul–Dec 2026 plan (7 directions:
    product → M1 slice + closed alpha in Dec, art/brand, marketing, SMM/community,
    funding, infra, Claude Code process), anchored to master-roadmap epic IDs.
 3. `docs/specs/roadmap/ROADMAP.md` — engineering master plan M0→1.0 (milestones/epics/stories).
+4. `docs/specs/audit/FIX-PLAN-2026-07.md` — 2026-07 audit backlog, all done except
+   owner-action items (B1 Discord, B2 Open Collective, B5 good-first-issues).
 
 The two specs in `docs/` remain the source of truth for _what & why_:
 

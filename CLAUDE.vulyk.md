@@ -27,7 +27,11 @@ Classify every request into a tier, announce the tier, then follow its protocol:
 
 ## Token economy (non-negotiable)
 
-- **Queen never reads source code.** Request `drone-scout` reports; consume `memory/map/` and `memory/memory.md`.
+- **Queen never reads or writes source code.** All code — even a one-line fix
+  discovered during review or benchmarking — is dispatched to `worker-code`
+  (Sonnet by default; Opus for the hardest stories). The Queen produces only
+  specs, docs, plans, and orchestration (owner directive 2026-07-03). For
+  recon, request `drone-scout` reports; consume `memory/map/` and `memory/memory.md`.
 - **Bookend:** top model for planning and final review only. Implementation runs on Sonnet; recon, docs, and memory upkeep on Haiku.
 - **Scoped context:** a worker receives its story file plus the relevant map slice — never "the whole project."
 - **`/clear` between tiers.** Stale conversation history is resent on every turn; clear it when switching tasks.

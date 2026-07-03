@@ -4,14 +4,9 @@
      Maintained by drone-docs (pointers) and librarian (hygiene). Humans welcome too. -->
 
 ## ▶ Resume here (next session)
-- **NEXT ACTION: execute `docs/specs/audit/FIX-PLAN-2026-07.md`** (audit 2026-07-02 @ 2d70e48).
-  Follow its §5 executor rules (one item = one branch/commit, scope-locked, CI green);
-  recommended order §6: A3 → A4 → A5 → B1 → B2 → **A1 (wire rollDie into validate.ts —
-  flagship fair-RNG is disconnected)** → A2 → B7 → B3 → B6 → B5 (B4 blocked on E0.4).
-- Then **E0.4** (Pixi 2.5D perf prototype — the LAST open M0 gate, validates ADR-0002): `/vulyk-plan E0.4`.
-- Then **M1** per `docs/specs/roadmap/ROADMAP-2026-H2.md` (month-by-month: Aug board+economy
-  E1.1/E1.2 → Sep robber/trade/victory E1.3 → Oct server+commit-reveal E1.4/E1.5 → Nov client
-  E1.6 → Dec M1 gate + closed alpha + M2 start).
+- **NEXT ACTION: execute `docs/specs/m1-vertical-slice/plan.md`** (the M1 Queen playbook: epic order, domain notes, invariants; stories S1.1.1–S1.1.3 are materialized next to it, ready to dispatch to worker-code). **The Queen writes NO code — specs/orchestration only; all code via worker-code subagents (owner directive 2026-07-03, see CLAUDE.vulyk.md).**
+- Fix-plan `docs/specs/audit/FIX-PLAN-2026-07.md`: everything done except owner-action items B1 (Discord), B2 (Open Collective), B5 (good-first-issues).
+- Month map (H2 roadmap §2): Aug E1.1/E1.2 → Sep E1.3+E1.4 start → Oct E1.4/E1.5 → Nov E1.6 client → Dec E1.7 M1-gate + closed alpha.
 
 ## Project
 - **Skervik** — OSS online "explore-trade-settle" game (Catan-inspired, independent). Domain skervik.com (reg 2026-06-30, exp 2028).
@@ -21,27 +16,25 @@
 ## Active plan
 - Master roadmap: `docs/specs/roadmap/ROADMAP.md` (zero → 1.0) · **H2-2026 plan:
   `docs/specs/roadmap/ROADMAP-2026-H2.md`** (Jul–Dec, 7 directions: product/art/marketing/
-  SMM/funding/infra/process, KPIs, risks) · **fix backlog: `docs/specs/audit/FIX-PLAN-2026-07.md`**.
-- M0: **E0.1 ✅ · E0.2 ✅ · E0.3 ✅ (CI) · E0.5 ✅ (core contract) · E0.4 ⏳ LAST GATE**.
+  SMM/funding/infra/process, KPIs, risks) · **fix backlog: `docs/specs/audit/FIX-PLAN-2026-07.md`** · **M1 plan: `docs/specs/m1-vertical-slice/plan.md`**.
+- M0 ✅ CLOSED 2026-07-03 (all gates incl. E0.4 Pixi prototype — benchmark `docs/specs/m0-foundation/S0.4.3-perf-results.md`, ADR-0002 validated/locked). Now: **M1 vertical slice — `docs/specs/m1-vertical-slice/plan.md`**.
 - Why/what: `docs/catan-online-research-phase.md` · `docs/catan-online-tech-spec-phase2.md`.
 
 ## Codebase map (core is real; other 4 packages are stubs — NO game rules yet)
 - `packages/core` `@skervik/core` — REAL engine infra, **zero runtime deps** (CI-guarded):
   types (GameState/GameEvent/PlayerIntent), pure reduce/validate, seeded PRNG (mulberry32
-  counter-mode, `rng.ts`), ndjson replay + golden determinism fixture. 36 tests.
-  **Known gap:** `validate.ts:64` dice = placeholder formula, NOT `rollDie` (FIX-PLAN A1).
+  counter-mode, `rng.ts`, rollDie wired as validate.ts 4th param), ndjson replay + golden determinism fixture. 36 tests.
   Game rules (resources/build/trade/robber/VP) = 0%, scheduled M1.
-- `packages/{protocol,server,client,bots}` — stubs (version const + smoke test); real work:
-  protocol S1.5.1, server E1.4, client E0.4/E1.6, bots E2.4.
+- `packages/protocol` stub (type defs next S1.5.1); `packages/server` stub (real E1.4); `packages/client` E0.4 perf prototype real (Pixi.js v8, 19-hex isometric, pixi.js dep live) + product client E1.6 TBD; `packages/bots` stub (real E2.4).
 - Tooling: ESLint flat (+ADR-0003 core guard), Prettier, Vitest 4, tsup(libs)+Vite(client), husky+commitlint.
 
 ## Decisions (docs/adr/) — all accepted
-- 0001 AGPL-3.0 · 0002 Pixi.js v8 (E0.4 validates) · 0003 deterministic isomorphic core · 0004 Node+Colyseus+Fastify · 0005 Google+Discord+guest · 0006 Open Collective · 0007 name=Skervik.
+- 0001 AGPL-3.0 · 0002 Pixi.js v8 (validated by E0.4 2026-07-03, locked) · 0003 deterministic isomorphic core · 0004 Node+Colyseus+Fastify · 0005 Google+Discord+guest · 0006 Open Collective · 0007 name=Skervik · 0008 trilingual RU/UA/EN from first playable build (locales ship in M1 S1.6.6; every user-facing term authored in 3 languages).
 
 ## Wiki (docs/wiki/) — hard invariants, enforce in every core change
-- `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md`.
+- `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md` · `lore-primer.md` (approved setting: realism ≈1900, steam+sail, NO mysticism; trilingual glossary = source of all user-facing names) · `ip-tradedress-checklist.md` (run on first concept art).
 
-## Verification (REAL — all green as of 2026-07-02, verified by audit)
+## Verification (REAL — all green as of 2026-07-03, all gates validated incl. CI named "Core determinism gate")
 - `pnpm -r typecheck` · `pnpm -r lint` · `pnpm -r test` · `pnpm -r build` (core: `pnpm --filter @skervik/core test`).
 
 ## No-go zones
