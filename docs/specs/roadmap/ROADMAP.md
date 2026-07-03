@@ -272,6 +272,8 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 **E4.1 — Async mode** — `S4.1.1` play-by-turn engine over event-sourcing · `S4.1.2` turn notifications (push/email) · `S4.1.3` async lobby/UX.
 **E4.2 — Deep profile** — `S4.2.1` commodities · `S4.2.2` knights · `S4.2.3` development tracks (cities&knights-like layer).
 **E4.3 — Art & customization** — `S4.3.1` premium 2.5D art pass · `S4.3.2` themes/board skins · `S4.3.3` avatars/emotes (**cosmetic only, no p2w**).
+
+> **IP/trade-dress checkpoint (fix-plan B6):** an informal self-check runs on the **first concept sketch** (H2-2026 art track, long before this epic) and again for every new asset class, *before* the style is scaled — checklist: `docs/wiki/ip-tradedress-checklist.md`. A written verdict ("no red flags" / fix list) is required before an asset is mass-produced. This supplements — never replaces — the formal legal/IP review `S4.7.3`.
 **E4.4 — Accessibility & i18n** — `S4.4.1` colorblind palettes + non-color resource cues · `S4.4.2` font scaling + keyboard nav + screen-reader menus · `S4.4.3` locale QA: proofread UA/RU/EN, text-expansion audit, new-locale scalability (framework + all three locales live since M1 `S1.6.6`, ADR-0008).
 **E4.5 — Performance & hardening** — `S4.5.1` progressive asset loading + bundle budget · `S4.5.2` load test to NFR + p95 tuning · `S4.5.3` chaos/reconnect soak.
 **E4.6 — PWA & platform** — `S4.6.1` installable PWA + portrait mobile · `S4.6.2` store wrappers (optional).
