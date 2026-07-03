@@ -120,6 +120,15 @@ export interface GameState {
    * `settlement.placed`, cleared by `road.placed`.
    */
   readonly pendingRoadVertexId?: VertexId;
+  /**
+   * The finite bank's remaining pool, per resource (S1.2.1 production/bank-
+   * exhaustion rule). Absent until the first `resources.produced` event
+   * touches a resource — same "fact of an event having landed" optionality
+   * as {@link GameState.board}; a resource with no key here still has its
+   * full Classic pool (`CLASSIC_PRODUCTION_PROFILE.bankPerResource`,
+   * `validate.ts`), it just hasn't been drawn from yet.
+   */
+  readonly bank?: Readonly<Record<ResourceType, number>>;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -151,14 +160,36 @@ export interface BoardGeneratedEvent extends BaseGameEvent {
 }
 
 /**
- * A dice roll resolved by the server from the seeded PRNG. `value` is a
- * fact, not a request — it is never generated inside `reduce` itself, only
- * carried as event data (ADR-0003: randomness is data, not ambient).
+ * A dice roll resolved by the server from the seeded PRNG (S1.2.1: Classic
+ * play is always 2d6, not 1 die — `dieA`/`dieB`/`total` are facts, never
+ * generated inside `reduce` itself, only carried as event data, ADR-0003).
+ * Recording both faces (not just `total`) means replay never needs to
+ * re-derive them from the seed — see `docs/wiki/rng-stream-map.md`.
  */
 export interface DiceRolledEvent extends BaseGameEvent {
   readonly type: 'dice.rolled';
   readonly playerId: PlayerId;
-  readonly value: number;
+  readonly dieA: number;
+  readonly dieB: number;
+  readonly total: number;
+}
+
+/**
+ * Resource production resolved from a roll (S1.2.1 Classic spec): `grants`
+ * is the explicit per-player payout (keyed by `PlayerId`, then
+ * `ResourceType`) and `bank` is the FULL resultant bank pool after this
+ * roll — both are facts `validate` computes once so `reduce`/replay never
+ * recompute the bank-exhaustion math (ADR-0003). Emitted alongside
+ * `dice.rolled` for every roll except a 7 (robber — deferred to S1.3.1,
+ * see the `validate.ts` `rollDice` branch); `grants` is `{}` when nothing
+ * produces (e.g. no board yet, no tile matches, or bank exhaustion voided
+ * every entitled resource this roll) — still emitted so "this roll produced
+ * nothing" is itself a recorded fact, not an absence to infer.
+ */
+export interface ResourcesProducedEvent extends BaseGameEvent {
+  readonly type: 'resources.produced';
+  readonly grants: Readonly<Record<PlayerId, Readonly<Record<ResourceType, number>>>>;
+  readonly bank: Readonly<Record<ResourceType, number>>;
 }
 
 /** Emitted when a player's turn ends and play passes to the next player. */
@@ -208,6 +239,7 @@ export type GameEvent =
   | MatchStartedEvent
   | BoardGeneratedEvent
   | DiceRolledEvent
+  | ResourcesProducedEvent
   | TurnEndedEvent
   | SettlementPlacedEvent
   | RoadPlacedEvent;

@@ -59,10 +59,20 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       };
     }
     case 'dice.rolled': {
-      // M0 skeleton: GameState carries no per-roll field yet (M1 Classic
-      // rules add resource production from the roll). Applying the event
-      // still advances the deterministic event-stream index.
+      // The roll itself only advances the event-stream index — production
+      // (if any) is a separate `resources.produced` event (S1.2.1), applied
+      // below, so a 7 (no production, robber deferred to S1.3.1) still
+      // advances state correctly from `dice.rolled` alone.
       return { ...state, eventIndex: event.index + 1 };
+    }
+    case 'resources.produced': {
+      const players = state.players.map((player) => {
+        const grant = event.grants[player.id];
+        return grant
+          ? { ...player, resources: addResources(player.resources, grant) }
+          : player;
+      });
+      return { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
     }
     case 'turn.ended': {
       return {

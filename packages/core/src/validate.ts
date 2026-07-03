@@ -10,7 +10,7 @@ import {
   findVertex,
   type VertexTopology,
 } from './board.js';
-import { rollDie, type Seed } from './rng.js';
+import { gameplayStreamIndex, rollDie, type Seed } from './rng.js';
 import type {
   DiceRolledEvent,
   GameEvent,
@@ -19,6 +19,7 @@ import type {
   PlayerId,
   PlayerIntent,
   RejectReason,
+  ResourcesProducedEvent,
   ResourceType,
   RoadPlacedEvent,
   SettlementPlacedEvent,
@@ -46,6 +47,30 @@ function reject(reason: RejectReason): ValidateResult {
  */
 export const CLASSIC_SETUP_PROFILE = {
   settlementsPerPlayer: 2,
+} as const;
+
+/**
+ * Classic production constants (rule-profile discipline, plan §1): the
+ * finite bank pool per resource type. Physical-Catan parity (19 cards of
+ * each of the 5 resources) — a swappable profile object, not a magic number
+ * scattered through {@link computeProduction}.
+ */
+const CLASSIC_PRODUCTION_PROFILE = {
+  bankPerResource: 19,
+} as const;
+
+/**
+ * The gameplay RNG stream's per-event slot map (S1.2.1, fixed here,
+ * documented in `docs/wiki/rng-stream-map.md` §1 — **never renumber a slot
+ * once shipped**, an auditor's recomputation depends on it). `validate.ts`
+ * is this scheme's owner (parallel to `boardgen.ts` owning
+ * `BOARD_GEN_STREAM`); `gameplayStreamIndex` (`rng.ts`) only knows the
+ * stride `K`, not what each slot means.
+ */
+const GAMEPLAY_SLOT = {
+  DICE_A: 0,
+  DICE_B: 1,
+  // 2-7 reserved for later same-event draws (e.g. the robber steal-pick, S1.3.1).
 } as const;
 
 // `buildTopology()` is pure and its result never changes for a given board
@@ -83,6 +108,68 @@ function settlementPayout(
     payout[kind] = (payout[kind] ?? 0) + 1;
   }
   return payout;
+}
+
+/** Result of {@link computeProduction}: facts destined for `resources.produced` (ADR-0003). */
+interface ProductionResult {
+  readonly grants: Record<PlayerId, Record<ResourceType, number>>;
+  readonly bank: Record<ResourceType, number>;
+}
+
+/**
+ * Resolves one roll's Classic production (S1.2.1 spec): for every
+ * non-desert tile bearing `total` that the robber is NOT sitting on, each
+ * adjacent settlement's owner earns 1 of that tile's resource. Bank
+ * exhaustion is all-or-nothing per resource type — if the bank can't pay
+ * the FULL amount owed of a resource to every entitled player this roll,
+ * nobody gets that resource this roll. Returns empty grants (bank
+ * unchanged) if `board`/`buildings` are absent — never throws.
+ *
+ * TODO(S1.2.2): once `BuildingsState` gains a city marker, a city here
+ * should pay 2 instead of 1 — this function only knows "settlement" today
+ * (`BuildingsState.settlements`), so every producing vertex pays the
+ * settlement amount; the seam is the `amount = 1` line below.
+ */
+function computeProduction(state: GameState, total: number): ProductionResult {
+  const board = state.board;
+  const buildings = state.buildings;
+
+  // owed[resource][playerId] = amount owed to that player this roll, summed
+  // across every producing, unblocked tile of that resource.
+  const owed: Record<ResourceType, Record<PlayerId, number>> = {};
+  if (board && buildings) {
+    for (const tile of topology().tiles) {
+      const kind = board.tileKinds[tile.id];
+      if (kind === undefined || kind === 'desert') continue;
+      if (board.tileTokens[tile.id] !== total) continue;
+      if (tile.id === board.robberTileId) continue; // robber blocks the tile entirely
+
+      for (const vertexId of tile.vertexIds) {
+        const owner = buildings.settlements[vertexId];
+        if (owner === undefined) continue;
+        const amount = 1; // TODO(S1.2.2): city -> 2, see docstring above.
+        owed[kind] ??= {};
+        owed[kind][owner] = (owed[kind][owner] ?? 0) + amount;
+      }
+    }
+  }
+
+  const grants: Record<PlayerId, Record<ResourceType, number>> = {};
+  const bank: Record<ResourceType, number> = { ...(state.bank ?? {}) };
+
+  for (const [resource, byPlayer] of Object.entries(owed)) {
+    const totalOwed = Object.values(byPlayer).reduce((sum, amount) => sum + amount, 0);
+    const available = bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+    if (totalOwed > available) continue; // all-or-nothing: bank can't cover it, nobody gets it
+
+    bank[resource] = available - totalOwed;
+    for (const [playerId, amount] of Object.entries(byPlayer)) {
+      grants[playerId] ??= {};
+      grants[playerId][resource] = (grants[playerId][resource] ?? 0) + amount;
+    }
+  }
+
+  return { grants, bank };
 }
 
 /**
@@ -132,21 +219,47 @@ export function validate(
 
   switch (intent.type) {
     case 'intent.rollDice': {
-      // Fair-RNG draw: derived from `(seed, state.eventIndex)`, so anyone
-      // with the revealed seed can recompute this roll from the public
-      // event log post-match (commit-reveal, see the fn docstring and
-      // `docs/wiki/fair-rng-commit-reveal.md`). `state.eventIndex` is the
-      // stream index and becomes this event's `index` — the same slot the
-      // audit verifies against (`replay.test.ts`). No ambient randomness
-      // (ADR-0003).
-      const value = rollDie(seed, state.eventIndex);
-      const event: DiceRolledEvent = {
+      // Fair-RNG draw: Classic play is 2d6, each die its own slot of the
+      // gameplay stream (S1.2.1 scheme, `docs/wiki/rng-stream-map.md` §1) —
+      // `gameplayStreamIndex(state.eventIndex, slot)` — so anyone with the
+      // revealed seed can recompute both faces from the public event log
+      // post-match (commit-reveal, `docs/wiki/fair-rng-commit-reveal.md`).
+      // No ambient randomness (ADR-0003).
+      const dieA = rollDie(
+        seed,
+        gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_A),
+      );
+      const dieB = rollDie(
+        seed,
+        gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_B),
+      );
+      const total = dieA + dieB;
+      const diceEvent: DiceRolledEvent = {
         type: 'dice.rolled',
         index: state.eventIndex,
         playerId,
-        value,
+        dieA,
+        dieB,
+        total,
       };
-      return { ok: true, events: [event] };
+
+      // TODO(S1.3.1): a 7 moves the robber + triggers discards for players
+      // holding >7 cards — that's the robber story's job, not this one's.
+      // Production is a deliberate no-op on 7 (nobody's tiles pay out while
+      // the robber relocates); only `dice.rolled` is emitted, no
+      // `resources.produced`.
+      if (total === 7) {
+        return { ok: true, events: [diceEvent] };
+      }
+
+      const production = computeProduction(state, total);
+      const producedEvent: ResourcesProducedEvent = {
+        type: 'resources.produced',
+        index: state.eventIndex + 1,
+        grants: production.grants,
+        bank: production.bank,
+      };
+      return { ok: true, events: [diceEvent, producedEvent] };
     }
     case 'intent.endTurn': {
       const players = state.players;

@@ -12,6 +12,7 @@ import type {
   PlayerIntent,
   PlayerState,
   RejectReason,
+  ResourcesProducedEvent,
   RoadPlacedEvent,
   RollDiceIntent,
   SettlementPlacedEvent,
@@ -66,18 +67,24 @@ describe('GameEvent', () => {
       portContents: [{ kind: 'generic', rate: 3 }],
       robberTileId: '0,0',
     },
-    { type: 'dice.rolled', index: 2, playerId: 'player-1', value: 8 },
-    { type: 'turn.ended', index: 3, playerId: 'player-1', nextPlayerId: 'player-2' },
+    { type: 'dice.rolled', index: 2, playerId: 'player-1', dieA: 5, dieB: 3, total: 8 },
+    {
+      type: 'resources.produced',
+      index: 3,
+      grants: { 'player-1': { timber: 1 } },
+      bank: { timber: 18 },
+    },
+    { type: 'turn.ended', index: 4, playerId: 'player-1', nextPlayerId: 'player-2' },
     {
       type: 'settlement.placed',
-      index: 4,
+      index: 5,
       playerId: 'player-1',
       vertexId: 'vertex-1',
       payout: { timber: 1 },
     },
     {
       type: 'road.placed',
-      index: 5,
+      index: 6,
       playerId: 'player-1',
       edgeId: 'edge-1',
       nextPlayerId: 'player-2',
@@ -100,7 +107,12 @@ describe('GameEvent', () => {
         }
         case 'dice.rolled': {
           const e: DiceRolledEvent = event;
-          expect(e.value).toBe(8);
+          expect(e.total).toBe(8);
+          break;
+        }
+        case 'resources.produced': {
+          const e: ResourcesProducedEvent = event;
+          expect(e.grants).toEqual({ 'player-1': { timber: 1 } });
           break;
         }
         case 'turn.ended': {

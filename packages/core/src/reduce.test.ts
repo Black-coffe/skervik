@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { reduce, replay } from './reduce.js';
-import { rollDie } from './rng.js';
+import { gameplayStreamIndex, rollDie } from './rng.js';
 import type { GameEvent, GameState, PlayerState } from './types.js';
 import { validate } from './validate.js';
 
@@ -93,12 +93,34 @@ describe('reduce', () => {
       type: 'dice.rolled',
       index: mainState.eventIndex,
       playerId: alice.id,
-      value: 8,
+      dieA: 5,
+      dieB: 3,
+      total: 8,
     };
 
     const next = reduce(mainState, event);
 
     expect(next).not.toBe(mainState);
+    expect(next.eventIndex).toBe(mainState.eventIndex + 1);
+  });
+
+  it('applies resources.produced: grants land on players, bank is the new fact, index advances', () => {
+    const event: GameEvent = {
+      type: 'resources.produced',
+      index: mainState.eventIndex,
+      grants: { [alice.id]: { ore: 2 } },
+      bank: { ore: 17 },
+    };
+
+    const next = reduce(mainState, event);
+
+    expect(next).not.toBe(mainState);
+    expect(next.players.find((p) => p.id === alice.id)?.resources).toEqual({
+      timber: 1,
+      ore: 2,
+    });
+    expect(next.players.find((p) => p.id === bob.id)?.resources).toEqual(bob.resources);
+    expect(next.bank).toEqual({ ore: 17 });
     expect(next.eventIndex).toBe(mainState.eventIndex + 1);
   });
 
@@ -248,7 +270,7 @@ describe('validate', () => {
     ).not.toThrow();
   });
 
-  it('validates intent.rollDice into a fair-RNG dice.rolled event', () => {
+  it('validates intent.rollDice into a fair-RNG dice.rolled (+ resources.produced) event', () => {
     const result = validate(
       mainState,
       { type: 'intent.rollDice', playerId: alice.id },
@@ -258,20 +280,27 @@ describe('validate', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok result');
-    expect(result.events).toHaveLength(1);
+    // SEED @ mainState.eventIndex resolves to a non-7 total, so both
+    // `dice.rolled` and `resources.produced` are emitted (S1.2.1 scheme).
+    expect(result.events).toHaveLength(2);
     expect(result.events[0]).toMatchObject({
       type: 'dice.rolled',
       playerId: alice.id,
       index: mainState.eventIndex,
     });
-
-    // Provably-fair: the value validate emits is exactly what an auditor
-    // recomputes from the revealed seed + stream index (A1 acceptance).
-    expect(result.events[0]).toMatchObject({
-      value: rollDie(SEED, mainState.eventIndex),
+    expect(result.events[1]).toMatchObject({
+      type: 'resources.produced',
+      index: mainState.eventIndex + 1,
+      grants: {}, // mainState has no board/buildings — nothing to produce from
     });
 
-    // Same (state, seed) in -> same value out (no ambient randomness, ADR-0003).
+    // Provably-fair: each die is exactly what an auditor recomputes from the
+    // revealed seed + gameplay stream index (A1 acceptance, S1.2.1 scheme).
+    const dieA = rollDie(SEED, gameplayStreamIndex(mainState.eventIndex, 0));
+    const dieB = rollDie(SEED, gameplayStreamIndex(mainState.eventIndex, 1));
+    expect(result.events[0]).toMatchObject({ dieA, dieB, total: dieA + dieB });
+
+    // Same (state, seed) in -> same events out (no ambient randomness, ADR-0003).
     const again = validate(
       mainState,
       { type: 'intent.rollDice', playerId: alice.id },
@@ -282,6 +311,8 @@ describe('validate', () => {
 
     // A different seed derives its own draw from the same stream index — the
     // roll actually depends on the seed now, not on a state-only placeholder.
+    // This seed happens to resolve to a 7 at this eventIndex, exercising the
+    // no-production seam: only `dice.rolled` is emitted (TODO(S1.3.1)).
     const otherSeed = validate(
       mainState,
       { type: 'intent.rollDice', playerId: alice.id },
@@ -290,8 +321,17 @@ describe('validate', () => {
     );
     expect(otherSeed.ok).toBe(true);
     if (!otherSeed.ok) throw new Error('expected ok result');
+    expect(otherSeed.events).toHaveLength(1);
     expect(otherSeed.events[0]).toMatchObject({
-      value: rollDie('skervik-golden-seed-1', mainState.eventIndex),
+      dieA: rollDie(
+        'skervik-golden-seed-1',
+        gameplayStreamIndex(mainState.eventIndex, 0),
+      ),
+      dieB: rollDie(
+        'skervik-golden-seed-1',
+        gameplayStreamIndex(mainState.eventIndex, 1),
+      ),
+      total: 7,
     });
   });
 
@@ -324,7 +364,7 @@ describe('replay', () => {
         seedHash: 'feedface',
         playerIds: [alice.id, bob.id],
       },
-      { type: 'dice.rolled', index: 1, playerId: alice.id, value: 6 },
+      { type: 'dice.rolled', index: 1, playerId: alice.id, dieA: 2, dieB: 4, total: 6 },
       { type: 'turn.ended', index: 2, playerId: alice.id, nextPlayerId: bob.id },
     ];
 

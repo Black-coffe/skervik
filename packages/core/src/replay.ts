@@ -22,15 +22,21 @@ export interface MatchStartedLogData {
 }
 
 /**
- * `data` payload of a `DICE_ROLLED` log line — mirrors {@link DiceRolledEvent}.
- * `result` is the resolved face value; the line's `rngStreamIndex` (sibling
- * of `data`, required on this variant) is what makes it recomputable —
- * anyone with the revealed `seed` can call `rollDie(seed, rngStreamIndex)`
- * and confirm it equals `result` (`docs/wiki/fair-rng-commit-reveal.md`).
+ * `data` payload of a `DICE_ROLLED` log line — mirrors {@link DiceRolledEvent}
+ * (S1.2.1: Classic play is 2d6, both faces + the total are recorded so
+ * replay never recomputes them). The line's `rngStreamIndex` (sibling of
+ * `data`, required on this variant) is the base index the gameplay scheme's
+ * `gameplayStreamIndex(rngStreamIndex, slot)` derives both draws from —
+ * anyone with the revealed `seed` can call `rollDie(seed,
+ * gameplayStreamIndex(rngStreamIndex, 0|1))` and confirm it equals
+ * `dieA`/`dieB` (`docs/wiki/rng-stream-map.md` §1,
+ * `docs/wiki/fair-rng-commit-reveal.md`).
  */
 export interface DiceRolledLogData {
   readonly playerId: PlayerId;
-  readonly result: number;
+  readonly dieA: number;
+  readonly dieB: number;
+  readonly total: number;
 }
 
 /** `data` payload of a `TURN_ENDED` log line — mirrors {@link TurnEndedEvent}. */
@@ -81,9 +87,14 @@ export function parseEventLog(ndjson: string): EventLogLine[] {
 
 /**
  * Maps one {@link EventLogLine} to the {@link GameEvent} `reduce` understands.
- * `seq` becomes `index`; the random-event line's `result` becomes the
- * event's `value` (the fact `reduce` applies — recomputing/verifying it
- * against `rngStreamIndex` is the audit step, not part of replay itself).
+ * `seq` becomes `index`; the random-event line's `dieA`/`dieB`/`total`
+ * become the event's fields verbatim (the facts `reduce` applies —
+ * recomputing/verifying them against `rngStreamIndex` is the audit step,
+ * not part of replay itself). Note: this wire-format replay path does not
+ * (yet) synthesize the `resources.produced` event `validate.ts` pairs with
+ * a live roll — persisting that as its own `RESOURCES_PRODUCED` log-line
+ * type is follow-up scope (tech spec §6.4), not part of S1.2.1's in-memory
+ * `validate`/`reduce` contract this module wraps.
  */
 function toGameEvent(line: EventLogLine): GameEvent {
   switch (line.type) {
@@ -100,7 +111,9 @@ function toGameEvent(line: EventLogLine): GameEvent {
         type: 'dice.rolled',
         index: line.seq,
         playerId: line.data.playerId,
-        value: line.data.result,
+        dieA: line.data.dieA,
+        dieB: line.data.dieB,
+        total: line.data.total,
       };
     case 'TURN_ENDED':
       return {

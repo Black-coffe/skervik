@@ -20,7 +20,13 @@ export { reduce, replay } from './reduce.js';
 export type { EventLogLine } from './replay.js';
 export { parseEventLog, replayLog } from './replay.js';
 export type { Seed } from './rng.js';
-export { deriveValue, rollDie, shuffle } from './rng.js';
+export {
+  deriveValue,
+  GAMEPLAY_STREAM_SLOTS,
+  gameplayStreamIndex,
+  rollDie,
+  shuffle,
+} from './rng.js';
 export type * from './types.js';
 export type { ValidateResult } from './validate.js';
 export { CLASSIC_SETUP_PROFILE, validate } from './validate.js';
