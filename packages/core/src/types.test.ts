@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   BoardGeneratedEvent,
+  BuildCityIntent,
+  BuildRoadIntent,
+  BuildSettlementIntent,
+  CityBuiltEvent,
   DiceRolledEvent,
   EndTurnIntent,
   GameEvent,
@@ -13,8 +17,10 @@ import type {
   PlayerState,
   RejectReason,
   ResourcesProducedEvent,
+  RoadBuiltEvent,
   RoadPlacedEvent,
   RollDiceIntent,
+  SettlementBuiltEvent,
   SettlementPlacedEvent,
   TurnEndedEvent,
 } from './types.js';
@@ -90,6 +96,27 @@ describe('GameEvent', () => {
       nextPlayerId: 'player-2',
       nextPhase: 'setup',
     },
+    {
+      type: 'road.built',
+      index: 7,
+      playerId: 'player-1',
+      edgeId: 'edge-1',
+      cost: { timber: 1, clay: 1 },
+    },
+    {
+      type: 'settlement.built',
+      index: 8,
+      playerId: 'player-1',
+      vertexId: 'vertex-1',
+      cost: { timber: 1, clay: 1, fleece: 1, barley: 1 },
+    },
+    {
+      type: 'city.built',
+      index: 9,
+      playerId: 'player-1',
+      vertexId: 'vertex-1',
+      cost: { iron: 3, barley: 2 },
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -130,6 +157,21 @@ describe('GameEvent', () => {
           expect(e.nextPhase).toBe('setup');
           break;
         }
+        case 'road.built': {
+          const e: RoadBuiltEvent = event;
+          expect(e.cost).toEqual({ timber: 1, clay: 1 });
+          break;
+        }
+        case 'settlement.built': {
+          const e: SettlementBuiltEvent = event;
+          expect(e.vertexId).toBe('vertex-1');
+          break;
+        }
+        case 'city.built': {
+          const e: CityBuiltEvent = event;
+          expect(e.cost).toEqual({ iron: 3, barley: 2 });
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -149,6 +191,9 @@ describe('PlayerIntent', () => {
     { type: 'intent.endTurn', playerId: 'player-1' },
     { type: 'intent.placeSettlement', playerId: 'player-1', vertexId: 'vertex-1' },
     { type: 'intent.placeRoad', playerId: 'player-1', edgeId: 'edge-1' },
+    { type: 'intent.buildRoad', playerId: 'player-1', edgeId: 'edge-1' },
+    { type: 'intent.buildSettlement', playerId: 'player-1', vertexId: 'vertex-1' },
+    { type: 'intent.buildCity', playerId: 'player-1', vertexId: 'vertex-1' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -174,6 +219,21 @@ describe('PlayerIntent', () => {
           expect(i.edgeId).toBe('edge-1');
           break;
         }
+        case 'intent.buildRoad': {
+          const i: BuildRoadIntent = intent;
+          expect(i.edgeId).toBe('edge-1');
+          break;
+        }
+        case 'intent.buildSettlement': {
+          const i: BuildSettlementIntent = intent;
+          expect(i.vertexId).toBe('vertex-1');
+          break;
+        }
+        case 'intent.buildCity': {
+          const i: BuildCityIntent = intent;
+          expect(i.vertexId).toBe('vertex-1');
+          break;
+        }
         default: {
           const exhaustive: never = intent;
           throw new Error(`unhandled intent type: ${JSON.stringify(exhaustive)}`);
@@ -194,6 +254,10 @@ describe('RejectReason', () => {
       'DISTANCE_VIOLATION',
       'DETACHED_ROAD',
       'WRONG_PHASE',
+      'CANNOT_AFFORD',
+      'NOT_CONNECTED',
+      'NOT_OWN_SETTLEMENT',
+      'SUPPLY_EXHAUSTED',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');
