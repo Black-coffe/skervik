@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { reduce, replay } from './reduce.js';
+import { rollDie } from './rng.js';
 import type { GameEvent, GameState, PlayerState } from './types.js';
 import { validate } from './validate.js';
+
+// A match's secret PRNG seed (revealed post-match). Passed into `validate`
+// rather than stored in GameState — see the `validate` docstring / A1.
+const SEED = 'skervik-golden-seed-3';
 
 const alice: PlayerState = {
   id: 'player-1',
@@ -109,6 +114,7 @@ describe('validate', () => {
       mainState,
       { type: 'intent.endTurn', playerId: alice.id },
       bob.id,
+      SEED,
     );
 
     expect(result).toEqual({ ok: false, reason: 'MALFORMED_INTENT' });
@@ -119,6 +125,7 @@ describe('validate', () => {
       mainState,
       { type: 'intent.endTurn', playerId: 'ghost' },
       'ghost',
+      SEED,
     );
 
     expect(result).toEqual({ ok: false, reason: 'UNKNOWN_PLAYER' });
@@ -131,6 +138,7 @@ describe('validate', () => {
       setupState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
+      SEED,
     );
 
     expect(result).toEqual({ ok: false, reason: 'INVALID_PHASE' });
@@ -141,6 +149,7 @@ describe('validate', () => {
       mainState,
       { type: 'intent.endTurn', playerId: bob.id },
       bob.id,
+      SEED,
     );
 
     expect(result).toEqual({ ok: false, reason: 'NOT_YOUR_TURN' });
@@ -148,29 +157,55 @@ describe('validate', () => {
 
   it('never throws for an expected rejection', () => {
     expect(() =>
-      validate(mainState, { type: 'intent.endTurn', playerId: bob.id }, bob.id),
+      validate(mainState, { type: 'intent.endTurn', playerId: bob.id }, bob.id, SEED),
     ).not.toThrow();
   });
 
-  it('validates intent.rollDice into a deterministic dice.rolled event', () => {
+  it('validates intent.rollDice into a fair-RNG dice.rolled event', () => {
     const result = validate(
       mainState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
+      SEED,
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok result');
     expect(result.events).toHaveLength(1);
-    expect(result.events[0]).toMatchObject({ type: 'dice.rolled', playerId: alice.id });
+    expect(result.events[0]).toMatchObject({
+      type: 'dice.rolled',
+      playerId: alice.id,
+      index: mainState.eventIndex,
+    });
 
-    // Same state in -> same value out (no ambient randomness, ADR-0003).
+    // Provably-fair: the value validate emits is exactly what an auditor
+    // recomputes from the revealed seed + stream index (A1 acceptance).
+    expect(result.events[0]).toMatchObject({
+      value: rollDie(SEED, mainState.eventIndex),
+    });
+
+    // Same (state, seed) in -> same value out (no ambient randomness, ADR-0003).
     const again = validate(
       mainState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
+      SEED,
     );
     expect(again).toEqual(result);
+
+    // A different seed derives its own draw from the same stream index — the
+    // roll actually depends on the seed now, not on a state-only placeholder.
+    const otherSeed = validate(
+      mainState,
+      { type: 'intent.rollDice', playerId: alice.id },
+      alice.id,
+      'skervik-golden-seed-1',
+    );
+    expect(otherSeed.ok).toBe(true);
+    if (!otherSeed.ok) throw new Error('expected ok result');
+    expect(otherSeed.events[0]).toMatchObject({
+      value: rollDie('skervik-golden-seed-1', mainState.eventIndex),
+    });
   });
 
   it('validates intent.endTurn end-to-end: events apply via reduce and state changes', () => {
@@ -178,6 +213,7 @@ describe('validate', () => {
       mainState,
       { type: 'intent.endTurn', playerId: alice.id },
       alice.id,
+      SEED,
     );
 
     expect(result.ok).toBe(true);

@@ -152,8 +152,10 @@
 // Чистая функция: одинаково на сервере и клиенте
 function reduce(state: GameState, event: GameEvent): GameState;
 
-// Применение намерения игрока проходит валидацию:
-function validate(state: GameState, intent: PlayerIntent, playerId: PlayerId): 
+// Применение намерения игрока проходит валидацию.
+// `seed` — серверный секрет (сырой PRNG-seed), НЕ хранится в GameState
+// (там только публичный seedHash); броски выводятся как rollDie(seed, eventIndex).
+function validate(state: GameState, intent: PlayerIntent, playerId: PlayerId, seed: Seed):
   | { ok: true; events: GameEvent[] }
   | { ok: false; reason: RejectReason };
 ```

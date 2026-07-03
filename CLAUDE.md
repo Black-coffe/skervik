@@ -74,10 +74,12 @@ function validate(
   state: GameState,
   intent: PlayerIntent,
   playerId: PlayerId,
+  seed: Seed, // server-secret PRNG seed; NOT stored in GameState (commit-reveal)
 ): { ok: true; events: GameEvent[] } | { ok: false; reason: RejectReason };
 ```
 
 - **Intent** = player's wish (from client) → **validated** server-side → only the resulting **Events** mutate state.
+- **`seed` is a `validate` parameter, never a `GameState` field.** Random events (dice) are drawn as `rollDie(seed, state.eventIndex)`. `GameState` carries only the public `seedHash`; the raw `seed` stays a server secret and is passed in, so a client (which serializes `GameState`) can't predict future rolls — this is what makes commit-reveal fair RNG actually fair (FIX-PLAN-2026-07 A1).
 - **Rule Profiles are config objects, not code branches** (`classic | balanced | blitz | deep`): randomness mode (`dice | balanced_deck`), catch-up toggles (friendlyRobber, robinHood, finalRound, hiddenVP, catchUpEvents), VP threshold, board size, turn timers, parallel phases. The "multi-mode platform" is one engine configured differently.
 - **Adaptive duration**: 60 min is a **hard ceiling** for synchronous online play. Lobby computes the profile (VP threshold, board size, timers, parallelism) from player count × mode to fit the target window; if a config risks exceeding 60 min, the engine lowers VP / tightens timers and warns in the lobby.
 

@@ -3,6 +3,7 @@
 // Per the deterministic-core invariant, validate never throws for an expected
 // rejection — it always returns the discriminated ValidateResult below.
 
+import { rollDie, type Seed } from './rng.js';
 import type {
   DiceRolledEvent,
   GameEvent,
@@ -35,12 +36,22 @@ function reject(reason: RejectReason): ValidateResult {
  * though the network layer already knows who is asking (ADR-0003 /
  * server-authority).
  *
+ * `seed` is the match's raw PRNG seed — a **server secret** that drives the
+ * commit-reveal fair RNG (`docs/wiki/fair-rng-commit-reveal.md`). It is
+ * passed in rather than read from `state` on purpose: `GameState` carries
+ * only `seedHash` (the public commit) and is serialized to clients, so
+ * putting the raw seed there would let a client predict every future roll
+ * and defeat the whole scheme. Randomness is derived as
+ * `rollDie(seed, state.eventIndex)` — pure indexing into the seed stream,
+ * never an ambient draw (ADR-0003).
+ *
  * Pure and deterministic: never throws for an expected rejection.
  */
 export function validate(
   state: GameState,
   intent: PlayerIntent,
   playerId: PlayerId,
+  seed: Seed,
 ): ValidateResult {
   if (intent.playerId !== playerId) {
     return reject('MALFORMED_INTENT');
@@ -57,11 +68,14 @@ export function validate(
 
   switch (intent.type) {
     case 'intent.rollDice': {
-      // M0 skeleton: the real seeded-PRNG draw lands when S0.5.3's
-      // `rng.ts` is wired into rule logic (M1). For now the value is a
-      // deterministic function of state alone — no Math.random, no
-      // ambient randomness (ADR-0003) — and will be replaced, not removed.
-      const value = 2 + (state.eventIndex % 11);
+      // Fair-RNG draw: derived from `(seed, state.eventIndex)`, so anyone
+      // with the revealed seed can recompute this roll from the public
+      // event log post-match (commit-reveal, see the fn docstring and
+      // `docs/wiki/fair-rng-commit-reveal.md`). `state.eventIndex` is the
+      // stream index and becomes this event's `index` — the same slot the
+      // audit verifies against (`replay.test.ts`). No ambient randomness
+      // (ADR-0003).
+      const value = rollDie(seed, state.eventIndex);
       const event: DiceRolledEvent = {
         type: 'dice.rolled',
         index: state.eventIndex,
