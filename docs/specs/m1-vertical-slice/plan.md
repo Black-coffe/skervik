@@ -183,7 +183,10 @@ victory — asserts determinism server-side and event-log replay equality;
 | S1.2.2 build actions road/settlement/city | ⏳ materialized (after S1.2.1) |
 | S1.2.3 dev cards deck/buy/play (knight play deferred to S1.3.1) | ⏳ materialized (after S1.2.2) |
 | S1.2.4 turn FSM roll→produce→main→end + guards | ⏳ materialized (after S1.2.1–.3) |
-| S1.3.1–S1.3.4 | not materialized |
+| S1.3.1 robber/7: discard, relocate, steal (+ knight play from S1.2.3) | ⏳ materialized (after E1.2) |
+| S1.3.2 p2p trade: offer/counter/accept, atomic swap | ⏳ materialized (after S1.3.1) |
+| S1.3.3 bank/port trade 4:1/3:1/2:1 (T1) | ⏳ materialized (after S1.3.2) |
+| S1.3.4 longest road, largest army, VP tally, victory | ⏳ materialized (after S1.3.1–.3) |
 | S1.4.1–S1.4.4 | not materialized |
 | S1.5.1–S1.5.2 | not materialized |
 | S1.6.1–S1.6.6 | not materialized |

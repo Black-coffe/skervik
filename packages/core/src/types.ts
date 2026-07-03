@@ -7,7 +7,7 @@
 // JSON. M1 Classic rules extend these shapes; this file does not invent a
 // full ruleset.
 
-import type { TileId } from './board.js';
+import type { EdgeId, TileId, VertexId } from './board.js';
 
 /** Opaque identifier for a match (room / game instance). */
 export type MatchId = string;
@@ -70,6 +70,16 @@ export interface BoardState {
 }
 
 /**
+ * Placed settlements/roads, keyed by board position (S1.1.3). Plain
+ * `Record`s, not `Map`s (ADR-0003) — `settlements[vertexId]`/`roads[edgeId]`
+ * is the owning player, or absent if that position is unbuilt.
+ */
+export interface BuildingsState {
+  readonly settlements: Readonly<Record<VertexId, PlayerId>>;
+  readonly roads: Readonly<Record<EdgeId, PlayerId>>;
+}
+
+/**
  * The full authoritative game state. A plain, JSON-serializable object —
  * no class instances, no functions, no `Map`/`Set` — so it can be
  * event-sourced (replay = truth) and deep-compared byte-for-byte
@@ -96,6 +106,20 @@ export interface GameState {
    * fixtures (no board event in their log) stay byte-identical unchanged.
    */
   readonly board?: BoardState;
+  /**
+   * Present once the first `settlement.placed` has been applied (S1.1.3),
+   * absent before — same "fact of an event having landed" optionality as
+   * {@link GameState.board}, so fixtures that never reach the setup
+   * placement flow stay byte-identical.
+   */
+  readonly buildings?: BuildingsState;
+  /**
+   * The vertex of the settlement placed earlier THIS draft turn, awaiting
+   * its attached road (S1.1.3 snake draft) — absent when no settlement is
+   * pending (either between draft turns, or outside setup entirely). Set by
+   * `settlement.placed`, cleared by `road.placed`.
+   */
+  readonly pendingRoadVertexId?: VertexId;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -145,13 +169,48 @@ export interface TurnEndedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when a player places a settlement during the snake-draft setup
+ * phase (S1.1.3). `payout` is the second-settlement resource grant (tech
+ * spec: 1 resource per adjacent producing tile, desert pays nothing) —
+ * `validate` computes it once from `GameState.board`, and it travels here as
+ * an explicit fact so `reduce`/replay never recompute it (ADR-0003). Empty
+ * for a player's first settlement.
+ */
+export interface SettlementPlacedEvent extends BaseGameEvent {
+  readonly type: 'settlement.placed';
+  readonly playerId: PlayerId;
+  readonly vertexId: VertexId;
+  readonly payout: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * Emitted when a player places the road attached to the settlement they
+ * just placed, completing one snake-draft turn (S1.1.3). `nextPlayerId`/
+ * `nextPhase` are the snake-order/setup-completion facts `validate` already
+ * worked out — `reduce` only applies them, never re-derives draft order
+ * (ADR-0003: events are facts, not recipes).
+ */
+export interface RoadPlacedEvent extends BaseGameEvent {
+  readonly type: 'road.placed';
+  readonly playerId: PlayerId;
+  readonly edgeId: EdgeId;
+  readonly nextPlayerId: PlayerId;
+  readonly nextPhase: GamePhase;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). This is a minimal M0 set; M1 Classic rules add
  * build/trade/robber/etc.
  */
 export type GameEvent =
-  MatchStartedEvent | BoardGeneratedEvent | DiceRolledEvent | TurnEndedEvent;
+  | MatchStartedEvent
+  | BoardGeneratedEvent
+  | DiceRolledEvent
+  | TurnEndedEvent
+  | SettlementPlacedEvent
+  | RoadPlacedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -168,6 +227,21 @@ export interface EndTurnIntent extends BaseIntent {
   readonly type: 'intent.endTurn';
 }
 
+/** A player's request to place a settlement on a vertex during the setup draft. */
+export interface PlaceSettlementIntent extends BaseIntent {
+  readonly type: 'intent.placeSettlement';
+  readonly vertexId: VertexId;
+}
+
+/**
+ * A player's request to place the road attached to the settlement they just
+ * placed this draft turn (setup phase only — see {@link GameState.pendingRoadVertexId}).
+ */
+export interface PlaceRoadIntent extends BaseIntent {
+  readonly type: 'intent.placeRoad';
+  readonly edgeId: EdgeId;
+}
+
 /**
  * A player's wish, sent from the client. Discriminated by `type`. Passed
  * through `validate` (S0.5.2), which turns a legal intent into
@@ -175,7 +249,8 @@ export interface EndTurnIntent extends BaseIntent {
  * never mutates state directly (ADR-0003). This is a minimal M0 set; M1
  * Classic rules add build/trade/etc.
  */
-export type PlayerIntent = RollDiceIntent | EndTurnIntent;
+export type PlayerIntent =
+  RollDiceIntent | EndTurnIntent | PlaceSettlementIntent | PlaceRoadIntent;
 
 /**
  * Why `validate` refused an intent. An enumerated string-literal union so
@@ -183,4 +258,11 @@ export type PlayerIntent = RollDiceIntent | EndTurnIntent;
  * tech spec §5.3) and can be switched on exhaustively.
  */
 export type RejectReason =
-  'NOT_YOUR_TURN' | 'INVALID_PHASE' | 'UNKNOWN_PLAYER' | 'MALFORMED_INTENT';
+  | 'NOT_YOUR_TURN'
+  | 'INVALID_PHASE'
+  | 'UNKNOWN_PLAYER'
+  | 'MALFORMED_INTENT'
+  | 'OCCUPIED'
+  | 'DISTANCE_VIOLATION'
+  | 'DETACHED_ROAD'
+  | 'WRONG_PHASE';
