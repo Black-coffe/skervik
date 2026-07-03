@@ -3,7 +3,13 @@
 // harness (a real Colyseus server + WS client) — this IS the Fork 4 ESM/Node
 // 22 spike, exercised end to end rather than by reaching into Room internals.
 import { boot, type ColyseusTestServer } from '@colyseus/testing';
-import type { PlayerId, PlayerState } from '@skervik/core';
+import {
+  buildTopology,
+  type EdgeId,
+  type PlayerId,
+  type PlayerState,
+  type VertexId,
+} from '@skervik/core';
 import type {
   EventBatchMessage,
   RejectMessage,
@@ -12,6 +18,8 @@ import type {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createGameServer, GAME_ROOM_NAME, type GameRoom } from '../index.js';
+import { InMemoryMatchMetadataStore } from '../matchMetadata.js';
+import { sha256Hex } from '../seed.js';
 import { InMemoryEventSink } from './eventSink.js';
 
 /** Gives the room's `onJoin`/`onLeave` sends a tick to reach the client. */
@@ -46,6 +54,61 @@ function startMainTurn(room: GameRoom, a: string, b: string, current: string): v
 
 /** The 64-hex signature of the raw seed / its SHA-256 — must never ride a gameplay or reject message. */
 const HEX64 = /[0-9a-f]{64}/;
+
+// --- S1.4.3 commit-reveal: a real winning intent through the pipeline --------
+// Mirror of core's victory recipe (victory.test.ts `nearWinGenesis`): a target
+// vertex with an own road to build onto + 4 city vertices well clear of it, so
+// a single `intent.buildSettlement` takes the acting player from 9 VP (8 cities
+// + 1 hidden VP card) to 10 → core appends `game.ended`. Driven through the
+// room's real `validate`/`reduce` pipeline so the reveal hook fires exactly as
+// in production.
+const topology = buildTopology();
+const winTarget = topology.vertices[0] as {
+  id: VertexId;
+  adjacentVertexIds: readonly VertexId[];
+};
+const winExcluded = new Set<string>([winTarget.id, ...winTarget.adjacentVertexIds]);
+const winRoadEdge = ((): EdgeId => {
+  const a = winTarget.id;
+  const b = winTarget.adjacentVertexIds[0] as VertexId;
+  const edge = topology.edges.find(
+    (e) => e.vertexIds.includes(a) && e.vertexIds.includes(b),
+  );
+  if (!edge) throw new Error('no edge for win road');
+  return edge.id;
+})();
+const winCityVertices = topology.vertices
+  .filter((v) => !winExcluded.has(v.id))
+  .slice(0, 4)
+  .map((v) => v.id);
+
+/** All five Classic resources in abundance — covers any single build cost. */
+const RICH = { timber: 9, clay: 9, fleece: 9, barley: 9, iron: 9 } as const;
+
+/**
+ * Crafts a `main`-phase state one settlement away from a win for `winner`,
+ * preserving the room's REAL `seedHash`/`matchId` (so the revealed seed can be
+ * checked against the published commitment). `winner` is the seated client's
+ * sessionId — the pipeline binds the actor to that seat.
+ */
+function driveToNearWin(room: GameRoom, winner: string): void {
+  const cities: Record<string, string> = {};
+  for (const vertexId of winCityVertices) cities[vertexId] = winner;
+  room.gameState = {
+    ...room.gameState,
+    phase: 'main',
+    turn: 20,
+    currentPlayerId: winner as PlayerId,
+    players: [
+      { id: winner as PlayerId, name: winner, victoryPoints: 0, resources: { ...RICH } },
+      { id: 'opponent' as PlayerId, name: 'opponent', victoryPoints: 0, resources: {} },
+    ],
+    buildings: { settlements: {}, roads: { [winRoadEdge]: winner }, cities },
+    devCards: { [winner]: { held: { victoryPoint: 1 }, boughtThisTurn: {} } },
+  };
+  room.state.phase = 'main';
+  room.state.currentPlayerId = winner;
+}
 
 describe('GameRoom', () => {
   let testServer: ColyseusTestServer;
@@ -321,6 +384,127 @@ describe('GameRoom', () => {
     expect(rejects).toHaveLength(2);
     expect(rejects[0]?.payload.reason).toBe('MALFORMED_INTENT');
     expect(rejects[1]?.payload.reason).toBe('MALFORMED_INTENT');
+
+    await c1.leave();
+  });
+
+  // --- S1.4.3 commit-reveal: reveal at game end + leak checklist ------------
+
+  it('reveals the secret seed to match metadata EXACTLY on the game.ended batch, and seedHash === sha256Hex(revealed seed)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    await nextTick();
+
+    const winner = c1.sessionId;
+    driveToNearWin(room, winner);
+
+    const store = room.matchMetadataStore as InMemoryMatchMetadataStore;
+    // Nothing revealed yet — the game has not ended.
+    expect(store.reveals.size).toBe(0);
+
+    const batches: EventBatchMessage[] = [];
+    c1.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.buildSettlement',
+        playerId: winner,
+        vertexId: winTarget.id,
+      },
+    });
+    await nextTick();
+
+    // The winning action produced a game.ended event...
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.payload.some((e) => e.type === 'game.ended')).toBe(true);
+    expect(room.gameState.phase).toBe('finished');
+
+    // ...so the reveal fired exactly once, recording the raw seed under this match.
+    expect(store.reveals.size).toBe(1);
+    const revealed = store.reveals.get(room.roomId);
+    expect(revealed).toMatch(/^[0-9a-f]{64}$/);
+
+    // The commitment holds: the published seedHash is the SHA-256 of the now-
+    // revealed seed — anyone can verify the room never swapped seeds mid-match.
+    expect(sha256Hex(revealed as string)).toBe(room.gameState.seedHash);
+    expect(sha256Hex(revealed as string)).toBe(room.state.seedHash);
+
+    // Leak vector (4): the game.ended broadcast carries the public events only —
+    // the raw seed never rides it.
+    expect(JSON.stringify(batches[0])).not.toContain(revealed);
+
+    await c1.leave();
+  });
+
+  it('never reveals the seed on a pre-game.ended batch (a plain end-turn leaves metadata empty)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    startMainTurn(room, a, c2.sessionId, a);
+
+    const store = room.matchMetadataStore as InMemoryMatchMetadataStore;
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+
+    // A normal turn advanced (S1.4.2), but no game.ended → the seed stays secret.
+    expect(room.gameState.eventIndex).toBe(1);
+    expect(store.reveals.size).toBe(0);
+
+    await c1.leave();
+    await c2.leave();
+  });
+
+  it('reveal is once-only: after game.ended the match is frozen, so a further intent is rejected and the seed is not re-revealed', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    await nextTick();
+
+    const winner = c1.sessionId;
+    driveToNearWin(room, winner);
+
+    const store = room.matchMetadataStore as InMemoryMatchMetadataStore;
+    const rejects: RejectMessage[] = [];
+    c1.onMessage('intent.rejected', (m: RejectMessage) => rejects.push(m));
+
+    // Win.
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.buildSettlement',
+        playerId: winner,
+        vertexId: winTarget.id,
+      },
+    });
+    await nextTick();
+    expect(store.reveals.size).toBe(1);
+    const revealed = store.reveals.get(room.roomId);
+
+    // Try to act again after the freeze — core rejects (GAME_ALREADY_ENDED),
+    // so no second batch, and the metadata reveal is untouched (exactly once).
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: winner },
+    });
+    await nextTick();
+
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0]?.payload.reason).toBe('GAME_ALREADY_ENDED');
+    expect(store.reveals.size).toBe(1);
+    expect(store.reveals.get(room.roomId)).toBe(revealed);
+    // No seed ever rode the rejection reply.
+    expect(JSON.stringify(rejects[0])).not.toMatch(HEX64);
 
     await c1.leave();
   });

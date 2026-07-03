@@ -7,11 +7,17 @@ import { GameRoom } from './room/GameRoom.js';
 export const SERVER_VERSION = '0.0.1' as const;
 
 export {
+  InMemoryMatchMetadataStore,
+  type MatchMetadataStore,
+  NoopMatchMetadataStore,
+} from './matchMetadata.js';
+export {
   type GameEventSink,
   InMemoryEventSink,
   NoopEventSink,
 } from './room/eventSink.js';
 export { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
+export { generateSeed, sha256Hex } from './seed.js';
 
 /** Matchmaking name the S1.4.1 `GameRoom` is registered under. */
 export const GAME_ROOM_NAME = 'skervik_game';
