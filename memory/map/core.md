@@ -1,5 +1,5 @@
 # Map: packages/core (@skervik/core)
-last-verified: 2026-07-03 (mid-S1.2.1, uncommitted changes present)
+last-verified: 2026-07-03 (S1.3.4 merged, main HEAD 8600432)
 
 ## Purpose
 Pure, deterministic, isomorphic rule engine for Skervik — zero runtime deps.
@@ -11,15 +11,15 @@ and server (authority).
 - index.ts: re-export barrel (CORE_VERSION, types, reduce/replay, validate, RNG, board/boardgen)
 - types.ts: GameState, GameEvent (7 variants), PlayerIntent (4 variants), RejectReason, resource/board shapes
 - reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[])
-- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, GAMEPLAY_SLOT map
+- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action to emit awards + game.ended
 - rng.ts: rollDie(seed, index), deriveValue(seed, index) [1..6 and [0,1)]; mulberry32-counter mode (no mutable generator state); Seed type (opaque string)
 - board.ts: buildTopology() → BoardTopology (19 tiles, 54 vertices, 72 edges); AxialCoord, TileId, VertexId, EdgeId, PortSlot (9 fixed coastal slots)
 - boardgen.ts: generateBoard(seed) → BoardLayout; BOARD_GEN_STREAM slot map; CLASSIC_BOARD_PROFILE
 - replay.ts: parseEventLog(ndjson) → EventLogLine[]; replayLog(genesis, entries) → final GameState; EventLogLine schema for disk/wire
 
 ## Key types & contracts
-- GameState: matchId, phase, turn, currentPlayerId, players[], eventIndex (PRNG stream index), seedHash (commit step, SHA256(seed)), board?, buildings?, pendingRoadVertexId?, bank? — immutable, plain objects only, JSON-serializable
-- GameEvent discriminated union: MatchStartedEvent, BoardGeneratedEvent, DiceRolledEvent (dieA, dieB, total as facts), ResourcesProducedEvent (grants + full bank state as facts), TurnEndedEvent, SettlementPlacedEvent (payout as fact), RoadPlacedEvent (nextPlayerId, nextPhase as facts)
+- GameState: matchId, phase, turn, currentPlayerId, players[], eventIndex (PRNG stream index), seedHash (commit step, SHA256(seed)), board?, buildings?, pendingRoadVertexId?, bank?, longestRoadHolder?, largestArmyHolder? (S1.3.4 awards) — immutable, plain objects only, JSON-serializable
+- GameEvent discriminated union: MatchStartedEvent, BoardGeneratedEvent, DiceRolledEvent (dieA, dieB, total as facts), ResourcesProducedEvent (grants + full bank state as facts), TurnEndedEvent, SettlementPlacedEvent/RoadPlacedEvent/CityBuiltEvent (payouts/nextPhase as facts), award.longestRoad/award.largestArmy (holder + value as facts), game.ended (rankings, finalStandings as facts, phase→finished) (S1.3.4)
 - PlayerIntent discriminated union: RollDiceIntent, EndTurnIntent, PlaceSettlementIntent, PlaceRoadIntent
 - ValidateResult: {ok: true, events: GameEvent[]} | {ok: false, reason: RejectReason}
 - Seed: opaque string, passed to validate() as 4th param only, NEVER stored in GameState (A1 invariant)
@@ -47,4 +47,6 @@ Total: 41 tests, all regression/golden guards + determinism verification + contr
 7. **Fixtures are frozen, regenerate on algorithm change** — golden.events.ndjson + golden.state.json checked in; replay.test.ts regression guard fails if core shape changes.
 8. **CLASSIC_PRODUCTION_PROFILE hardcoded** — bankPerResource=19 (physical-Catan parity), not parameterized; swappable in validate.ts only if future profiles needed.
 9. **Topology cached globally** — topology() in validate.ts reuses one buildTopology() result; thread-safe for Node (single-threaded), but not concurrent.
-10. **Current: S1.2.1 mid-flight** — map captures uncommitted changes on feat/s1.2.1-production; production/bank logic live but not yet merged to main (dice + production events wired end-to-end, S1.3.1 robber deferred).
+10. **Victory checks ONLY on the acting player's turn** — computeVictoryPoints() is invoked post-action in the turn sequence (S1.3.4); early winners are checked immediately after their action that triggered the win (e.g., build settlement crossing threshold). This prevents mid-turn interference (opponent building during the active player's turn does not trigger a check).
+11. **Longest road is longest-simple-path, opponent buildings break chains** — the DFS engine (computeLongestRoad, longestRoadLength) enforces this; roads cannot pass through or around opponent settlements/cities (S1.3.4 victory.test.ts).
+12. **Largest army is strict-exceed, ties stay with incumbent** — first to largestArmyMin (3) knights gets the award; later players must exceed the incumbent's count to steal it, not tie (S1.3.4 CLASSIC_VICTORY_PROFILE.largestArmyMin=3).
