@@ -40,6 +40,10 @@ import type {
   RobberMovedEvent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
+  TradeCancelledEvent,
+  TradeExecutedEvent,
+  TradeOfferedEvent,
+  TradeRejectedEvent,
   TurnEndedEvent,
   YearOfPlentyPlayedEvent,
 } from './types.js';
@@ -224,6 +228,19 @@ function canAfford(
 
 function findPlayer(state: GameState, playerId: PlayerId): PlayerState | undefined {
   return state.players.find((player) => player.id === playerId);
+}
+
+/**
+ * A legal trade bundle (S1.3.2 spec: "non-empty resource bundles"): at
+ * least one resource line, every amount a positive integer. Shared by
+ * `proposeTrade`/`counterTrade` — an empty or zero/negative-amount bundle
+ * is `MALFORMED_INTENT`, the same reason a malformed board reference earns
+ * elsewhere in this module.
+ */
+function isValidTradeBundle(bundle: Readonly<Record<ResourceType, number>>): boolean {
+  const entries = Object.entries(bundle);
+  if (entries.length === 0) return false;
+  return entries.every(([, amount]) => Number.isInteger(amount) && amount > 0);
 }
 
 /** Total resource-card count across all kinds — the discard-owing/steal-eligibility measure (S1.3.1). */
@@ -498,11 +515,25 @@ export function validate(
       return reject('INVALID_PHASE');
     }
   }
-  // `intent.discard` is the one exception to "only the current player acts":
-  // several players may owe a discard in the same 7-resolution, in any order
-  // (S1.3.1 spec) — checked instead inside the branch below (`playersToDiscard`
-  // membership).
-  if (intent.type !== 'intent.discard' && state.currentPlayerId !== playerId) {
+  // `intent.discard` and the trade-response/lifecycle intents are the
+  // exceptions to "only the current player acts": several players may owe a
+  // discard in the same 7-resolution, in any order (S1.3.1 spec); a trade's
+  // targets (accept/reject/counter) are, by construction, every OTHER
+  // player, and after a `counterTrade` the open offer's own proposer
+  // (eligible to `cancelTrade` it) may likewise be a non-current player
+  // (S1.3.2 spec) — each checked instead inside its own branch below
+  // (`openTradeOffer.targets`/`proposerId` membership). `intent.proposeTrade`
+  // itself stays in the normal current-player-only group.
+  const isTradeResponseOrLifecycle =
+    intent.type === 'intent.acceptTrade' ||
+    intent.type === 'intent.rejectTrade' ||
+    intent.type === 'intent.counterTrade' ||
+    intent.type === 'intent.cancelTrade';
+  if (
+    intent.type !== 'intent.discard' &&
+    !isTradeResponseOrLifecycle &&
+    state.currentPlayerId !== playerId
+  ) {
     return reject('NOT_YOUR_TURN');
   }
 
@@ -1009,6 +1040,134 @@ export function validate(
               stolenResource: resolution.stolenResource,
             }
           : {}),
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.proposeTrade': {
+      // One open offer at a time (M1 simplification, S1.3.2 spec).
+      if (state.openTradeOffer) {
+        return reject('TRADE_OFFER_ALREADY_OPEN');
+      }
+      if (!isValidTradeBundle(intent.give) || !isValidTradeBundle(intent.get)) {
+        return reject('MALFORMED_INTENT');
+      }
+      const proposer = findPlayer(state, playerId);
+      if (!proposer || !canAfford(proposer.resources, intent.give)) {
+        return reject('CANNOT_AFFORD');
+      }
+      // All other players (M1: no named subset, S1.3.2 spec).
+      const targets = state.players
+        .map((player) => player.id)
+        .filter((id) => id !== playerId);
+
+      const event: TradeOfferedEvent = {
+        type: 'trade.offered',
+        index: state.eventIndex,
+        proposerId: playerId,
+        give: intent.give,
+        get: intent.get,
+        targets,
+        depth: 0,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.acceptTrade': {
+      const offer = state.openTradeOffer;
+      if (!offer) {
+        return reject('NO_OPEN_TRADE_OFFER');
+      }
+      if (!offer.targets.includes(playerId)) {
+        return reject('NOT_A_TRADE_TARGET');
+      }
+      const accepter = findPlayer(state, playerId);
+      if (!accepter || !canAfford(accepter.resources, offer.get)) {
+        return reject('CANNOT_AFFORD');
+      }
+      // Re-check the PROPOSER's affordability too, at accept time — the
+      // offer may have sat open across other main-phase actions (build,
+      // dev-card play, ...) that could have spent what they offered to give
+      // since the offer opened. Atomicity means never emitting a swap
+      // either side can't actually pay (S1.3.2 spec).
+      const proposer = findPlayer(state, offer.proposerId);
+      if (!proposer || !canAfford(proposer.resources, offer.give)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      const event: TradeExecutedEvent = {
+        type: 'trade.executed',
+        index: state.eventIndex,
+        proposerId: offer.proposerId,
+        accepterId: playerId,
+        give: offer.give,
+        get: offer.get,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.rejectTrade': {
+      const offer = state.openTradeOffer;
+      if (!offer) {
+        return reject('NO_OPEN_TRADE_OFFER');
+      }
+      if (!offer.targets.includes(playerId)) {
+        return reject('NOT_A_TRADE_TARGET');
+      }
+
+      const event: TradeRejectedEvent = {
+        type: 'trade.rejected',
+        index: state.eventIndex,
+        playerId,
+        remainingTargets: offer.targets.filter((id) => id !== playerId),
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.counterTrade': {
+      const offer = state.openTradeOffer;
+      if (!offer) {
+        return reject('NO_OPEN_TRADE_OFFER');
+      }
+      if (!offer.targets.includes(playerId)) {
+        return reject('NOT_A_TRADE_TARGET');
+      }
+      // Counter bound (S1.3.2 spec): only the ORIGINAL proposal (depth 0)
+      // may be countered — the resulting counter-offer (depth 1) can only
+      // be accepted/rejected/cancelled, never countered again.
+      if (offer.depth >= 1) {
+        return reject('TRADE_COUNTER_LIMIT_REACHED');
+      }
+      if (!isValidTradeBundle(intent.give) || !isValidTradeBundle(intent.get)) {
+        return reject('MALFORMED_INTENT');
+      }
+      const counterer = findPlayer(state, playerId);
+      if (!counterer || !canAfford(counterer.resources, intent.give)) {
+        return reject('CANNOT_AFFORD');
+      }
+
+      // Swapped roles (S1.3.2 spec): the counterer becomes the new
+      // proposer, targeting only the original proposer.
+      const event: TradeOfferedEvent = {
+        type: 'trade.offered',
+        index: state.eventIndex,
+        proposerId: playerId,
+        give: intent.give,
+        get: intent.get,
+        targets: [offer.proposerId],
+        depth: offer.depth + 1,
+      };
+      return { ok: true, events: [event] };
+    }
+    case 'intent.cancelTrade': {
+      const offer = state.openTradeOffer;
+      if (!offer) {
+        return reject('NO_OPEN_TRADE_OFFER');
+      }
+      if (offer.proposerId !== playerId) {
+        return reject('NOT_TRADE_PROPOSER');
+      }
+
+      const event: TradeCancelledEvent = {
+        type: 'trade.cancelled',
+        index: state.eventIndex,
+        playerId,
       };
       return { ok: true, events: [event] };
     }
