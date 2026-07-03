@@ -1,11 +1,10 @@
 // @skervik/server — the authoritative game room (S1.4.1 shell + S1.4.2
-// intent pipeline, ADR-0009). Holds the complete plain `@skervik/core`
-// `GameState` + a private crypto seed in room memory; the `@colyseus/schema`
-// mirrors ONLY the public lobby/late-join projection (Fork 1). Gameplay flows
-// as `event.batch` broadcasts of server-validated events — never through the
-// Schema. No seed reveal (S1.4.3), no ndjson persistence (S1.4.4).
-import { createHash, randomBytes } from 'node:crypto';
-
+// intent pipeline + S1.4.3 commit-reveal, ADR-0009). Holds the complete plain
+// `@skervik/core` `GameState` + a private crypto seed in room memory; the
+// `@colyseus/schema` mirrors ONLY the public lobby/late-join projection
+// (Fork 1). Gameplay flows as `event.batch` broadcasts of server-validated
+// events — never through the Schema. The secret seed is revealed to match
+// metadata ONLY after `game.ended` (S1.4.3); no ndjson persistence (S1.4.4).
 import {
   type GameState,
   type PlayerId,
@@ -20,7 +19,9 @@ import type {
 } from '@skervik/protocol';
 import { type Client, Room } from 'colyseus';
 
+import { InMemoryMatchMetadataStore, type MatchMetadataStore } from '../matchMetadata.js';
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
+import { generateSeed, sha256Hex } from '../seed.js';
 import { type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
@@ -34,6 +35,12 @@ export interface GameRoomOptions {
    * here without touching pipeline logic.
    */
   readonly sink?: GameEventSink;
+  /**
+   * Where the secret seed is revealed after `game.ended` (S1.4.3 seam).
+   * Defaults to an in-memory store; S1.7.3 injects the durable
+   * PostgreSQL/JSON-sidecar writer here without touching pipeline logic.
+   */
+  readonly metadataStore?: MatchMetadataStore;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -44,9 +51,17 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * The match's secret PRNG seed (commit-reveal, ADR-0009 Fork 3) — true JS
    * private field, so it is unreachable outside this class (never
    * `GameState`, never the Schema, never broadcast, never logged). Revealed
-   * only at `game.ended`, only into match metadata — that's S1.4.3.
+   * only at `game.ended`, only into match metadata (S1.4.3).
    */
   #seed!: Seed;
+
+  /**
+   * The one-way reveal latch (S1.4.3 / ADR-0009 invariant #4). Flips exactly
+   * once, when the first batch carrying `game.ended` is applied; guards against
+   * a double-reveal. Set BEFORE the (possibly async) metadata write so no
+   * re-entrant batch can slip a second reveal through.
+   */
+  #seedRevealed = false;
 
   /**
    * The log-append seam (S1.4.2): every validated batch is handed here BEFORE
@@ -56,11 +71,20 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   eventSink!: GameEventSink;
 
+  /**
+   * The seed-reveal seam (S1.4.3): the secret seed is written here exactly
+   * once, only after `game.ended`. Public so a test can assert the reveal
+   * fired with the exact seed; S1.7.3 swaps the default in-memory store for
+   * the durable writer via the `metadataStore` room option.
+   */
+  matchMetadataStore!: MatchMetadataStore;
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     this.eventSink = options?.sink ?? new InMemoryEventSink();
+    this.matchMetadataStore = options?.metadataStore ?? new InMemoryMatchMetadataStore();
 
-    this.#seed = randomBytes(32).toString('hex');
+    this.#seed = generateSeed();
     const seedHash = sha256Hex(this.#seed);
 
     this.gameState = {
@@ -176,6 +200,19 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // gap today.
     await this.eventSink.append(result.events);
 
+    // Commit-reveal (S1.4.3 / ADR-0009 Fork 3, invariant #4): the moment — and
+    // ONLY the moment — a validated batch carries `game.ended`, reveal the
+    // secret seed to durable match metadata, so anyone can later recompute
+    // every `dice.rolled` from the event log and check it against `seedHash`.
+    // The reveal goes to the metadata seam, NEVER the event log (Fork 3), never
+    // a broadcast. The `#seedRevealed` latch is set BEFORE the (possibly async)
+    // write so a re-entrant batch cannot double-reveal — though core freezes to
+    // `'finished'` at `game.ended`, so no further batch is even possible.
+    if (!this.#seedRevealed && result.events.some((e) => e.type === 'game.ended')) {
+      this.#seedRevealed = true;
+      await this.matchMetadataStore.recordSeedReveal(this.gameState.matchId, this.#seed);
+    }
+
     // Refresh the minimal public projection (Fork 1 / invariant #2): the schema
     // mirrors only phase + currentPlayerId (whose-turn is read from
     // currentPlayerId against the seat list) — never any gameplay state.
@@ -225,7 +262,3 @@ function isIntentEnvelope(
 
 /** The shape the structural guard proves — narrowed to what `validate` needs. */
 type PlayerIntentLike = Parameters<typeof validate>[1];
-
-function sha256Hex(seed: Seed): string {
-  return createHash('sha256').update(seed).digest('hex');
-}
