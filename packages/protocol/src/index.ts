@@ -15,6 +15,7 @@ export type {
   EventBatchMessage,
   IntentMessage,
   PublicGameState,
+  RejectMessage,
   StateSnapshotMessage,
   WsMessage,
 } from './messages.js';
