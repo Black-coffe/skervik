@@ -43,6 +43,16 @@ const mainState: GameState = {
   seedHash: 'deadbeef',
 };
 
+const setupState: GameState = {
+  matchId: 'match-1',
+  phase: 'setup',
+  turn: 1,
+  currentPlayerId: alice.id,
+  players: [alice, bob],
+  eventIndex: 5,
+  seedHash: 'deadbeef',
+};
+
 describe('reduce', () => {
   it('never mutates its input state', () => {
     const before: GameState = JSON.parse(JSON.stringify(mainState)) as GameState;
@@ -105,6 +115,83 @@ describe('reduce', () => {
     expect(next.currentPlayerId).toBe(bob.id);
     expect(next.turn).toBe(mainState.turn + 1);
     expect(next.eventIndex).toBe(mainState.eventIndex + 1);
+  });
+
+  it('applies settlement.placed: records the building, sets pendingRoadVertexId, grants the payout', () => {
+    const event: GameEvent = {
+      type: 'settlement.placed',
+      index: setupState.eventIndex,
+      playerId: alice.id,
+      vertexId: 'vertex-1',
+      payout: { timber: 2 },
+    };
+
+    const next = reduce(setupState, event);
+
+    expect(next).not.toBe(setupState);
+    expect(next.buildings?.settlements).toEqual({ 'vertex-1': alice.id });
+    expect(next.pendingRoadVertexId).toBe('vertex-1');
+    expect(next.players.find((p) => p.id === alice.id)?.resources).toEqual({
+      timber: 3,
+      ore: 0,
+    });
+    expect(next.eventIndex).toBe(setupState.eventIndex + 1);
+  });
+
+  it('applies road.placed: records the road, clears pendingRoadVertexId, advances turn/phase', () => {
+    const midTurnState: GameState = {
+      ...setupState,
+      buildings: { settlements: { 'vertex-1': alice.id }, roads: {} },
+      pendingRoadVertexId: 'vertex-1',
+    };
+    const event: GameEvent = {
+      type: 'road.placed',
+      index: midTurnState.eventIndex,
+      playerId: alice.id,
+      edgeId: 'edge-1',
+      nextPlayerId: bob.id,
+      nextPhase: 'setup',
+    };
+
+    const next = reduce(midTurnState, event);
+
+    expect(next).not.toBe(midTurnState);
+    expect(next.buildings?.roads).toEqual({ 'edge-1': alice.id });
+    expect(next.pendingRoadVertexId).toBeUndefined();
+    expect('pendingRoadVertexId' in next).toBe(false);
+    expect(next.currentPlayerId).toBe(bob.id);
+    expect(next.phase).toBe('setup');
+    expect(next.eventIndex).toBe(midTurnState.eventIndex + 1);
+  });
+
+  it('never mutates its input state for settlement.placed/road.placed', () => {
+    const beforeSettlement: GameState = JSON.parse(
+      JSON.stringify(setupState),
+    ) as GameState;
+    reduce(setupState, {
+      type: 'settlement.placed',
+      index: setupState.eventIndex,
+      playerId: alice.id,
+      vertexId: 'vertex-1',
+      payout: { timber: 1 },
+    });
+    expect(setupState).toEqual(beforeSettlement);
+
+    const midTurnState: GameState = {
+      ...setupState,
+      buildings: { settlements: { 'vertex-1': alice.id }, roads: {} },
+      pendingRoadVertexId: 'vertex-1',
+    };
+    const beforeRoad: GameState = JSON.parse(JSON.stringify(midTurnState)) as GameState;
+    reduce(midTurnState, {
+      type: 'road.placed',
+      index: midTurnState.eventIndex,
+      playerId: alice.id,
+      edgeId: 'edge-1',
+      nextPlayerId: bob.id,
+      nextPhase: 'setup',
+    });
+    expect(midTurnState).toEqual(beforeRoad);
   });
 });
 

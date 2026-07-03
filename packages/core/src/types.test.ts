@@ -7,10 +7,14 @@ import type {
   GameEvent,
   GameState,
   MatchStartedEvent,
+  PlaceRoadIntent,
+  PlaceSettlementIntent,
   PlayerIntent,
   PlayerState,
   RejectReason,
+  RoadPlacedEvent,
   RollDiceIntent,
+  SettlementPlacedEvent,
   TurnEndedEvent,
 } from './types.js';
 
@@ -64,6 +68,21 @@ describe('GameEvent', () => {
     },
     { type: 'dice.rolled', index: 2, playerId: 'player-1', value: 8 },
     { type: 'turn.ended', index: 3, playerId: 'player-1', nextPlayerId: 'player-2' },
+    {
+      type: 'settlement.placed',
+      index: 4,
+      playerId: 'player-1',
+      vertexId: 'vertex-1',
+      payout: { timber: 1 },
+    },
+    {
+      type: 'road.placed',
+      index: 5,
+      playerId: 'player-1',
+      edgeId: 'edge-1',
+      nextPlayerId: 'player-2',
+      nextPhase: 'setup',
+    },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -89,6 +108,16 @@ describe('GameEvent', () => {
           expect(e.nextPlayerId).toBe('player-2');
           break;
         }
+        case 'settlement.placed': {
+          const e: SettlementPlacedEvent = event;
+          expect(e.payout).toEqual({ timber: 1 });
+          break;
+        }
+        case 'road.placed': {
+          const e: RoadPlacedEvent = event;
+          expect(e.nextPhase).toBe('setup');
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -106,6 +135,8 @@ describe('PlayerIntent', () => {
   const intents: PlayerIntent[] = [
     { type: 'intent.rollDice', playerId: 'player-1' },
     { type: 'intent.endTurn', playerId: 'player-1' },
+    { type: 'intent.placeSettlement', playerId: 'player-1', vertexId: 'vertex-1' },
+    { type: 'intent.placeRoad', playerId: 'player-1', edgeId: 'edge-1' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -119,6 +150,16 @@ describe('PlayerIntent', () => {
         case 'intent.endTurn': {
           const i: EndTurnIntent = intent;
           expect(i.playerId).toBe('player-1');
+          break;
+        }
+        case 'intent.placeSettlement': {
+          const i: PlaceSettlementIntent = intent;
+          expect(i.vertexId).toBe('vertex-1');
+          break;
+        }
+        case 'intent.placeRoad': {
+          const i: PlaceRoadIntent = intent;
+          expect(i.edgeId).toBe('edge-1');
           break;
         }
         default: {
@@ -137,6 +178,10 @@ describe('RejectReason', () => {
       'INVALID_PHASE',
       'UNKNOWN_PLAYER',
       'MALFORMED_INTENT',
+      'OCCUPIED',
+      'DISTANCE_VIOLATION',
+      'DETACHED_ROAD',
+      'WRONG_PHASE',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');

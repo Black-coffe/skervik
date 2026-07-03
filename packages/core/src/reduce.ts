@@ -2,7 +2,22 @@
 // §4.1). ADR-0003: deterministic, side-effect free, never mutates its input
 // — always returns a new GameState built from `event` data.
 
-import type { GameEvent, GameState, PlayerState } from './types.js';
+import type { GameEvent, GameState, PlayerState, ResourceType } from './types.js';
+
+/**
+ * Merges a resource grant into a player's holdings. Pure — returns a new
+ * `resources` object, never mutates `base` (ADR-0003).
+ */
+function addResources(
+  base: Readonly<Record<ResourceType, number>>,
+  grant: Readonly<Record<ResourceType, number>>,
+): Record<ResourceType, number> {
+  const result: Record<ResourceType, number> = { ...base };
+  for (const [resource, amount] of Object.entries(grant)) {
+    result[resource] = (result[resource] ?? 0) + amount;
+  }
+  return result;
+}
 
 /**
  * Applies one {@link GameEvent} to {@link GameState}, returning a *new*
@@ -54,6 +69,41 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         ...state,
         currentPlayerId: event.nextPlayerId,
         turn: state.turn + 1,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'settlement.placed': {
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      const players = state.players.map((player) =>
+        player.id === event.playerId
+          ? { ...player, resources: addResources(player.resources, event.payout) }
+          : player,
+      );
+      return {
+        ...state,
+        players,
+        buildings: {
+          settlements: { ...buildings.settlements, [event.vertexId]: event.playerId },
+          roads: buildings.roads,
+        },
+        pendingRoadVertexId: event.vertexId,
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'road.placed': {
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      // Drop `pendingRoadVertexId` entirely (not set to `undefined`) —
+      // `exactOptionalPropertyTypes` treats those differently, and an absent
+      // key is the correct "no settlement pending" representation.
+      const { pendingRoadVertexId: _pending, ...rest } = state;
+      return {
+        ...rest,
+        buildings: {
+          settlements: buildings.settlements,
+          roads: { ...buildings.roads, [event.edgeId]: event.playerId },
+        },
+        currentPlayerId: event.nextPlayerId,
+        phase: event.nextPhase,
         eventIndex: event.index + 1,
       };
     }

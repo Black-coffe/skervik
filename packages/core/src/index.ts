@@ -23,4 +23,4 @@ export type { Seed } from './rng.js';
 export { deriveValue, rollDie, shuffle } from './rng.js';
 export type * from './types.js';
 export type { ValidateResult } from './validate.js';
-export { validate } from './validate.js';
+export { CLASSIC_SETUP_PROFILE, validate } from './validate.js';
