@@ -123,6 +123,15 @@ When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core deter
 - **No "karmic bans" for disconnects** — reconnect with ≥120s grace + bot-fill; safe leave/rejoin.
 - **Accessibility from the start** — resources must be distinguishable by more than color (colorblind modes); i18n (RU/UA/EN) baked in, not retrofitted: framework + all three locales ship with M1 (`S1.6.6`, ADR-0008), and no user-facing string ever exists in fewer than three languages.
 
+## UI/UX design constitution (binding for all client UI work)
+
+Root **`PRODUCT.md`** (strategic design context) and **`DESIGN.md`** (visual &
+interaction constitution: OKLCH tokens + frozen canvas hex, typography,
+game-screen zoning, trade-UI rules, fairness dashboards, motion, a11y/i18n
+merge gates, component inventory) are **binding** for every UI diff and UI
+story. Reference mockup: `docs/design/mockups/game-table.html`. Authored by
+owner-commissioned design pass 2026-07-03; deviations need owner sign-off.
+
 ## Orchestration: VULYK hive
 
 This project is set up with the **VULYK** multi-agent orchestration framework

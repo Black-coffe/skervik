@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<title>Скервик — UI-мокап (конституция DESIGN.md)</title>
+<!--
+  Skervik game-table mockup. Reference implementation of E:\Projects\katan\DESIGN.md.
+  Deliberately single-theme: the game commits to its dark chart-room world
+  (DESIGN.md §2) — this is a choice, not an omission.
+  Fonts: production self-hosts Inter / PT Serif / JetBrains Mono (OFL, full
+  RU+UA+EN). This mockup uses the constitution's system fallbacks
+  (system-ui / Georgia / Consolas) to avoid CDN calls under the artifact CSP.
+-->
+<style>
+  :root {
+    /* Frozen sRGB equivalents of the OKLCH source tokens (DESIGN.md §2.1) —
+       generated, not hand-picked; contrast pre-verified (ink 16:1, muted 7.4:1). */
+    --bg-abyss: #040c12;      /* oklch(0.15 0.02 235) */
+    --surface: #0d181e;       /* oklch(0.20 0.02 235) */
+    --surface-2: #152127;     /* oklch(0.24 0.02 230) */
+    --line: #29353c;          /* oklch(0.32 0.02 235) */
+    --ink: #e5e8eb;           /* oklch(0.93 0.005 235) */
+    --muted: #96a0a7;         /* oklch(0.70 0.015 235) */
+    --primary: #f2af48;       /* oklch(0.80 0.14 75) */
+    --on-primary: #091319;    /* oklch(0.18 0.02 235) */
+    --accent: #56b6bb;        /* oklch(0.72 0.09 200) */
+    --danger: #e24947;        /* oklch(0.62 0.19 25) */
+    --success: #63b376;       /* oklch(0.70 0.12 150) */
+    --chart-paper: #e1d6c2;   /* oklch(0.88 0.03 85) */
+    --chart-paper-ink: #392a1e; /* oklch(0.30 0.03 60) */
+    --hot: #c53637;           /* oklch(0.55 0.18 25) */
+    --fl-petrel: #4682cc;
+    --fl-orca: #eeeeee;
+    --fl-walrus: #c26030;
+    --fl-narwhal: #60ccc5;
+    --res-timber: #428252;
+    --res-clay: #b16246;
+    --res-fleece: #d6d1c3;
+    --res-barley: #c0aa54;
+    --res-iron: #737b86;
+    --z-hud: 10; --z-trade: 20; --z-dialog: 30; --z-toast: 40; --z-tooltip: 50;
+    --font-ui: "Inter", system-ui, "Segoe UI", sans-serif;
+    --font-chart: "PT Serif", Georgia, serif;
+    --font-ledger: "JetBrains Mono", Consolas, monospace;
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg-abyss);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+
+  /* ---------- page chrome ---------- */
+  .page { max-width: 1400px; margin: 0 auto; padding: 20px 16px 48px; }
+  .masthead { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+  .masthead h1 { font-family: var(--font-chart); font-weight: 600; font-size: 24px; margin: 0; letter-spacing: 0.01em; }
+  .masthead .sub { color: var(--muted); font-size: 13px; }
+  .viewtabs { display: flex; gap: 4px; margin: 14px 0 16px; border-bottom: 1px solid var(--line); }
+  .viewtabs button {
+    appearance: none; background: none; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); font: 500 14px var(--font-ui); padding: 8px 14px; cursor: pointer;
+    transition: color 150ms var(--ease);
+  }
+  .viewtabs button:hover { color: var(--ink); }
+  .viewtabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--primary); }
+  .viewtabs button:focus-visible, .btn:focus-visible, .pill:focus-visible, .seed:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .view { display: none; }
+  .view.on { display: block; }
+  .stage-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+
+  /* ---------- game frame ---------- */
+  .frame {
+    min-width: 1180px; height: 780px;
+    display: grid;
+    grid-template-rows: 48px 1fr 92px;
+    grid-template-columns: 236px 1fr 304px;
+    grid-template-areas: "top top top" "rail chart log" "deck deck deck";
+    background: var(--bg-abyss);
+  }
+
+  /* top bar */
+  .topbar {
+    grid-area: top; z-index: var(--z-hud);
+    display: flex; align-items: center; gap: 16px; padding: 0 14px;
+    background: var(--surface); border-bottom: 1px solid var(--line);
+  }
+  .matchname { font-family: var(--font-chart); font-size: 15px; white-space: nowrap; }
+  .seed {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 12px var(--font-ledger); color: var(--muted);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 3px 10px 3px 6px; cursor: pointer; transition: color 150ms var(--ease);
+  }
+  .seed:hover { color: var(--ink); }
+  .seed .wax { width: 14px; height: 14px; border-radius: 50%; background: var(--danger);
+    box-shadow: inset 0 0 0 3px #a13330; flex: none; }
+  .phases { display: flex; gap: 2px; margin-left: auto; }
+  .phase { padding: 4px 12px; border-radius: 4px; color: var(--muted); font-size: 13px; }
+  .phase.done { color: #8a949b; }
+  .phase.now { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+  .turnclock { display: flex; align-items: baseline; gap: 8px; margin-left: 8px; }
+  .turnclock .t { font: 600 18px var(--font-ledger); }
+  .turnclock .lbl { color: var(--muted); font-size: 12px; }
+
+  /* players rail */
+  .rail { grid-area: rail; z-index: var(--z-hud); padding: 12px; display: flex; flex-direction: column; gap: 8px;
+    background: linear-gradient(to right, var(--surface) 0 0); border-right: 1px solid var(--line); overflow-y: auto; }
+  .railhead { font-size: 12px; color: var(--muted); margin: 2px 2px 2px; }
+  .pcard { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); padding: 10px 10px 8px; }
+  .pcard.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+  .pcard .who { display: flex; align-items: center; gap: 8px; }
+  .emblem { width: 26px; height: 26px; border-radius: 50%; flex: none; display: grid; place-items: center; }
+  .emblem svg { width: 16px; height: 16px; display: block; }
+  .pcard .name { font-weight: 600; font-size: 14px; }
+  .pcard .name small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
+  .pcard .conn { width: 7px; height: 7px; border-radius: 50%; background: var(--success); margin-left: auto; flex: none; }
+  .pcard .conn.away { background: var(--primary); }
+  .stats { display: flex; gap: 6px; margin-top: 8px; }
+  .stat { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 4px;
+    padding: 3px 6px; text-align: center; }
+  .stat b { display: block; font: 600 15px var(--font-ui); font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 10px; color: var(--muted); }
+  .ptimer { margin-top: 7px; height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  .ptimer i { display: block; height: 100%; background: var(--muted); }
+  .pcard.active .ptimer i { background: var(--primary); width: 62%; }
+
+  /* the chart (board) */
+  .chart { grid-area: chart; position: relative; overflow: hidden; }
+  .chart svg.board { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .chart .hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: 11px; opacity: 0.8; }
+  @keyframes mistpulse { from { opacity: 0.28; } to { opacity: 0.5; } }
+  .fog { animation: mistpulse 4.8s ease-in-out infinite alternate; }
+  @keyframes sealpulse { from { box-shadow: 0 0 0 0 rgba(226,73,71,0.5);} to { box-shadow: 0 0 0 6px rgba(226,73,71,0);} }
+  @media (prefers-reduced-motion: reduce) {
+    .fog, .pending .wax { animation: none; }
+    * { transition-duration: 0.01ms !important; }
+  }
+
+  /* ship's log / tide panel */
+  .log { grid-area: log; z-index: var(--z-hud); background: var(--surface); border-left: 1px solid var(--line);
+    display: flex; flex-direction: column; min-height: 0; }
+  .logtabs { display: flex; border-bottom: 1px solid var(--line); }
+  .logtabs button { flex: 1; appearance: none; background: none; border: none; color: var(--muted);
+    font: 500 13px var(--font-ui); padding: 9px 0; cursor: pointer; border-bottom: 2px solid transparent; }
+  .logtabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--primary); }
+  .logbody { padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+  .panelh { font-size: 12px; color: var(--muted); margin: 0 0 6px; display: flex; justify-content: space-between; align-items: baseline; }
+  .panelh .n { font-family: var(--font-ledger); }
+  .histo { position: relative; }
+  .histo svg { display: block; width: 100%; height: 118px; }
+  .legendline { display: flex; gap: 14px; margin-top: 4px; font-size: 11px; color: var(--muted); }
+  .legendline i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .rollticker { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .die { width: 22px; height: 22px; border-radius: 4px; background: var(--chart-paper); color: var(--chart-paper-ink);
+    display: grid; place-items: center; font: 600 12px var(--font-ledger); }
+  .die.storm { background: var(--danger); color: white; }
+  .income { display: flex; flex-direction: column; gap: 6px; }
+  .inrow { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .inrow .gain { display: flex; gap: 4px; margin-left: auto; }
+  .loglines { display: flex; flex-direction: column; gap: 5px; font: 11.5px var(--font-ledger); color: var(--muted); }
+  .loglines .me { color: var(--ink); }
+  .loglines .deal { color: var(--success); }
+  .loglines .storm { color: var(--danger); }
+
+  /* bottom deck */
+  .deck { grid-area: deck; z-index: var(--z-hud); display: flex; align-items: center; gap: 18px; padding: 0 16px;
+    background: var(--surface); border-top: 1px solid var(--line); }
+  .hand { display: flex; gap: 8px; align-items: center; }
+  .hand .cap { color: var(--muted); font-size: 11px; margin-right: 2px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; height: 44px; padding: 0 14px 0 10px;
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; cursor: default; }
+  .pill svg { width: 18px; height: 18px; display: block; }
+  .pill b { font: 600 15px var(--font-ui); font-variant-numeric: tabular-nums; }
+  .pill.zero { opacity: 0.45; }
+  .actions { display: flex; gap: 8px; margin-left: auto; }
+  .btn { appearance: none; display: inline-flex; align-items: center; gap: 8px; height: 44px; padding: 0 18px;
+    border-radius: 4px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+    font: 500 14px var(--font-ui); cursor: pointer;
+    transition: background 150ms var(--ease), border-color 150ms var(--ease), transform 150ms var(--ease); }
+  .btn:hover { background: #1d2a31; }
+  .btn:active { transform: translateY(1px); }
+  .btn[disabled] { opacity: 0.42; cursor: not-allowed; }
+  .btn.primary { background: var(--primary); border-color: var(--primary); color: var(--on-primary); font-weight: 600; }
+  .btn.primary:hover { background: #f7bc63; }
+  .btn.quiet { background: none; }
+  .btn.danger { border-color: var(--danger); color: var(--danger); background: none; }
+  .btn .cost { display: flex; gap: 3px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid oklch(0 0 0 / 0.35); }
+
+  /* trade */
+  .trade { position: absolute; left: 16px; top: 14px; width: 372px; z-index: var(--z-trade);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  .trade header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .trade header h3 { margin: 0; font: 600 14px var(--font-ui); }
+  .trade header .x { margin-left: auto; color: var(--muted); background: none; border: none; cursor: pointer; font-size: 14px; }
+  .tcols { display: grid; grid-template-columns: 1fr 28px 1fr; gap: 0; padding: 12px 14px 4px; }
+  .tcol h4 { margin: 0 0 8px; font: 500 11px var(--font-ui); color: var(--muted); }
+  .swap { display: grid; place-items: center; color: var(--muted); }
+  .trow { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .trow .qty { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--line); border-radius: 4px; margin-left: auto; }
+  .qty button { width: 26px; height: 26px; background: var(--surface-2); border: none; color: var(--ink); cursor: pointer; font-size: 14px; }
+  .qty b { width: 24px; text-align: center; font: 600 13px var(--font-ui); font-variant-numeric: tabular-nums; }
+  .tsummary { padding: 8px 14px; color: var(--muted); font-size: 12px; border-top: 1px dashed var(--line); }
+  .tsummary b { color: var(--ink); font-weight: 500; }
+  .tfoot { display: flex; gap: 8px; padding: 10px 14px 12px; }
+  .tfoot .btn { flex: 1; justify-content: center; height: 40px; }
+
+  .offer { position: absolute; left: 16px; top: 318px; width: 372px; z-index: var(--z-trade);
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5); padding: 12px 14px; }
+  .offer .from { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+  .offer .from .tag { margin-left: auto; font-size: 11px; color: var(--primary); }
+  .offer .deal { display: flex; align-items: center; gap: 10px; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; margin-bottom: 10px; }
+  .offer .deal .arr { color: var(--muted); }
+  .offer .words { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+  .offer .row { display: flex; gap: 24px; align-items: center; }
+  .offer .row .btn { height: 38px; }
+  .offer .row .counter { margin-left: auto; color: var(--accent); background: none; border: none;
+    font: 500 13px var(--font-ui); cursor: pointer; white-space: nowrap; }
+  .pending .wax { animation: sealpulse 1.6s var(--ease) infinite; border-radius: 50%; }
+
+  .rgroup { display: flex; gap: 4px; align-items: center; }
+  .rgroup svg { width: 16px; height: 16px; }
+  .rgroup b { font: 600 13px var(--font-ui); }
+
+  /* ---------- design-system view ---------- */
+  .sys { display: flex; flex-direction: column; gap: 36px; padding: 8px 2px 0; }
+  .sys h2 { font-family: var(--font-chart); font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .sys .note { color: var(--muted); font-size: 13px; max-width: 68ch; margin: 0; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 10px; margin-top: 14px; }
+  .sw { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .sw .c { height: 56px; display: flex; align-items: flex-end; padding: 6px 8px; }
+  .sw .m { padding: 8px 10px; font: 11px var(--font-ledger); color: var(--muted); }
+  .sw .m b { display: block; font: 600 12px var(--font-ui); color: var(--ink); margin-bottom: 2px; }
+  .specrow { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
+  .typerow { border-left: none; display: grid; grid-template-columns: 130px 1fr; gap: 14px; align-items: baseline; padding: 8px 0; border-bottom: 1px dashed var(--line); }
+  .typerow .m { font: 11px var(--font-ledger); color: var(--muted); }
+  .dodont { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+  .dd { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; background: var(--surface); }
+  .dd h4 { margin: 0 0 8px; font-size: 13px; }
+  .dd.good h4 { color: var(--success); } .dd.bad h4 { color: var(--danger); }
+  .dd ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .dd li { margin: 4px 0; }
+  .empty { border: 1px dashed var(--line); border-radius: 8px; padding: 22px; text-align: center; color: var(--muted);
+    font-size: 13px; max-width: 420px; }
+  .empty b { display: block; color: var(--ink); font-weight: 500; margin-bottom: 4px; }
+</style>
+
+<div class="page">
+  <div class="masthead">
+    <h1>Скервик · UI-мокап</h1>
+    <span class="sub">референс конституции <code style="font-family:var(--font-ledger)">DESIGN.md</code> · «штурманская рубка в сумерках, ≈1900»</span>
+  </div>
+  <div class="viewtabs" role="tablist">
+    <button role="tab" aria-selected="true" data-v="game">Экран партии</button>
+    <button role="tab" aria-selected="false" data-v="sys">Дизайн-система</button>
+  </div>
+
+  <!-- ==================== GAME VIEW ==================== -->
+  <section class="view on" id="v-game">
+    <div class="stage-scroll">
+      <div class="frame">
+
+        <div class="topbar">
+          <span class="matchname">Сезон №1284 · Хавборг</span>
+          <button class="seed" title="Честный жребий: SHA-256 обязательство сезона. Нажмите — полный хэш и объяснение.">
+            <span class="wax" aria-hidden="true"></span>a3f9c2e1…
+          </button>
+          <nav class="phases" aria-label="Фаза хода">
+            <span class="phase done">Прилив</span>
+            <span class="phase now">Торговля</span>
+            <span class="phase">Стройка</span>
+          </nav>
+          <div class="turnclock"><span class="t num">01:24</span><span class="lbl">ход Нарвала</span></div>
+        </div>
+
+        <aside class="rail" aria-label="Флотилии">
+          <div class="railhead">Флотилии сезона</div>
+
+          <div class="pcard">
+            <div class="who">
+              <span class="emblem" style="background:var(--fl-petrel)"><svg viewBox="0 0 24 24" fill="none" stroke="#0b1e33" stroke-width="2.4" stroke-linecap="round"><path d="M2 14 Q7 7 12 12 Q17 7 22 14"/></svg></span>
+              <span class="name">Буревестник<small>картографы</small></span>
+              <span class="conn" title="в сети"></span>
+            </div>
+            <div class="stats">
+              <span class="stat"><b class="num">5</b><span>слава</span></span>
+              <span class="stat"><b class="num">4</b><span>карт</span></span>
+              <span class="stat"><b class="num">1</b><span>предпр.</span></span>
+            </div>
+            <div class="ptimer"><i style="width:0%"></i></div>
+          </div>
+
+          <div class="pcard">
+            <div class="who">
+              <span class="emblem" style="background:var(--fl-orca)"><svg viewBox="0 0 24 24" fill="#0a0a0a"><path d="M6 20 Q10 4 18 6 Q13 10 12 20 Z"/></svg></span>
+              <span class="name">Косатка<small>лоцманы</small></span>
+              <span class="conn away" title="отошёл · 0:41 до бота"></span>
+            </div>
+            <div class="stats">
+              <span class="stat"><b class="num">7</b><span>слава</span></span>
+              <span class="stat"><b class="num">6</b><span>карт</span></span>
+              <span class="stat"><b class="num">2</b><span>предпр.</span></span>
+            </div>
+            <div class="ptimer"><i style="width:0%"></i></div>
+          </div>
+
+          <div class="pcard">
+            <div class="who">
+              <span class="emblem" style="background:var(--fl-walrus)"><svg viewBox="0 0 24 24" fill="none" stroke="#3a1608" stroke-width="2.4" stroke-linecap="round"><path d="M8 5 Q7 14 9 19 M16 5 Q17 14 15 19 M8 5 Q12 8 16 5"/></svg></span>
+              <span class="name">Морж<small>корабелы</small></span>
+              <span class="conn" title="в сети"></span>
+            </div>
+            <div class="stats">
+              <span class="stat"><b class="num">6</b><span>слава</span></span>
+              <span class="stat"><b class="num">2</b><span>карт</span></span>
+              <span class="stat"><b class="num">0</b><span>предпр.</span></span>
+            </div>
+            <div class="ptimer"><i style="width:0%"></i></div>
+          </div>
+
+          <div class="pcard active" aria-current="true">
+            <div class="who">
+              <span class="emblem" style="background:var(--fl-narwhal)"><svg viewBox="0 0 24 24" fill="none" stroke="#083733" stroke-width="2.4" stroke-linecap="round"><path d="M3 21 L15 9 M15 9 L21 3 M15 9 Q19 10 20 14 Q15 15 13 12"/></svg></span>
+              <span class="name">Нарвал · вы<small>негоцианты</small></span>
+              <span class="conn" title="в сети"></span>
+            </div>
+            <div class="stats">
+              <span class="stat"><b class="num">6</b><span>слава</span></span>
+              <span class="stat"><b class="num">7</b><span>карт</span></span>
+              <span class="stat"><b class="num">1</b><span>предпр.</span></span>
+            </div>
+            <div class="ptimer"><i></i></div>
+          </div>
+        </aside>
+
+        <div class="chart">
+          <svg class="board" viewBox="0 0 720 560" role="img" aria-label="Лоция: игровое поле сезона"></svg>
+
+          <!-- trade: offer builder (fixed geometry, DESIGN.md §7) -->
+          <section class="trade" aria-label="Предложить обмен">
+            <header>
+              <h3>Предложить обмен</h3>
+              <button class="x" aria-label="Свернуть">✕</button>
+            </header>
+            <div class="tcols">
+              <div class="tcol">
+                <h4>Вы отдаёте</h4>
+                <div class="trow"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-fleece"/></svg> Руно</span>
+                  <span class="qty"><button aria-label="меньше">−</button><b class="num">2</b><button aria-label="больше">+</button></span></div>
+                <div class="trow"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-timber"/></svg> Лес</span>
+                  <span class="qty"><button aria-label="меньше">−</button><b class="num">0</b><button aria-label="больше">+</button></span></div>
+              </div>
+              <div class="swap" aria-hidden="true">⇄</div>
+              <div class="tcol">
+                <h4>Вы получаете</h4>
+                <div class="trow"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-iron"/></svg> Железо</span>
+                  <span class="qty"><button aria-label="меньше">−</button><b class="num">1</b><button aria-label="больше">+</button></span></div>
+                <div class="trow"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-clay"/></svg> Глина</span>
+                  <span class="qty"><button aria-label="меньше">−</button><b class="num">0</b><button aria-label="больше">+</button></span></div>
+              </div>
+            </div>
+            <p class="tsummary">Сделка: вы отдаёте <b>2 руно</b> и получаете <b>1 железо</b>. Кому: <b>всем флотилиям</b>.</p>
+            <div class="tfoot">
+              <button class="btn quiet">Отменить</button>
+              <button class="btn primary">Скрепить сделку</button>
+            </div>
+          </section>
+
+          <!-- incoming counter-offer (docked card, never a blocking modal) -->
+          <section class="offer pending" aria-label="Встречное предложение">
+            <div class="from">
+              <span class="emblem" style="background:var(--fl-orca);width:20px;height:20px"><svg viewBox="0 0 24 24" fill="#0a0a0a" width="12" height="12"><path d="M6 20 Q10 4 18 6 Q13 10 12 20 Z"/></svg></span>
+              <b>Косатка</b> — встречное
+              <span class="tag">ждёт 0:52</span>
+            </div>
+            <div class="deal">
+              <span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-fleece"/></svg><b class="num">3</b></span>
+              <span class="arr">→ вам ·</span>
+              <span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-iron"/></svg><b class="num">1</b></span>
+              <span class="arr">→ Косатке</span>
+            </div>
+            <p class="words">Косатка отдаёт вам 3 руно и просит 1 железо.</p>
+            <div class="row">
+              <button class="btn primary">Принять</button>
+              <button class="btn quiet">Отклонить</button>
+              <button class="counter">Контр-оффер…</button>
+            </div>
+          </section>
+
+          <div class="hint">Колесо — масштаб · перетаскивание — обзор · клик по стыку — законные места стоянок</div>
+        </div>
+
+        <aside class="log" aria-label="Журнал и жребий">
+          <div class="logtabs" role="tablist">
+            <button role="tab" aria-selected="false">Журнал</button>
+            <button role="tab" aria-selected="true">Жребий</button>
+          </div>
+          <div class="logbody">
+            <div>
+              <p class="panelh">Жребий прилива — распределение <span class="n">23 броска</span></p>
+              <div class="histo">
+                <svg viewBox="0 0 280 118" role="img" aria-label="Гистограмма выпавших сумм против ожидаемой кривой" id="histo"></svg>
+              </div>
+              <div class="legendline">
+                <span><i style="background:var(--accent)"></i>выпало</span>
+                <span><i style="background:none;border-top:2px solid var(--muted);height:0;border-radius:0;margin-top:4px"></i>ожидание</span>
+                <span><i style="background:var(--primary)"></i>текущий</span>
+              </div>
+            </div>
+            <div>
+              <p class="panelh">Последние броски</p>
+              <div class="rollticker num">
+                <span class="die">3</span><span class="die">5</span><span style="color:var(--muted)">·</span>
+                <span class="die">6</span><span class="die">3</span><span style="color:var(--muted)">·</span>
+                <span class="die storm">4</span><span class="die storm">3</span><span style="color:var(--muted)">·</span>
+                <span class="die">2</span><span class="die">4</span>
+              </div>
+            </div>
+            <div>
+              <p class="panelh">Доход за этот прилив (8)</p>
+              <div class="income">
+                <div class="inrow"><span class="emblem" style="background:var(--fl-walrus);width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="#3a1608" stroke-width="2.6" width="11" height="11"><path d="M8 5 Q7 14 9 19 M16 5 Q17 14 15 19 M8 5 Q12 8 16 5"/></svg></span>Морж
+                  <span class="gain"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-clay"/></svg><b class="num">+2</b></span></span></div>
+                <div class="inrow"><span class="emblem" style="background:var(--fl-narwhal);width:18px;height:18px"><svg viewBox="0 0 24 24" fill="none" stroke="#083733" stroke-width="2.6" width="11" height="11"><path d="M3 21 L15 9 M15 9 L21 3"/></svg></span>Нарвал · вы
+                  <span class="gain"><span class="rgroup"><svg viewBox="0 0 24 24"><use href="#r-fleece"/></svg><b class="num">+1</b></span></span></div>
+              </div>
+            </div>
+            <div>
+              <p class="panelh">Журнал</p>
+              <div class="loglines">
+                <div>14:29 · Прилив: 6+3 → Морж +2 глина</div>
+                <div class="storm">14:27 · ШТОРМ. Капер → Мглистая банка</div>
+                <div class="deal">14:26 · Косатка ⇄ Морж: 2 руно ⇄ 1 железо</div>
+                <div class="me">14:24 · Вы поставили фарватер (2 стык)</div>
+                <div>14:22 · Буревестник сыграл Конвой</div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="deck">
+          <div class="hand" aria-label="Ваша рука">
+            <span class="cap">Трюм</span>
+            <span class="pill"><svg viewBox="0 0 24 24"><use href="#r-timber"/></svg><b class="num">2</b></span>
+            <span class="pill"><svg viewBox="0 0 24 24"><use href="#r-clay"/></svg><b class="num">1</b></span>
+            <span class="pill"><svg viewBox="0 0 24 24"><use href="#r-fleece"/></svg><b class="num">3</b></span>
+            <span class="pill zero"><svg viewBox="0 0 24 24"><use href="#r-barley"/></svg><b class="num">0</b></span>
+            <span class="pill"><svg viewBox="0 0 24 24"><use href="#r-iron"/></svg><b class="num">1</b></span>
+          </div>
+          <div class="actions">
+            <button class="btn" title="Лес + Глина">Фарватер
+              <span class="cost"><span class="dot" style="background:var(--res-timber)"></span><span class="dot" style="background:var(--res-clay)"></span></span></button>
+            <button class="btn" title="Лес + Глина + Руно + Ячмень" disabled>Стоянка
+              <span class="cost"><span class="dot" style="background:var(--res-timber)"></span><span class="dot" style="background:var(--res-clay)"></span><span class="dot" style="background:var(--res-fleece)"></span><span class="dot" style="background:var(--res-barley)"></span></span></button>
+            <button class="btn" disabled>Гавань</button>
+            <button class="btn">Предприятие</button>
+            <button class="btn primary">Завершить ход</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== DESIGN SYSTEM VIEW ==================== -->
+  <section class="view" id="v-sys">
+    <div class="sys">
+      <div>
+        <h2>Палитра</h2>
+        <p class="note">Тёмная среда — единственная тема M1: доска — источник света экрана. Керосиновый primary ≤10% любой панели. Канвасу — замороженные sRGB-эквиваленты (колонка hex в DESIGN.md §2).</p>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div>
+        <h2>Типографика</h2>
+        <p class="note">Inter — приборы (все UI-строки, tnum на цифрах) · PT Serif — карта и лор · JetBrains Mono — журнал и seed. Все три — OFL, self-hosted, полная кириллица RU+UA. Никакого текста в текстурах канваса. Без CAPS на кириллице.</p>
+        <div>
+          <div class="typerow"><span class="m">chart · 24/600</span><span style="font-family:var(--font-chart);font-size:24px;font-weight:600">Большой атлас Скервика</span></div>
+          <div class="typerow"><span class="m">ui · 17/600</span><span style="font-size:17px;font-weight:600">Торговля — сердце продукта</span></div>
+          <div class="typerow"><span class="m">ui · 14/400</span><span>Слово капитана твёрже якорной цепи: скреплённая сделка заносится в журнал и не расторгается.</span></div>
+          <div class="typerow"><span class="m">ui · 12 muted</span><span style="font-size:12px;color:var(--muted)">Вторичные подписи, легенды графиков, подсказки</span></div>
+          <div class="typerow"><span class="m">ledger · 12</span><span style="font-family:var(--font-ledger);font-size:12px">14:26 · Косатка ⇄ Морж: 2 руно ⇄ 1 железо · seed a3f9c2e1</span></div>
+        </div>
+      </div>
+      <div>
+        <h2>Кнопки и состояния</h2>
+        <p class="note">Каждый интерактивный компонент — все состояния или не мержится. Позиции кнопок фиксированы всю партию: disable, не исчезать.</p>
+        <div class="specrow">
+          <button class="btn primary">Скрепить сделку</button>
+          <button class="btn">Фарватер</button>
+          <button class="btn quiet">Отклонить</button>
+          <button class="btn danger">Покинуть сезон</button>
+          <button class="btn" disabled>Гавань</button>
+          <button class="btn primary" disabled>Ожидание сервера…</button>
+        </div>
+        <div class="specrow">
+          <span class="pill"><svg viewBox="0 0 24 24" width="18" height="18"><use href="#r-barley"/></svg><b class="num">4</b></span>
+          <span class="pill zero"><svg viewBox="0 0 24 24" width="18" height="18"><use href="#r-iron"/></svg><b class="num">0</b></span>
+          <button class="seed"><span class="wax"></span>a3f9c2e1…</button>
+          <span class="phase now" style="border-radius:4px">Торговля</span>
+          <span style="color:var(--muted);font:600 16px var(--font-ledger)">01:24</span>
+          <span style="color:var(--primary);font:600 16px var(--font-ledger)">00:19</span>
+          <span style="color:var(--danger);font:600 16px var(--font-ledger)">00:06</span>
+        </div>
+      </div>
+      <div>
+        <h2>Пустые состояния учат</h2>
+        <div class="specrow">
+          <div class="empty"><b>Жребий ещё не брошен</b>Распределение появится после первого прилива — и вы сможете сверить его с ожидаемой кривой.</div>
+        </div>
+      </div>
+      <div>
+        <h2>Чек перед мержем UI-диффа</h2>
+        <div class="dodont">
+          <div class="dd good"><h4>Всегда</h4><ul>
+            <li>Иконка/эмблема + цвет — никогда цвет в одиночку</li>
+            <li>Ключи i18n, все 3 локали в одном PR, макет на самой длинной</li>
+            <li>44px цели, стабильная геометрия, явное подтверждение сделки</li>
+            <li>tnum на всех цифрах; mono — журнал и seed</li>
+            <li>prefers-reduced-motion для DOM и канваса</li>
+          </ul></div>
+          <div class="dd bad"><h4>Никогда</h4><ul>
+            <li>Пергаментные панели, градиенты на кнопках, стимпанк-шестерни</li>
+            <li>Похожесть на трейд-дресс CATAN (текстуры тайлов, иконки портов)</li>
+            <li>Модалка, блокирующая доску, во время планирования</li>
+            <li>CAPS-кириллица; текст, запечённый в канвас</li>
+            <li>Прыгающие кнопки; hover-only аффордансы</li>
+          </ul></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- resource icon symbols: unique silhouettes (a11y: shape ≠ hue) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="r-timber" viewBox="0 0 24 24"><g fill="var(--res-timber)"><path d="M12 2 L18 11 H14 L19 19 H5 L10 11 H6 Z"/><rect x="10.8" y="19" width="2.4" height="3"/></g></symbol>
+    <symbol id="r-clay" viewBox="0 0 24 24"><g fill="var(--res-clay)"><rect x="3" y="6" width="8.6" height="5.4" rx="1"/><rect x="12.4" y="6" width="8.6" height="5.4" rx="1"/><rect x="7.7" y="12.6" width="8.6" height="5.4" rx="1"/></g></symbol>
+    <symbol id="r-fleece" viewBox="0 0 24 24"><g fill="var(--res-fleece)"><circle cx="8" cy="12" r="4.4"/><circle cx="13" cy="9" r="4"/><circle cx="16.5" cy="13.5" r="3.8"/><circle cx="11.5" cy="15" r="4"/></g></symbol>
+    <symbol id="r-barley" viewBox="0 0 24 24"><g fill="var(--res-barley)"><path d="M12 3 C14.4 5.5 14.4 8.5 12 11 C9.6 8.5 9.6 5.5 12 3 Z"/><path d="M12 9 C14.4 11.5 14.4 14.5 12 17 C9.6 14.5 9.6 11.5 12 9 Z"/><rect x="11.2" y="15" width="1.6" height="7"/></g></symbol>
+    <symbol id="r-iron" viewBox="0 0 24 24"><g fill="var(--res-iron)"><path d="M7 8 H17 L21 14 H3 Z"/><path d="M5 15 H19 L21.5 19 H2.5 Z" opacity="0.75"/></g></symbol>
+  </defs>
+</svg>
+
+<script>
+  // ---------- view tabs ----------
+  document.querySelectorAll('.viewtabs button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.viewtabs button').forEach(b => b.setAttribute('aria-selected', b === btn));
+      document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === 'v-' + btn.dataset.v));
+    });
+  });
+
+  // ---------- board: flat-top hexes, y-flattened 2.5D (DESIGN.md §12) ----------
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.querySelector('svg.board');
+  // Board sits right-of-center: the trade zone (fixed panels, DESIGN.md §7)
+  // owns the left strip of the chart area and must never cover tiles.
+  const CX = 530, CY = 262, SIZE = 46, YS = 0.6, DEPTH = 12, GAP = 0.93;
+  const COLORS = {
+    pines: '#2e5f43', clay: '#a35a3f', meadow: '#b9b394', barley: '#a8933f',
+    ore: '#5c6672', mist: '#8fa0a8',
+  };
+  // NOTE: tile fills are muted "wet paint" variants of the resource tokens —
+  // resources stay identified by icon + tile pattern, not hue alone.
+  const TILES = [
+    {q:0,r:-2,t:'pines',n:5},{q:1,r:-2,t:'barley',n:2},{q:2,r:-2,t:'meadow',n:6},
+    {q:-1,r:-1,t:'clay',n:3},{q:0,r:-1,t:'ore',n:8},{q:1,r:-1,t:'pines',n:10},{q:2,r:-1,t:'barley',n:9},
+    {q:-2,r:0,t:'meadow',n:12},{q:-1,r:0,t:'pines',n:11},{q:0,r:0,t:'mist',n:null},{q:1,r:0,t:'meadow',n:4},{q:2,r:0,t:'clay',n:8},
+    {q:-2,r:1,t:'barley',n:10},{q:-1,r:1,t:'ore',n:9},{q:0,r:1,t:'pines',n:4},{q:1,r:1,t:'barley',n:5},
+    {q:-2,r:2,t:'clay',n:6},{q:-1,r:2,t:'meadow',n:3},{q:0,r:2,t:'ore',n:11},
+  ];
+  const ax = (q, r) => [CX + SIZE * 1.5 * q, CY + (SIZE * (Math.sqrt(3) / 2) * q + SIZE * Math.sqrt(3) * r) * YS];
+  const corners = (cx, cy, rad) => Array.from({length: 6}, (_, i) => {
+    const a = Math.PI / 180 * (60 * i);
+    return [cx + rad * Math.cos(a), cy + rad * Math.sin(a) * YS];
+  });
+  const el = (tag, attrs, parent) => {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    (parent || svg).appendChild(e); return e;
+  };
+  const darken = (hex, f) => '#' + [1, 3, 5].map(i =>
+    Math.round(parseInt(hex.slice(i, i + 2), 16) * f).toString(16).padStart(2, '0')).join('');
+
+  // sea: chart-like depth contours + faint compass rose
+  const defs = el('defs', {});
+  const grad = el('radialGradient', {id: 'sea', cx: '50%', cy: '42%', r: '75%'}, defs);
+  el('stop', {offset: '0%', 'stop-color': '#0a1c28'}, grad);
+  el('stop', {offset: '100%', 'stop-color': '#040c12'}, grad);
+  el('rect', {x: 0, y: 0, width: 720, height: 560, fill: 'url(#sea)'});
+  [235, 275, 318].forEach(r =>
+    el('ellipse', {cx: CX, cy: CY, rx: r, ry: r * YS + 24, fill: 'none', stroke: '#29353c', 'stroke-opacity': 0.35, 'stroke-dasharray': '2 7'}));
+  const rose = el('g', {transform: 'translate(646,72)', stroke: '#56b6bb', 'stroke-opacity': 0.28, fill: 'none'});
+  el('circle', {r: 22}, rose); el('circle', {r: 3}, rose);
+  el('path', {d: 'M0-30V30M-30 0H30M-15-15L15 15M-15 15L15-15', 'stroke-opacity': 0.5}, rose);
+  el('path', {d: 'M0-30 L4 -6 L0 0 L-4 -6 Z', fill: '#56b6bb', 'fill-opacity': 0.35, stroke: 'none'}, rose);
+
+  // tiles (sorted by y so extrusions stack correctly)
+  const sorted = [...TILES].sort((a, b) => ax(a.q, a.r)[1] - ax(b.q, b.r)[1]);
+  let mistTile = null;
+  for (const t of sorted) {
+    const [cx, cy] = ax(t.q, t.r);
+    const cs = corners(cx, cy, SIZE * GAP);
+    const color = COLORS[t.t];
+    const g = el('g', {});
+    // extrusion: lower-contour side faces
+    for (let i = 0; i < 6; i++) {
+      const a = cs[i], b = cs[(i + 1) % 6];
+      if ((a[1] + b[1]) / 2 <= cy) continue;
+      el('polygon', {points: `${a} ${b} ${b[0]},${b[1] + DEPTH} ${a[0]},${a[1] + DEPTH}`, fill: darken(color, 0.52)}, g);
+    }
+    el('polygon', {points: cs.join(' '), fill: color}, g);
+    // pattern: second visual cue per type (kept from proto — a11y-correct)
+    const pid = 'clip' + t.q + '_' + t.r;
+    const cp = el('clipPath', {id: pid}, defs);
+    el('polygon', {points: cs.join(' ')}, cp);
+    const pat = el('g', {'clip-path': `url(#${pid})`, stroke: darken(color, 0.62), 'stroke-width': 1.6, 'stroke-opacity': 0.85, fill: 'none'}, g);
+    const R = SIZE * GAP;
+    if (t.t === 'pines') for (let x = -R; x <= R; x += R / 2.6) {
+      el('path', {d: `M${cx + x} ${cy - R * YS} L${cx + x} ${cy + R * YS}`}, pat);
+      el('path', {d: `M${cx + x - 5} ${cy - 6} L${cx + x} ${cy - 14} L${cx + x + 5} ${cy - 6}`, 'stroke-width': 1.3}, pat);
+    }
+    if (t.t === 'meadow') for (let y = -R * YS; y <= R * YS; y += R * YS / 2.2)
+      el('path', {d: `M${cx - R} ${cy + y} Q${cx} ${cy + y - 5} ${cx + R} ${cy + y}`}, pat);
+    if (t.t === 'barley') for (let d = -R; d <= R; d += R / 2.4)
+      el('path', {d: `M${cx + d - R * 0.5} ${cy + R * YS} L${cx + d + R * 0.5} ${cy - R * YS}`}, pat);
+    if (t.t === 'ore') for (let d = -R; d <= R; d += R / 1.6) {
+      el('path', {d: `M${cx + d - 12} ${cy + 8} L${cx + d} ${cy - 8} L${cx + d + 12} ${cy + 8}`, 'stroke-width': 1.8}, pat);
+    }
+    if (t.t === 'clay') for (let y = -R * YS; y <= R * YS; y += R * YS / 1.8)
+      for (let x = -R + 14; x <= R - 8; x += R / 2.2)
+        el('circle', {cx: cx + x + (y * 37 % 9), cy: cy + y, r: 2.2, fill: darken(color, 0.62), stroke: 'none', 'fill-opacity': 0.8}, pat);
+    if (t.t === 'mist') {
+      mistTile = {cx, cy, cs};
+      // privateer: unflagged raider silhouette
+      const sh = el('g', {transform: `translate(${cx},${cy + 6})`, fill: '#0d181e'}, g);
+      el('path', {d: 'M-16 4 L16 4 L10 10 L-11 10 Z'}, sh);
+      el('rect', {x: -1.4, y: -14, width: 2.8, height: 18}, sh);
+      el('path', {d: 'M1.4 -13 L12 -5 L1.4 -3 Z', 'fill-opacity': 0.9}, sh);
+      el('title', {}, sh).textContent = 'Капер блокирует Мглистую банку';
+    }
+    // tide mark: chart-paper disc + probability pips
+    if (t.n !== null) {
+      const hot = t.n === 6 || t.n === 8;
+      el('ellipse', {cx, cy: cy + 2, rx: 15, ry: 12, fill: '#e1d6c2', stroke: '#392a1e', 'stroke-width': 1.2}, g);
+      const txt = el('text', {x: cx, y: cy + 4.5, 'text-anchor': 'middle',
+        'font-family': 'Consolas, monospace', 'font-size': 13, 'font-weight': 700,
+        fill: hot ? '#c53637' : '#392a1e'}, g);
+      txt.textContent = t.n;
+      const pips = 6 - Math.abs(7 - t.n);
+      for (let p = 0; p < pips; p++)
+        el('circle', {cx: cx - (pips - 1) * 2.4 + p * 4.8, cy: cy + 9.4, r: 1.15, fill: hot ? '#c53637' : '#392a1e'}, g);
+    }
+  }
+  // mist fog overlay on top (animated, reduced-motion pauses via CSS)
+  if (mistTile) el('polygon', {points: mistTile.cs.join(' '), fill: '#cfd6da', class: 'fog'});
+
+  // ---------- pieces: fairways + anchorages/harbors ----------
+  const FL = {petrel: '#4682cc', orca: '#eeeeee', walrus: '#c26030', narwhal: '#60ccc5'};
+  const cornerOf = (q, r, i) => corners(...ax(q, r), SIZE)[i];
+  const edge = (fl, a, b) => {
+    el('line', {x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: '#02070b', 'stroke-width': 6, 'stroke-linecap': 'round'});
+    el('line', {x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: FL[fl], 'stroke-width': 3.2, 'stroke-linecap': 'round'});
+  };
+  const anchorage = (fl, p, harbor) => {
+    const g = el('g', {transform: `translate(${p[0]},${p[1]})`});
+    const s = harbor ? 1.35 : 1;
+    el('ellipse', {cx: 0, cy: 5 * s, rx: 8 * s, ry: 3 * s, fill: '#02070b', 'fill-opacity': 0.55}, g);
+    el('path', {d: `M${-6 * s} ${5 * s} L${-6 * s} ${-2 * s} L0 ${-7 * s} L${6 * s} ${-2 * s} L${6 * s} ${5 * s} Z`,
+      fill: FL[fl], stroke: '#02070b', 'stroke-width': 1.4}, g);
+    el('rect', {x: -0.9, y: -16 * s, width: 1.8, height: 10 * s, fill: '#02070b'}, g);
+    el('path', {d: `M0.9 ${-15.5 * s} L${9 * s} ${-12 * s} L0.9 ${-9 * s} Z`, fill: FL[fl], stroke: '#02070b', 'stroke-width': 1}, g);
+    if (harbor) el('circle', {cx: 0, cy: 0, r: 2.2, fill: '#02070b'}, g);
+  };
+  // narwhal (you): anchorage + two fairways near top-center
+  edge('narwhal', cornerOf(0, -1, 4), cornerOf(0, -1, 5));
+  edge('narwhal', cornerOf(0, -1, 5), cornerOf(0, -1, 0));
+  anchorage('narwhal', cornerOf(0, -1, 5));
+  // walrus: harbor south-west
+  edge('walrus', cornerOf(-2, 1, 2), cornerOf(-2, 1, 3));
+  anchorage('walrus', cornerOf(-2, 1, 3), true);
+  // petrel: anchorage east
+  edge('petrel', cornerOf(2, 0, 0), cornerOf(2, 0, 1));
+  anchorage('petrel', cornerOf(2, 0, 1));
+  // orca: anchorage south
+  edge('orca', cornerOf(0, 2, 1), cornerOf(0, 2, 2));
+  anchorage('orca', cornerOf(0, 2, 2));
+  // legal-spot hint for current player (selection state, DESIGN.md §12)
+  const legal = cornerOf(1, -1, 0);
+  el('circle', {cx: legal[0], cy: legal[1], r: 7, fill: 'none', stroke: '#f2af48', 'stroke-width': 2, 'stroke-dasharray': '3 3'});
+
+  // ---------- design-system view: palette swatches ----------
+  (() => {
+    const groups = [
+      ['Среда и приборы', [
+        ['--bg-abyss', '#040c12', 'фон, море'], ['--surface', '#0d181e', 'панели HUD'],
+        ['--surface-2', '#152127', 'рейки, hover'], ['--line', '#29353c', 'границы 1px'],
+        ['--ink', '#e5e8eb', 'текст · 16:1'], ['--muted', '#96a0a7', 'вторичный · 7.4:1'],
+        ['--primary', '#f2af48', 'керосин ≤10%'], ['--accent', '#56b6bb', 'морское стекло'],
+        ['--danger', '#e24947', 'шторм'], ['--success', '#63b376', 'сделка скреплена'],
+        ['--chart-paper', '#e1d6c2', 'бумага лоции (только канвас)'],
+      ]],
+      ['Флотилии (цвет всегда с эмблемой)', [
+        ['--fl-petrel', '#4682cc', 'Буревестник'], ['--fl-orca', '#eeeeee', 'Косатка'],
+        ['--fl-walrus', '#c26030', 'Морж'], ['--fl-narwhal', '#60ccc5', 'Нарвал'],
+      ]],
+      ['Ресурсы (цвет всегда с иконкой и паттерном)', [
+        ['--res-timber', '#428252', 'Лес'], ['--res-clay', '#b16246', 'Глина'],
+        ['--res-fleece', '#d6d1c3', 'Руно'], ['--res-barley', '#c0aa54', 'Ячмень'],
+        ['--res-iron', '#737b86', 'Железо'],
+      ]],
+    ];
+    const host = document.getElementById('swatches');
+    for (const [title, items] of groups) {
+      const h = document.createElement('div');
+      h.style.cssText = 'grid-column:1/-1;font-size:12px;color:var(--muted);margin:6px 0 -2px';
+      h.textContent = title;
+      host.appendChild(h);
+      for (const [token, hex, role] of items) {
+        const d = document.createElement('div');
+        d.className = 'sw';
+        d.innerHTML = `<div class="c" style="background:${hex}"></div>
+          <div class="m"><b>${role}</b>${token} · ${hex}</div>`;
+        host.appendChild(d);
+      }
+    }
+  })();
+
+  // ---------- tide-lot histogram: rolled vs expected (DESIGN.md §8) ----------
+  (() => {
+    const h = document.getElementById('histo');
+    const counts = {2:0,3:2,4:2,5:3,6:4,7:4,8:4,9:2,10:1,11:1,12:0};
+    const N = 23, P = [1,2,3,4,5,6,5,4,3,2,1];
+    const W = 280, H = 118, padB = 18, padT = 8, bw = 16, gap = (W - 11 * bw) / 12;
+    const maxV = 5;
+    const y = v => H - padB - (v / maxV) * (H - padB - padT);
+    const mk = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag);
+      for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || h).appendChild(e); return e; };
+    [0, 2, 4].forEach(v => mk('line', {x1: 0, x2: W, y1: y(v), y2: y(v), stroke: '#29353c', 'stroke-width': 1, 'stroke-opacity': v ? 0.6 : 1}));
+    let pts = [];
+    for (let n = 2; n <= 12; n++) {
+      const x = gap + (n - 2) * (bw + gap);
+      const c = counts[n];
+      const cur = n === 8;
+      const bar = mk('rect', {x, y: y(c), width: bw, height: Math.max(0, H - padB - y(c)),
+        rx: 3, fill: cur ? '#f2af48' : '#56b6bb'});
+      mk('title', {}, bar).textContent = `${n}: выпало ${c} · ожидание ${(N * P[n - 2] / 36).toFixed(1)}`;
+      const lbl = mk('text', {x: x + bw / 2, y: H - 5, 'text-anchor': 'middle', 'font-size': 10,
+        fill: (n === 6 || n === 8) ? '#e5e8eb' : '#96a0a7', 'font-family': 'system-ui'}, h);
+      lbl.textContent = n;
+      pts.push(`${x + bw / 2},${y(N * P[n - 2] / 36)}`);
+    }
+    mk('polyline', {points: pts.join(' '), fill: 'none', stroke: '#96a0a7', 'stroke-width': 1.6,
+      'stroke-linejoin': 'round', 'stroke-dasharray': '1 0'});
+  })();
+</script>
+
+</body>
+</html>

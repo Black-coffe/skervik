@@ -141,6 +141,12 @@ never color-only, layouts tolerate RU/UA text expansion, no text in art assets.
 Trade UI (S1.6.4, T3 — consider Opus worker + `lead-review`): offer builder
 with explicit confirm step, counter-offers, impossible-offer prevention —
 this is the product's heart; misclick-proof beats pretty.
+**Design constitution (owner-commissioned, 2026-07-03): every E1.6 story MUST
+cite and follow root `PRODUCT.md` + `DESIGN.md`** (tokens, layout zoning, trade
+UI rules §7, fairness dashboards §8, a11y/i18n merge gates §10, component
+inventory §11); reference mockup `docs/design/mockups/game-table.html`
+(same layout/tokens rendered — open in a browser). Deviations from DESIGN.md
+need owner sign-off, not worker judgment.
 
 **E1.7:** guest auth `POST /auth/guest` (Fastify), room create/join by code;
 CI E2E: 3–4 scripted clients (plain WS, no UI) play scripted-but-legal moves to
