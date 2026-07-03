@@ -48,6 +48,14 @@ jobs:
       - name: Format check
         run: pnpm exec prettier --check .
 
+      # Architectural invariant #1 (ADR-0003): the core must stay deterministic.
+      # Run the golden-replay determinism/fair-RNG-audit test as its own named
+      # gate so a regression reads as "core determinism broken" in the PR checks
+      # — not as a nameless failure buried in the general test run below. The
+      # full `pnpm test` step still re-runs it; the duplication is intentional.
+      - name: Core determinism gate — golden replay → byte-identical state
+        run: pnpm --filter @skervik/core exec vitest run src/replay.test.ts
+
       - name: Test
         run: pnpm test
 
