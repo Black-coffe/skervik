@@ -21,6 +21,7 @@
 - Why/what: `docs/catan-online-research-phase.md` · `docs/catan-online-tech-spec-phase2.md`.
 
 ## Codebase map (core is real; other 4 packages are stubs — NO game rules yet)
+- **Map slice: `memory/map/core.md`** (last-verified 2026-07-03, taken mid-S1.2.1 — full file/type/test inventory + 10 gotchas; re-verify after S1.2.x merges).
 - `packages/core` `@skervik/core` — REAL engine infra, **zero runtime deps** (CI-guarded):
   types (GameState/GameEvent/PlayerIntent), pure reduce/validate, seeded PRNG (mulberry32
   counter-mode, `rng.ts`, rollDie wired as validate.ts 4th param), ndjson replay + golden determinism fixture. 36 tests.
@@ -33,6 +34,12 @@
 
 ## Wiki (docs/wiki/) — hard invariants, enforce in every core change
 - `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md` · `lore-primer.md` (approved setting: realism ≈1900, steam+sail, NO mysticism; trilingual glossary = source of all user-facing names) · `ip-tradedress-checklist.md` (run on first concept art).
+
+## Design constitution (docs/design/) — binding for all client UI work (owner-approved Queen exception 2026-07-03)
+- `PRODUCT.md` (strategic context: register/users/brand personality «weathered · precise · fair»; 6 design principles; legal red lines incl. CATAN trade dress; a11y & inclusion).
+- `DESIGN.md` (visual & interaction constitution: mood formula «chart-room at dusk ≈1900»; §1 two-surface model; §2 OKLCH tokens + frozen sRGB hex (flotilla/resource palettes §2.2–2.3); §3 typography (Inter/PT Serif/JetBrains Mono, full RU+UA, self-hosted OFL); §4 space/shape/depth; §5 iconography; §6 game-screen layout; §7 trade-UI rules; §8 fairness/realtime dashboards; §9 motion; §10 a11y+i18n merge gates; §11 component inventory; §12 E0.4 proto verdict; §13 slop test).
+- Reference: `docs/design/mockups/game-table.html` (self-contained browser mockup).
+- **BINDING REQUIREMENT:** every S1.6.x story must cite DESIGN.md sections; deviations require owner sign-off (not worker judgment). See M1 plan E1.6 node.
 
 ## Verification (REAL — all green as of 2026-07-03, all gates validated incl. CI named "Core determinism gate")
 - `pnpm -r typecheck` · `pnpm -r lint` · `pnpm -r test` · `pnpm -r build` (core: `pnpm --filter @skervik/core test`).
