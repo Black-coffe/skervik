@@ -177,12 +177,14 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S1.6.3` [T2] HUD: resources, dev cards, turn, dice, VP.
 - `S1.6.4` [T3] **Trade UI** (the heart): offer builder, counter, confirm step — anti-misclick.
 - `S1.6.5` [T3] WS client: connect, send intents, apply `event.batch` via core `reduce`; client prediction for safe actions + reconciliation.
+- `S1.6.6` [T2] **i18n framework + RU/UA/EN locale files** for all M1 UI text (ADR-0008): locale switcher in the first menu, browser-locale default, fonts with full Cyrillic (incl. Ukrainian ґєії) + Latin coverage.
 
-> **A11y/i18n architectural checklist — MANDATORY from the first line of E1.6 UI code** (fix-plan B7). Full colorblind palettes, font scaling, and the UA/RU/EN translation framework are M4 (`E4.4`), but two structural rules apply *now* so "accessibility/i18n baked in, not retrofitted" (CLAUDE.md) is real and not a retrofit later:
-> 1. **No hardcoded user-facing strings.** All UI text routes through localization keys / a single strings module — never string literals inline in JSX/templates — even while only English (or one language) is filled in. Adding locales in M4 must not require touching UI components.
+> **A11y/i18n architectural checklist — MANDATORY from the first line of E1.6 UI code** (fix-plan B7 + ADR-0008). Full colorblind palettes and font scaling are M4 (`E4.4`); the i18n framework and all three locales are **M1** (`S1.6.6`, ADR-0008). Three structural rules apply from the first line so "accessibility/i18n baked in, not retrofitted" (CLAUDE.md) is real:
+> 1. **No hardcoded user-facing strings.** All UI text routes through localization keys / a single strings module — never string literals inline in JSX/templates. Adding a locale must not require touching UI components.
 > 2. **Never color-only.** Any resource/state distinguished by color (resource types on the board, player status, dice/robber cues) carries a second visual cue from the first render — icon, pattern, or text label — not just a hue. M4 swaps palettes; it must not have to *add* the non-color channel.
+> 3. **Every user-facing string ships in all three locales — RU, UA, EN** (ADR-0008). A PR adding a string in fewer than three languages is rejected; layouts must tolerate RU/UA text expansion (~20–35% over EN); no text baked into art assets. Lore terms come from the trilingual glossary in `docs/wiki/lore-primer.md`.
 >
-> These constrain code *structure*, not translation quality or final palettes (those stay M4). A reviewer rejects M1 UI code that hardcodes strings or encodes meaning in color alone.
+> These constrain code *structure* and locale completeness, not translation polish or final palettes (those stay M4). A reviewer rejects M1 UI code that hardcodes strings, encodes meaning in color alone, or ships partial locales.
 
 **E1.7 — Single-room E2E**
 - `S1.7.1` [T2] Guest auth (`POST /auth/guest`); create/join room by code.
@@ -270,7 +272,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 **E4.1 — Async mode** — `S4.1.1` play-by-turn engine over event-sourcing · `S4.1.2` turn notifications (push/email) · `S4.1.3` async lobby/UX.
 **E4.2 — Deep profile** — `S4.2.1` commodities · `S4.2.2` knights · `S4.2.3` development tracks (cities&knights-like layer).
 **E4.3 — Art & customization** — `S4.3.1` premium 2.5D art pass · `S4.3.2` themes/board skins · `S4.3.3` avatars/emotes (**cosmetic only, no p2w**).
-**E4.4 — Accessibility & i18n** — `S4.4.1` colorblind palettes + non-color resource cues · `S4.4.2` font scaling + keyboard nav + screen-reader menus · `S4.4.3` i18n framework + UA/RU/EN strings.
+**E4.4 — Accessibility & i18n** — `S4.4.1` colorblind palettes + non-color resource cues · `S4.4.2` font scaling + keyboard nav + screen-reader menus · `S4.4.3` locale QA: proofread UA/RU/EN, text-expansion audit, new-locale scalability (framework + all three locales live since M1 `S1.6.6`, ADR-0008).
 **E4.5 — Performance & hardening** — `S4.5.1` progressive asset loading + bundle budget · `S4.5.2` load test to NFR + p95 tuning · `S4.5.3` chaos/reconnect soak.
 **E4.6 — PWA & platform** — `S4.6.1` installable PWA + portrait mobile · `S4.6.2` store wrappers (optional).
 **E4.7 — Launch readiness** — `S4.7.1` observability (Prom/Grafana/Loki/OTel) + alerts · `S4.7.2` backups + restore runbook + IaC one-command deploy · `S4.7.3` **legal/IP review** + ToS/Privacy · `S4.7.4` donations live + transparency page · `S4.7.5` docs site + Discord + good-first-issues · `S4.7.6` `/security-review` + final DoD audit · `S4.7.7` landing page + launch comms.

@@ -48,13 +48,14 @@ explorers"). This is why the product exists as its own world.
 
 ## Fixed decisions (locked inputs — do not relitigate without the user)
 
-| Decision           | Value                                                                                                                                                         |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: **AGPL-3.0** (locked, ADR-0001). Donations: Open Collective (ADR-0006).     |
-| Setting            | **A — archipelago of explorers** (sea trade, islands).                                                                                                        |
-| Rendering          | **2.5D isometric** — Pixi.js v8 primary, Three.js only if a perf prototype demands 3D depth.                                                                  |
-| Scope at launch    | **Multi-mode platform from day one** — modes are config, not separate builds; complexity is absorbed by onboarding, not by cutting features.                  |
-| Scale (1M CCU)     | A **marketing ceiling, not a day-1 requirement.** Start cheap ($20–80/mo, one VPS). Architecture stays scalable but **do not over-engineer** for scale early. |
+| Decision           | Value                                                                                                                                                                                                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Legal/monetization | **Open-source, non-commercial**, donation-funded. No pay-to-win, no ads. License: **AGPL-3.0** (locked, ADR-0001). Donations: Open Collective (ADR-0006).                                                                                                                               |
+| Setting            | **A — archipelago of explorers** (sea trade, islands). Tone locked 2026-07-03: realism ≈1900 (steam+sail), one Verne-style anomaly (the Mist), **no mysticism** — see `docs/wiki/lore-primer.md`.                                                                                       |
+| Languages          | **Trilingual RU / UA / EN from the first playable build** (ADR-0008). Every user-facing string ships in all three locales; every new user-facing term is authored in 3 languages at creation (lore-primer glossary pattern). Engineering docs keep repo conventions (RU docs, EN code). |
+| Rendering          | **2.5D isometric** — Pixi.js v8 primary, Three.js only if a perf prototype demands 3D depth.                                                                                                                                                                                            |
+| Scope at launch    | **Multi-mode platform from day one** — modes are config, not separate builds; complexity is absorbed by onboarding, not by cutting features.                                                                                                                                            |
+| Scale (1M CCU)     | A **marketing ceiling, not a day-1 requirement.** Start cheap ($20–80/mo, one VPS). Architecture stays scalable but **do not over-engineer** for scale early.                                                                                                                           |
 
 ## Planned architecture (the big picture)
 
@@ -107,14 +108,14 @@ When scaffolding M0, CI (GitHub Actions) must run: lint, typecheck, **core deter
 - **M1** — vertical slice: `@skervik/core` base rules + Colyseus server + WS protocol + 2.5D client + trade UI + commit-reveal RNG → 3–4 players play a Classic match online.
 - **M2** — rule profiles + adaptive duration + catch-up + reconnect/grace/bot-fill + matchmaking/lobby/Redis presence + heuristic bots.
 - **M3** — ranked (Glicko-2)/seasons, social, spectator/replays/post-match analytics, 7–10 player modes.
-- **M4** — async mode, Deep profile, themes/skins, a11y (colorblind modes), i18n (UA/RU/EN), PWA wrappers → 1.0.
+- **M4** — async mode, Deep profile, themes/skins, a11y (colorblind modes), locale QA (RU/UA/EN locales themselves live from M1, ADR-0008), PWA wrappers → 1.0.
 - **M5** — horizontal scale (only on demand).
 
 ## Things to get right (recurring product intent, so code serves it)
 
 - **Trade UI is the heart of the product**, not a feature — fast, error-proof, expressive (competitors lose users to misclicks here).
 - **No "karmic bans" for disconnects** — reconnect with ≥120s grace + bot-fill; safe leave/rejoin.
-- **Accessibility from the start** — resources must be distinguishable by more than color (colorblind modes); i18n (UA/RU/EN) baked in, not retrofitted.
+- **Accessibility from the start** — resources must be distinguishable by more than color (colorblind modes); i18n (RU/UA/EN) baked in, not retrofitted: framework + all three locales ship with M1 (`S1.6.6`, ADR-0008), and no user-facing string ever exists in fewer than three languages.
 
 ## Orchestration: VULYK hive
 
