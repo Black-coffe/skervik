@@ -8,7 +8,10 @@ last-verified: 2026-06-30
 # Deterministic isomorphic rule core (`@skervik/core`)
 
 `@skervik/core` is a **pure** package: `reduce(state, event) → newState` and
-`validate(state, intent, playerId) → { ok, events } | { ok:false, reason }`.
+`validate(state, intent, playerId, seed) → { ok, events } | { ok:false, reason }`
+(`seed` is the server-secret PRNG seed, passed in — never a `GameState` field —
+so random draws like `rollDie(seed, state.eventIndex)` stay reproducible yet
+unpredictable to clients; see [[fair-rng-commit-reveal]]).
 Same inputs → same outputs, on every device. This determinism is what makes
 replays, client prediction, crash recovery, async play, and RNG fairness possible.
 
