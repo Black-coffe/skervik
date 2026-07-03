@@ -165,6 +165,10 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       const {
         devCardPlayedThisTurn: _played,
         pendingRoadVertexId: _pending,
+        // An open trade offer never survives past the turn it was made in
+        // (S1.3.2) — dropped here the same way, rather than requiring every
+        // caller to `cancelTrade` before ending their turn.
+        openTradeOffer: _trade,
         ...rest
       } = state;
       const devCards = state.devCards
@@ -445,6 +449,71 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         phase: 'robber',
         eventIndex: event.index + 1,
       };
+    }
+    case 'trade.offered': {
+      return {
+        ...state,
+        openTradeOffer: {
+          proposerId: event.proposerId,
+          give: event.give,
+          get: event.get,
+          targets: event.targets,
+          depth: event.depth,
+        },
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'trade.executed': {
+      // Atomic swap (S1.3.2): both hands move together in this ONE `reduce`
+      // step, and the offer closes in the SAME transition — there is no
+      // intermediate state where one side has paid and the other hasn't.
+      const players = state.players.map((player) => {
+        if (player.id === event.proposerId) {
+          return {
+            ...player,
+            resources: addResources(
+              subtractResources(player.resources, event.give),
+              event.get,
+            ),
+          };
+        }
+        if (player.id === event.accepterId) {
+          return {
+            ...player,
+            resources: addResources(
+              subtractResources(player.resources, event.get),
+              event.give,
+            ),
+          };
+        }
+        return player;
+      });
+      const { openTradeOffer: _closed, ...rest } = state;
+      return { ...rest, players, eventIndex: event.index + 1 };
+    }
+    case 'trade.rejected': {
+      if (event.remainingTargets.length === 0) {
+        // Every target has rejected — close the offer entirely, same
+        // "absent key = nothing pending" convention `playersToDiscard` uses.
+        const { openTradeOffer: _closed, ...rest } = state;
+        return { ...rest, eventIndex: event.index + 1 };
+      }
+      return {
+        ...state,
+        ...(state.openTradeOffer
+          ? {
+              openTradeOffer: {
+                ...state.openTradeOffer,
+                targets: event.remainingTargets,
+              },
+            }
+          : {}),
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'trade.cancelled': {
+      const { openTradeOffer: _closed, ...rest } = state;
+      return { ...rest, eventIndex: event.index + 1 };
     }
     default: {
       const exhaustive: never = event;

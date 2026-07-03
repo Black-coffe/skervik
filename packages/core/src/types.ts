@@ -127,6 +127,28 @@ export interface DevCardHoldings {
 }
 
 /**
+ * An open player↔player trade offer (S1.3.2) — at most one lives on
+ * {@link GameState} at a time (M1 simplification: a second `proposeTrade`
+ * while one is open is rejected with `TRADE_OFFER_ALREADY_OPEN`, forcing the
+ * existing offer to resolve first). `give`/`get` are always from
+ * {@link proposerId}'s perspective (`give` leaves the proposer, `get` arrives
+ * at the proposer) — a `counterTrade` swaps roles by opening a NEW offer
+ * with the countering player as {@link proposerId} and `give`/`get` from
+ * THEIR perspective, `targets` narrowed to just the original proposer.
+ * {@link depth} is the counter-offer bound: `0` for the original proposal,
+ * `1` for its (at most one) counter — a `counterTrade` attempted at `depth
+ * 1` is rejected with `TRADE_COUNTER_LIMIT_REACHED` (no infinite chains,
+ * M1 spec: simple offer -> counter -> accept/reject only).
+ */
+export interface TradeOffer {
+  readonly proposerId: PlayerId;
+  readonly give: Readonly<Record<ResourceType, number>>;
+  readonly get: Readonly<Record<ResourceType, number>>;
+  readonly targets: readonly PlayerId[];
+  readonly depth: number;
+}
+
+/**
  * The full authoritative game state. A plain, JSON-serializable object —
  * no class instances, no functions, no `Map`/`Set` — so it can be
  * event-sourced (replay = truth) and deep-compared byte-for-byte
@@ -245,6 +267,17 @@ export interface GameState {
    * markers) — feeds the largest-army calculation (S1.3.4), not yet built.
    */
   readonly knightsPlayed?: Readonly<Record<PlayerId, number>>;
+  /**
+   * The currently open trade offer (S1.3.2), if any — absent means no
+   * `proposeTrade`/`counterTrade` is pending, same "fact of an event having
+   * landed" optionality as {@link GameState.pendingRoadVertexId}. Dropped by
+   * `trade.executed` (accepted), `trade.rejected` (once every target has
+   * rejected — see {@link TradeOffer.targets} shrinking), `trade.cancelled`
+   * (by the offer's own proposer), and implicitly by `turn.ended` (an open
+   * offer never survives past the turn it was made in, `reduce.ts`'s
+   * per-turn-marker reset).
+   */
+  readonly openTradeOffer?: TradeOffer;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -516,6 +549,68 @@ export interface KnightPlayedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted when a `proposeTrade` or `counterTrade` intent opens a new offer
+ * (S1.3.2) — both land through this SAME event type (a counter is just a
+ * new offer with swapped `proposerId`/`give`/`get`/narrowed `targets` and
+ * `depth + 1`, see {@link TradeOffer}); `reduce` only ever needs one case to
+ * set {@link GameState.openTradeOffer}. Replaces (not merges with) any
+ * offer the acting player's own prior proposal already closed — only one
+ * offer is ever open at a time (`validate`'s `TRADE_OFFER_ALREADY_OPEN`
+ * guard on a fresh `proposeTrade`).
+ */
+export interface TradeOfferedEvent extends BaseGameEvent {
+  readonly type: 'trade.offered';
+  readonly proposerId: PlayerId;
+  readonly give: Readonly<Record<ResourceType, number>>;
+  readonly get: Readonly<Record<ResourceType, number>>;
+  readonly targets: readonly PlayerId[];
+  readonly depth: number;
+}
+
+/**
+ * Emitted when a targeted player accepts the open offer (S1.3.2) — the
+ * ATOMIC swap: both concrete bundles + both party ids travel on this ONE
+ * event, so `reduce` debits+credits both sides in a single state
+ * transition. There is no intermediate state where one side has paid and
+ * the other hasn't — `give`/`get` keep {@link GameState.openTradeOffer}'s
+ * own proposer-perspective naming (`give` leaves the proposer and arrives
+ * at the accepter; `get` is the reverse), never re-derived by `reduce`
+ * (ADR-0003: events are facts, not recipes).
+ */
+export interface TradeExecutedEvent extends BaseGameEvent {
+  readonly type: 'trade.executed';
+  readonly proposerId: PlayerId;
+  readonly accepterId: PlayerId;
+  readonly give: Readonly<Record<ResourceType, number>>;
+  readonly get: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * Emitted when a targeted player rejects the open offer (S1.3.2).
+ * `remainingTargets` is `GameState.openTradeOffer.targets` AFTER this
+ * rejection (a fact `validate` already recomputed once, the same discipline
+ * as {@link ResourcesDiscardedEvent.remainingToDiscard}) — an empty array
+ * means every target has now rejected, so `reduce` closes the offer
+ * entirely; a non-empty array leaves it open for the remaining targets.
+ */
+export interface TradeRejectedEvent extends BaseGameEvent {
+  readonly type: 'trade.rejected';
+  readonly playerId: PlayerId;
+  readonly remainingTargets: readonly PlayerId[];
+}
+
+/**
+ * Emitted when the open offer's own proposer withdraws it (S1.3.2) — legal
+ * for whoever proposed the CURRENTLY open offer, which after a
+ * `counterTrade` is the countering player, not necessarily
+ * `GameState.currentPlayerId` (`validate`'s `NOT_TRADE_PROPOSER` guard).
+ */
+export interface TradeCancelledEvent extends BaseGameEvent {
+  readonly type: 'trade.cancelled';
+  readonly playerId: PlayerId;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
@@ -539,7 +634,11 @@ export type GameEvent =
   | MonopolyPlayedEvent
   | ResourcesDiscardedEvent
   | RobberMovedEvent
-  | KnightPlayedEvent;
+  | KnightPlayedEvent
+  | TradeOfferedEvent
+  | TradeExecutedEvent
+  | TradeRejectedEvent
+  | TradeCancelledEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */
 interface BaseIntent {
@@ -673,6 +772,61 @@ export interface MoveRobberIntent extends BaseIntent {
 }
 
 /**
+ * The current player's request to open a player↔player trade offer
+ * (S1.3.2): `give` leaves the proposer, `get` arrives at the proposer, both
+ * non-empty bundles of positive amounts. Targets every OTHER player (M1
+ * simplification — no named subset). Only legal while no offer is already
+ * open (see {@link GameState.openTradeOffer}).
+ */
+export interface ProposeTradeIntent extends BaseIntent {
+  readonly type: 'intent.proposeTrade';
+  readonly give: Readonly<Record<ResourceType, number>>;
+  readonly get: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * A targeted player's request to accept the open trade offer (S1.3.2) —
+ * resolves the atomic swap ({@link TradeExecutedEvent}). Unlike every other
+ * gameplay intent (bar {@link DiscardIntent}), legal for a NON-current
+ * player: `validate`'s top-level phase-guard carves this out, same as
+ * `intent.discard` (`validate.ts`'s guard comment).
+ */
+export interface AcceptTradeIntent extends BaseIntent {
+  readonly type: 'intent.acceptTrade';
+}
+
+/**
+ * A targeted player's request to reject the open trade offer (S1.3.2) —
+ * same non-current-player carve-out as {@link AcceptTradeIntent}.
+ */
+export interface RejectTradeIntent extends BaseIntent {
+  readonly type: 'intent.rejectTrade';
+}
+
+/**
+ * A targeted player's request to counter the open trade offer with a
+ * swapped-role offer of their own (S1.3.2) — bounded to one counter per
+ * proposal (see {@link GameState.openTradeOffer}'s `depth`). Same
+ * non-current-player carve-out as {@link AcceptTradeIntent}.
+ */
+export interface CounterTradeIntent extends BaseIntent {
+  readonly type: 'intent.counterTrade';
+  readonly give: Readonly<Record<ResourceType, number>>;
+  readonly get: Readonly<Record<ResourceType, number>>;
+}
+
+/**
+ * The CURRENTLY open offer's own proposer's request to withdraw it
+ * (S1.3.2) — after a `counterTrade` that proposer may be a non-current
+ * player (the counterer), so this too carries the same non-current-player
+ * carve-out as {@link AcceptTradeIntent}; `validate` checks
+ * `playerId === GameState.openTradeOffer.proposerId` instead.
+ */
+export interface CancelTradeIntent extends BaseIntent {
+  readonly type: 'intent.cancelTrade';
+}
+
+/**
  * A player's wish, sent from the client. Discriminated by `type`. Passed
  * through `validate` (S0.5.2), which turns a legal intent into
  * {@link GameEvent}s or rejects it with a {@link RejectReason} — an intent
@@ -691,7 +845,12 @@ export type PlayerIntent =
   | BuyDevCardIntent
   | PlayDevCardIntent
   | DiscardIntent
-  | MoveRobberIntent;
+  | MoveRobberIntent
+  | ProposeTradeIntent
+  | AcceptTradeIntent
+  | RejectTradeIntent
+  | CounterTradeIntent
+  | CancelTradeIntent;
 
 /**
  * Why `validate` refused an intent. An enumerated string-literal union so
@@ -737,4 +896,14 @@ export type RejectReason =
   /** Named `victimId` is adjacent but holds 0 resource cards — pick a different eligible victim (S1.3.1). */
   | 'VICTIM_HAS_NO_CARDS'
   /** `intent.discard` / `intent.moveRobber` attempted outside the `'robber'` phase (S1.3.1). */
-  | 'NOT_IN_ROBBER_PHASE';
+  | 'NOT_IN_ROBBER_PHASE'
+  /** `intent.proposeTrade` attempted while `GameState.openTradeOffer` is already set (S1.3.2). */
+  | 'TRADE_OFFER_ALREADY_OPEN'
+  /** `intent.acceptTrade` / `rejectTrade` / `counterTrade` / `cancelTrade` attempted with no `GameState.openTradeOffer` set (S1.3.2). */
+  | 'NO_OPEN_TRADE_OFFER'
+  /** `intent.acceptTrade` / `rejectTrade` / `counterTrade` from a player not listed in `GameState.openTradeOffer.targets` (S1.3.2). */
+  | 'NOT_A_TRADE_TARGET'
+  /** `intent.cancelTrade` from a player who isn't `GameState.openTradeOffer.proposerId` (S1.3.2). */
+  | 'NOT_TRADE_PROPOSER'
+  /** `intent.counterTrade` attempted when the open offer is already at the M1 counter bound (`depth 1`, S1.3.2). */
+  | 'TRADE_COUNTER_LIMIT_REACHED';

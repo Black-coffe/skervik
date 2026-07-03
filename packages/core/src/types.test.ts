@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AcceptTradeIntent,
   BoardGeneratedEvent,
   BuildCityIntent,
   BuildRoadIntent,
   BuildSettlementIntent,
   BuyDevCardIntent,
+  CancelTradeIntent,
   CityBuiltEvent,
+  CounterTradeIntent,
   DevCardBoughtEvent,
   DiceRolledEvent,
   DiscardIntent,
@@ -25,7 +28,9 @@ import type {
   PlayMonopolyIntent,
   PlayRoadBuildingIntent,
   PlayYearOfPlentyIntent,
+  ProposeTradeIntent,
   RejectReason,
+  RejectTradeIntent,
   ResourcesDiscardedEvent,
   ResourcesProducedEvent,
   RoadBuildingPlayedEvent,
@@ -35,6 +40,10 @@ import type {
   RollDiceIntent,
   SettlementBuiltEvent,
   SettlementPlacedEvent,
+  TradeCancelledEvent,
+  TradeExecutedEvent,
+  TradeOfferedEvent,
+  TradeRejectedEvent,
   TurnEndedEvent,
   YearOfPlentyPlayedEvent,
 } from './types.js';
@@ -176,6 +185,30 @@ describe('GameEvent', () => {
       nextPhase: 'main',
     },
     { type: 'devCard.knightPlayed', index: 16, playerId: 'player-1' },
+    {
+      type: 'trade.offered',
+      index: 17,
+      proposerId: 'player-1',
+      give: { timber: 1 },
+      get: { ore: 1 },
+      targets: ['player-2'],
+      depth: 0,
+    },
+    {
+      type: 'trade.executed',
+      index: 18,
+      proposerId: 'player-1',
+      accepterId: 'player-2',
+      give: { timber: 1 },
+      get: { ore: 1 },
+    },
+    {
+      type: 'trade.rejected',
+      index: 19,
+      playerId: 'player-2',
+      remainingTargets: [],
+    },
+    { type: 'trade.cancelled', index: 20, playerId: 'player-1' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -266,6 +299,26 @@ describe('GameEvent', () => {
           expect(e.playerId).toBe('player-1');
           break;
         }
+        case 'trade.offered': {
+          const e: TradeOfferedEvent = event;
+          expect(e.depth).toBe(0);
+          break;
+        }
+        case 'trade.executed': {
+          const e: TradeExecutedEvent = event;
+          expect(e.accepterId).toBe('player-2');
+          break;
+        }
+        case 'trade.rejected': {
+          const e: TradeRejectedEvent = event;
+          expect(e.remainingTargets).toEqual([]);
+          break;
+        }
+        case 'trade.cancelled': {
+          const e: TradeCancelledEvent = event;
+          expect(e.playerId).toBe('player-1');
+          break;
+        }
         default: {
           const exhaustive: never = event;
           throw new Error(`unhandled event type: ${JSON.stringify(exhaustive)}`);
@@ -315,6 +368,21 @@ describe('PlayerIntent', () => {
       tileId: '0,0',
       victimId: 'player-2',
     },
+    {
+      type: 'intent.proposeTrade',
+      playerId: 'player-1',
+      give: { timber: 1 },
+      get: { ore: 1 },
+    },
+    { type: 'intent.acceptTrade', playerId: 'player-2' },
+    { type: 'intent.rejectTrade', playerId: 'player-2' },
+    {
+      type: 'intent.counterTrade',
+      playerId: 'player-2',
+      give: { ore: 1 },
+      get: { timber: 1 },
+    },
+    { type: 'intent.cancelTrade', playerId: 'player-1' },
   ];
 
   it('discriminates on `type` and narrows exhaustively per variant', () => {
@@ -401,6 +469,31 @@ describe('PlayerIntent', () => {
           expect(i.tileId).toBe('0,0');
           break;
         }
+        case 'intent.proposeTrade': {
+          const i: ProposeTradeIntent = intent;
+          expect(i.give).toEqual({ timber: 1 });
+          break;
+        }
+        case 'intent.acceptTrade': {
+          const i: AcceptTradeIntent = intent;
+          expect(i.playerId).toBe('player-2');
+          break;
+        }
+        case 'intent.rejectTrade': {
+          const i: RejectTradeIntent = intent;
+          expect(i.playerId).toBe('player-2');
+          break;
+        }
+        case 'intent.counterTrade': {
+          const i: CounterTradeIntent = intent;
+          expect(i.get).toEqual({ timber: 1 });
+          break;
+        }
+        case 'intent.cancelTrade': {
+          const i: CancelTradeIntent = intent;
+          expect(i.playerId).toBe('player-1');
+          break;
+        }
         default: {
           const exhaustive: never = intent;
           throw new Error(`unhandled intent type: ${JSON.stringify(exhaustive)}`);
@@ -440,6 +533,11 @@ describe('RejectReason', () => {
       'NO_SUCH_VICTIM',
       'VICTIM_HAS_NO_CARDS',
       'NOT_IN_ROBBER_PHASE',
+      'TRADE_OFFER_ALREADY_OPEN',
+      'NO_OPEN_TRADE_OFFER',
+      'NOT_A_TRADE_TARGET',
+      'NOT_TRADE_PROPOSER',
+      'TRADE_COUNTER_LIMIT_REACHED',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');
