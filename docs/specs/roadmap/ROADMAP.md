@@ -178,6 +178,12 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S1.6.4` [T3] **Trade UI** (the heart): offer builder, counter, confirm step — anti-misclick.
 - `S1.6.5` [T3] WS client: connect, send intents, apply `event.batch` via core `reduce`; client prediction for safe actions + reconciliation.
 
+> **A11y/i18n architectural checklist — MANDATORY from the first line of E1.6 UI code** (fix-plan B7). Full colorblind palettes, font scaling, and the UA/RU/EN translation framework are M4 (`E4.4`), but two structural rules apply *now* so "accessibility/i18n baked in, not retrofitted" (CLAUDE.md) is real and not a retrofit later:
+> 1. **No hardcoded user-facing strings.** All UI text routes through localization keys / a single strings module — never string literals inline in JSX/templates — even while only English (or one language) is filled in. Adding locales in M4 must not require touching UI components.
+> 2. **Never color-only.** Any resource/state distinguished by color (resource types on the board, player status, dice/robber cues) carries a second visual cue from the first render — icon, pattern, or text label — not just a hue. M4 swaps palettes; it must not have to *add* the non-color channel.
+>
+> These constrain code *structure*, not translation quality or final palettes (those stay M4). A reviewer rejects M1 UI code that hardcodes strings or encodes meaning in color alone.
+
 **E1.7 — Single-room E2E**
 - `S1.7.1` [T2] Guest auth (`POST /auth/guest`); create/join room by code.
 - `S1.7.2` [T3] E2E: scripted 3–4 clients finish a Classic match (CI e2e).
