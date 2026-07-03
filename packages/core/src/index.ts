@@ -2,6 +2,18 @@
 // ADR-0003: no Date.now(), no Math.random(), no I/O.
 export const CORE_VERSION = '0.0.1' as const;
 
+export type {
+  AxialCoord,
+  BoardTopology,
+  EdgeId,
+  EdgeTopology,
+  PortSlot,
+  TileId,
+  TileTopology,
+  VertexId,
+  VertexTopology,
+} from './board.js';
+export { buildTopology, findEdge, findTile, findVertex, tileId } from './board.js';
 export { reduce, replay } from './reduce.js';
 export type { EventLogLine } from './replay.js';
 export { parseEventLog, replayLog } from './replay.js';
