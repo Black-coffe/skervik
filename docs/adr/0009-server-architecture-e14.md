@@ -1,16 +1,14 @@
 # ADR-0009: E1.4 server architecture — state-sync, event-log format, seed boundary, package deps
 
-- Status: accepted (Forks 1 & 4); **Forks 2 & 3 PENDING OWNER RATIFICATION** (raised 2026-07-03)
+- Status: **accepted (all 4 forks)** — Forks 2 & 3 ratified by owner 2026-07-03
 - Date: 2026-07-03
 - Spec: docs/specs/m1-vertical-slice (E1.4 — S1.4.1 room, S1.4.2 intent pipeline, S1.4.3 commit-reveal RNG, S1.4.4 log persist)
 
-> **⚠️ Ratification note (Queen, 2026-07-03).** Forks 1 (state-sync) and 4 (deps/
-> boundaries) rest on already-locked principles and are accepted — **S1.4.1 (room)
-> proceeds under them.** Forks 2 (retire the tech-spec §6.4 `EventLogLine` envelope
-> for bare-`GameEvent` ndjson + consciously re-golden the A2 determinism fixture) and
-> 3 (store the seed reveal in match metadata, not the event log) each deviate from a
-> written artifact and **await owner sign-off before S1.4.2/S1.4.3/S1.4.4 ship**
-> (those stories are HELD, not dispatched, until then).
+> **✅ Ratification note (2026-07-03).** Forks 1 (state-sync) & 4 (deps/boundaries)
+> were accepted on locked principles and shipped in S1.4.1. Forks 2 (retire the tech-
+> spec §6.4 `EventLogLine` envelope for bare-`GameEvent` ndjson + consciously re-golden
+> the A2 determinism fixture) & 3 (seed reveal in match metadata, not the event log)
+> were **ratified by the owner** — S1.4.2/S1.4.3/S1.4.4 now proceed under all four.
 
 ## Context
 
