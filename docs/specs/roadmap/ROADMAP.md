@@ -305,7 +305,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 
 1. ✅ **Project name/brand = Skervik** (ADR-0007). Domain skervik.com registered 2026-06-30, exp 2028.
 2. ✅ **License = AGPL-3.0** (ADR-0001). Network copyleft protects the hosted OSS service from closed forks.
-3. ✅ **Render engine = Pixi.js v8** (ADR-0002). Lighter/faster 2.5D on mobile; the E0.4 prototype is a validation checkpoint, not a blocker.
+3. ✅ **Render engine = Pixi.js v8** (ADR-0002). Lighter/faster 2.5D on mobile. **Validated by the E0.4 benchmark 2026-07-03** (`docs/specs/m0-foundation/S0.4.3-perf-results.md`) — engine locked; S0.4.2 (Three.js comparison) not triggered.
 4. ✅ **Auth = guest + Google + Discord** (ADR-0005). Discord matches the audience and is our community hub.
 5. ✅ **Donations = Open Collective** (ADR-0006). Public ledger = verifiable transparency.
 6. ✅ Already locked at spec time: deterministic isomorphic core (ADR-0003), realtime = Node+Colyseus+Fastify (ADR-0004).

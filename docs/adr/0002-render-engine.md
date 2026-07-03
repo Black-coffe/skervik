@@ -1,7 +1,7 @@
 # ADR-0002: Client render engine (2.5D)
 
-- Status: accepted (default engine; E0.4 prototype is a validation gate that may trigger a revisit)
-- Date: 2026-06-30 (locked by owner)
+- Status: accepted — **validated by the E0.4 benchmark, 2026-07-03; engine locked**
+- Date: 2026-06-30 (locked by owner) · validated 2026-07-03
 - Spec: docs/specs/roadmap (E0.4)
 
 ## Context
@@ -29,5 +29,16 @@ mobile/FMP budget (or 3D depth becomes a product requirement) do we revisit per 
 - Rendering is a pure projection of `GameState`; the canvas never holds authoritative state.
 - Bundle-size and FMP budgets (tech spec §1.2) are CI-enforced.
 
+## Validation (E0.4, 2026-07-03)
+
+The 19-hex isometric prototype (`packages/client/src/proto/`, commit `5f99a34`)
+passed every budget with margin — LCP 1137 ms on Fast 4G + 4× CPU (budget 2500),
+100 avg / 98 1%-low FPS on desktop at both 19 and 133 tiles (WebGPU), worst-case
+CPU frame cost 2.9 ms at 4× throttle with a ×7 scene (16.7 ms budget), main
+bundle 150 KB gzip. Full numbers & methodology:
+`docs/specs/m0-foundation/S0.4.3-perf-results.md`. The Three.js comparison
+(S0.4.2) was not triggered. Accepted residual: one real-device Android
+spot-check during first alpha.
+
 ## Revisit when
-- E0.4 benchmark shows Pixi can't hit FMP ≤2.5s / acceptable mobile FPS, or 3D depth becomes a product requirement.
+- A real-device check contradicts the E0.4 emulated benchmark (FMP >2.5s / mobile FPS clearly below 60), or 3D depth becomes a product requirement.
