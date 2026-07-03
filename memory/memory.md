@@ -33,7 +33,8 @@
 - 0001 AGPL-3.0 · 0002 Pixi.js v8 (validated by E0.4 2026-07-03, locked) · 0003 deterministic isomorphic core · 0004 Node+Colyseus+Fastify · 0005 Google+Discord+guest · 0006 Open Collective · 0007 name=Skervik · 0008 trilingual RU/UA/EN from first playable build (locales ship in M1 S1.6.6; every user-facing term authored in 3 languages).
 
 ## Wiki (docs/wiki/) — hard invariants, enforce in every core change
-- `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md` · `lore-primer.md` (approved setting: realism ≈1900, steam+sail, NO mysticism; trilingual glossary = source of all user-facing names) · `ip-tradedress-checklist.md` (run on first concept art).
+- **Core engine:** `deterministic-core.md` · `fair-rng-commit-reveal.md` · `server-authority.md` · `seed-handling.md` (seed=validate 4th param, never in GameState) · `rng-stream-map.md` (gameplay K=8 slots, board-gen reserved 1M band).
+- **Rules & lore:** `production-rules.md` (bank all-or-nothing per resource, 19/type) · `lore-primer.md` (realism ≈1900, steam+sail, NO mysticism; trilingual glossary) · `ip-tradedress-checklist.md` (run on first concept art).
 
 ## Design constitution (docs/design/) — binding for all client UI work (owner-approved Queen exception 2026-07-03)
 - `PRODUCT.md` (strategic context: register/users/brand personality «weathered · precise · fair»; 6 design principles; legal red lines incl. CATAN trade dress; a11y & inclusion).
