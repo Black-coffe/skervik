@@ -121,7 +121,7 @@ export async function createHexScene(mountEl: HTMLElement): Promise<SceneHandle>
   window.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
-  return {
+  const handle: SceneHandle = {
     app,
     rendererBackend: detectBackend(app),
     getTileCount: () => tileCount,
@@ -134,4 +134,11 @@ export async function createHexScene(mountEl: HTMLElement): Promise<SceneHandle>
       app.destroy(true, { children: true, texture: true, textureSource: true });
     },
   };
+
+  // Expose for the external perf harness (S0.4.3 benchmark drives synthetic
+  // renders via devtools; occluded windows throttle rAF, so presented-FPS
+  // alone can't be trusted in automation).
+  (globalThis as Record<string, unknown>).__SKERVIK_PROTO__ = handle;
+
+  return handle;
 }
