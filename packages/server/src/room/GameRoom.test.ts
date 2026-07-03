@@ -23,6 +23,7 @@ import {
 import {
   EventBatchEnvelopeSchema,
   type EventBatchMessage,
+  PROTOCOL_VERSION,
   type RejectMessage,
   ServerMessageSchema,
   StateSnapshotEnvelopeSchema,
@@ -39,6 +40,14 @@ import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.
 function nextTick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 50));
 }
+
+/**
+ * The compatible join handshake every client must now present (S1.5.2): the
+ * room's `onAuth` rejects a join that omits or mismatches `protocolVersion`, so
+ * every `connectTo` carries the current `PROTOCOL_VERSION`. The version-gate
+ * tests below deliberately pass a different/absent value.
+ */
+const CONNECT_OPTS = { protocolVersion: PROTOCOL_VERSION } as const;
 
 /** A minimal empty-handed player for a crafted running-match state. */
 function player(id: string): PlayerState {
@@ -136,7 +145,7 @@ describe('GameRoom', () => {
 
   it('boots under Node 22/ESM and lets a client join', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const client = await testServer.connectTo(room);
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
 
     expect(client.sessionId).toBeTruthy();
 
@@ -170,7 +179,7 @@ describe('GameRoom', () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
 
     const snapshots: StateSnapshotMessage[] = [];
-    const client = await testServer.connectTo(room);
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
     client.onMessage('state.snapshot', (payload: StateSnapshotMessage) => {
       snapshots.push(payload);
     });
@@ -190,7 +199,7 @@ describe('GameRoom', () => {
 
   it('onLeave marks the seat disconnected without mutating the authoritative GameState', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const client = await testServer.connectTo(room);
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const gameStateBefore = JSON.stringify(room.gameState);
@@ -204,17 +213,17 @@ describe('GameRoom', () => {
 
   it('rejects joins past the seat cap', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, { maxSeats: 1 });
-    await testServer.connectTo(room);
+    await testServer.connectTo(room, CONNECT_OPTS);
 
-    await expect(testServer.connectTo(room)).rejects.toThrow();
+    await expect(testServer.connectTo(room, CONNECT_OPTS)).rejects.toThrow();
   });
 
   // --- S1.4.2 authoritative intent pipeline -------------------------------
 
   it('a seated player’s valid intent → reduce advances state, event.batch broadcasts to ALL clients, projection refreshes', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -259,8 +268,8 @@ describe('GameRoom', () => {
 
   it('the log-append seam receives exactly the validated events, once, before broadcast', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -284,8 +293,8 @@ describe('GameRoom', () => {
 
   it('an invalid intent → only the sender gets the RejectReason, no broadcast, state unchanged', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -317,8 +326,8 @@ describe('GameRoom', () => {
 
   it('identity binding: a seated client claiming ANOTHER player’s id is rejected, not applied', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -352,8 +361,8 @@ describe('GameRoom', () => {
 
   it('turn-gate: a seated player acting under its OWN id on another player’s turn → NOT_YOUR_TURN (NIT-3)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -387,7 +396,7 @@ describe('GameRoom', () => {
 
   it('identity binding: an unseated sender is rejected', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -413,7 +422,7 @@ describe('GameRoom', () => {
 
   it('a malformed envelope/payload is rejected by zod without throwing (S1.5.1)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const rejects: RejectMessage[] = [];
@@ -459,12 +468,12 @@ describe('GameRoom', () => {
     // connecting c2) — onJoin sends the snapshot immediately, so a listener
     // registered after another awaited `connectTo` can miss it (it isn't
     // buffered for late subscribers).
-    const c1 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
     const snapshots: StateSnapshotMessage[] = [];
     c1.onMessage('state.snapshot', (m: StateSnapshotMessage) => snapshots.push(m));
     await nextTick();
 
-    const c2 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -495,11 +504,69 @@ describe('GameRoom', () => {
     await c2.leave();
   });
 
+  // --- S1.5.2 handshake + protocol version negotiation ---------------------
+
+  it('a join carrying the correct protocolVersion is accepted (onAuth) and still receives state.snapshot', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+
+    const snapshots: StateSnapshotMessage[] = [];
+    const client = await testServer.connectTo(room, {
+      protocolVersion: PROTOCOL_VERSION,
+    });
+    client.onMessage('state.snapshot', (m: StateSnapshotMessage) => snapshots.push(m));
+    await nextTick();
+
+    // onAuth passed → the client seated and got the unchanged S1.4.1 snapshot.
+    expect(room.state.seats).toHaveLength(1);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.type).toBe('state.snapshot');
+    expect(StateSnapshotEnvelopeSchema.safeParse(snapshots[0]).success).toBe(true);
+
+    await client.leave();
+  });
+
+  it('a join carrying an INCOMPATIBLE protocolVersion is rejected in onAuth — PROTOCOL_VERSION_MISMATCH, no seat, no snapshot', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+
+    // onAuth throws a ServerError whose message is the JSON `error.version`
+    // payload, so the join promise rejects with the machine code carried over
+    // the transport — and the incompatible client never enters the room.
+    await expect(
+      testServer.connectTo(room, { protocolVersion: '0.0.0-incompatible' }),
+    ).rejects.toThrow(/PROTOCOL_VERSION_MISMATCH/);
+    await nextTick();
+
+    // Rejected BEFORE onJoin/seating: no seat assigned, no broadcast possible.
+    expect(room.state.seats).toHaveLength(0);
+  });
+
+  it('a join with a MISSING protocolVersion is rejected in onAuth (no seat)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+
+    await expect(testServer.connectTo(room, {})).rejects.toThrow(
+      /PROTOCOL_VERSION_MISMATCH/,
+    );
+    await nextTick();
+
+    expect(room.state.seats).toHaveLength(0);
+  });
+
+  it('a join with a MALFORMED (non-string) protocolVersion is rejected in onAuth (no seat)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+
+    await expect(
+      testServer.connectTo(room, { protocolVersion: 1 as unknown as string }),
+    ).rejects.toThrow(/PROTOCOL_VERSION_MISMATCH/);
+    await nextTick();
+
+    expect(room.state.seats).toHaveLength(0);
+  });
+
   // --- S1.4.3 commit-reveal: reveal at game end + leak checklist ------------
 
   it('reveals the secret seed to match metadata EXACTLY on the game.ended batch, and seedHash === sha256Hex(revealed seed)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const winner = c1.sessionId;
@@ -547,8 +614,8 @@ describe('GameRoom', () => {
 
   it('never reveals the seed on a pre-game.ended batch (a plain end-turn leaves metadata empty)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -573,7 +640,7 @@ describe('GameRoom', () => {
 
   it('reveal is once-only: after game.ended the match is frozen, so a further intent is rejected and the seed is not re-revealed', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const winner = c1.sessionId;
@@ -627,8 +694,8 @@ describe('GameRoom', () => {
       // Production wiring: the `matchesDir` option selects the durable writer.
       expect(room.eventSink).toBeInstanceOf(FsEventSink);
 
-      const c1 = await testServer.connectTo(room);
-      const c2 = await testServer.connectTo(room);
+      const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+      const c2 = await testServer.connectTo(room, CONNECT_OPTS);
       await nextTick();
 
       const a = c1.sessionId;
@@ -668,8 +735,8 @@ describe('GameRoom', () => {
 
   it('persist-before-commit: a rejecting sink → sender gets a private error, NO broadcast, state untouched, no crash (NIT-1)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;
@@ -724,8 +791,8 @@ describe('GameRoom', () => {
 
   it('concurrency: two intents in the same tick are SERIALIZED — the second validates against the COMMITTED state, not a stale one (lead-review TOCTOU fix)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
-    const c1 = await testServer.connectTo(room);
-    const c2 = await testServer.connectTo(room);
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
 
     const a = c1.sessionId;

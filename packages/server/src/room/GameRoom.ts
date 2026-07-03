@@ -17,11 +17,15 @@ import {
 } from '@skervik/core';
 import {
   ClientMessageSchema,
+  ConnectOptionsSchema,
   type EventBatchMessage,
+  isCompatibleProtocolVersion,
+  PROTOCOL_VERSION,
   type RejectMessage,
   type StateSnapshotMessage,
+  type VersionErrorMessage,
 } from '@skervik/protocol';
-import { type Client, Room } from 'colyseus';
+import { type Client, Room, ServerError } from 'colyseus';
 
 import { InMemoryMatchMetadataStore, type MatchMetadataStore } from '../matchMetadata.js';
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
@@ -30,6 +34,15 @@ import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
 const DEFAULT_MAX_SEATS = 4;
+
+/**
+ * The transport-level `ServerError.code` for a protocol-version rejection
+ * (S1.5.2). A value in the WebSocket application-reserved close-code range
+ * (4000-4999) so it never collides with Colyseus's own codes; the
+ * machine-readable reason lives in the `error.version` payload (the error's
+ * message body), not in this numeric code.
+ */
+const PROTOCOL_VERSION_MISMATCH_CODE = 4001;
 
 export interface GameRoomOptions {
   readonly maxSeats?: number;
@@ -172,6 +185,42 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
           error,
         );
       });
+  }
+
+  /**
+   * The protocol-version handshake gate (S1.5.2). Colyseus calls `onAuth`
+   * BEFORE `onJoin`/seat assignment, and a throw here cleans up the reserved
+   * seat and fails the join — so a version-incompatible client NEVER enters the
+   * room (no seat, no `state.snapshot`, no broadcast, no state mutation). We
+   * `safeParse` the client-supplied join `options` and compare the presented
+   * `protocolVersion` against the single-source `PROTOCOL_VERSION` via the ONE
+   * compatibility helper. On mismatch (or missing/malformed options) we throw a
+   * Colyseus `ServerError` whose message is the JSON of the typed
+   * `error.version` message, so the rejection reason survives the transport and
+   * E1.6's client can `JSON.parse` it and validate it against
+   * `ServerMessageSchema` to render a precise "update required" prompt.
+   * A compatible client returns `true` and proceeds to the unchanged
+   * `onJoin`/seat/`state.snapshot` path.
+   */
+  override onAuth(_client: Client, options: unknown): boolean {
+    const parsed = ConnectOptionsSchema.safeParse(options);
+    // The raw value the client presented, reported back for a precise client
+    // message: the parsed string on a structurally-valid handshake, else null
+    // (missing options or a non-string `protocolVersion`).
+    const clientVersion = parsed.success ? parsed.data.protocolVersion : null;
+    if (!parsed.success || !isCompatibleProtocolVersion(clientVersion)) {
+      const message: VersionErrorMessage = {
+        v: 1,
+        type: 'error.version',
+        payload: {
+          code: 'PROTOCOL_VERSION_MISMATCH',
+          serverVersion: PROTOCOL_VERSION,
+          clientVersion,
+        },
+      };
+      throw new ServerError(PROTOCOL_VERSION_MISMATCH_CODE, JSON.stringify(message));
+    }
+    return true;
   }
 
   override onJoin(client: Client): void {

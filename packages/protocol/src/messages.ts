@@ -61,9 +61,35 @@ export interface ErrorMessage {
   readonly payload: { readonly code: 'INTERNAL_ERROR' };
 }
 
+/**
+ * Server → a client REJECTED at join (S1.5.2): its `protocolVersion` is
+ * incompatible with the server's `PROTOCOL_VERSION`, so the join is refused
+ * before any seat is assigned. Delivered as the JSON body of the Colyseus
+ * `ServerError` thrown from the room's `onAuth` (the incompatible client never
+ * enters the room), authored as a typed protocol message so E1.6's client can
+ * `JSON.parse` + validate it and render a precise "update required" prompt.
+ * `clientVersion` is the raw string the client presented, or `null` when it was
+ * missing / non-string. `code` is a stable MACHINE value — ADR-0008 i18n
+ * applies to the client's rendering of it (E1.6), not to this wire field.
+ */
+export interface VersionErrorMessage {
+  readonly v: 1;
+  readonly type: 'error.version';
+  readonly payload: {
+    readonly code: 'PROTOCOL_VERSION_MISMATCH';
+    readonly serverVersion: string;
+    readonly clientVersion: string | null;
+  };
+}
+
 /** The discriminated union of every message that crosses the WS boundary. */
 export type WsMessage =
-  IntentMessage | EventBatchMessage | StateSnapshotMessage | RejectMessage | ErrorMessage;
+  | IntentMessage
+  | EventBatchMessage
+  | StateSnapshotMessage
+  | RejectMessage
+  | ErrorMessage
+  | VersionErrorMessage;
 
 // ===========================================================================
 // zod runtime schemas (S1.5.1)
@@ -551,6 +577,36 @@ export const ErrorEnvelopeSchema = z.object({
 });
 
 /**
+ * Client → server JOIN options (S1.5.2 handshake): the client presents its
+ * `protocolVersion` in the Colyseus join `options`. The server `safeParse`s
+ * this in `onAuth` and compares it against the single-source `PROTOCOL_VERSION`
+ * via {@link isCompatibleProtocolVersion} BEFORE seating. This is NOT a WS
+ * envelope — it rides the join handshake, not the message bus, so it carries no
+ * `v`/`type` wrapper.
+ */
+export const ConnectOptionsSchema = z.object({
+  protocolVersion: z.string(),
+});
+export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
+
+/**
+ * Server → a version-incompatible client: the typed `error.version` rejection
+ * (see {@link VersionErrorMessage}). Carried as the JSON body of the Colyseus
+ * `ServerError` thrown from `onAuth`, and a recognized variant of
+ * {@link ServerMessageSchema} so E1.6 can validate + render it like any other
+ * inbound server message.
+ */
+export const VersionErrorEnvelopeSchema = z.object({
+  v: EnvelopeVersionSchema,
+  type: z.literal('error.version'),
+  payload: z.object({
+    code: z.literal('PROTOCOL_VERSION_MISMATCH'),
+    serverVersion: z.string(),
+    clientVersion: z.string().nullable(),
+  }),
+});
+
+/**
  * What the SERVER accepts inbound. Discriminated on `type` and authored
  * extensibly (M1 has one inbound message — the intent envelope); S1.5.2 adds
  * the handshake here without touching the pipeline.
@@ -563,6 +619,7 @@ export const ServerMessageSchema = z.discriminatedUnion('type', [
   StateSnapshotEnvelopeSchema,
   RejectEnvelopeSchema,
   ErrorEnvelopeSchema,
+  VersionErrorEnvelopeSchema,
 ]);
 
 // --- compile-time drift pins (the point of S1.5.1) -------------------------
