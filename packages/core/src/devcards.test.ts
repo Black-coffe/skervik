@@ -387,6 +387,46 @@ describe('development cards (S1.2.3)', () => {
       expect(event.edgeIds).toEqual([]); // supply already exhausted before either could be placed
     });
 
+    it('rejects MALFORMED_INTENT for the whole play when an edge id does not exist (S1.2.4 coverage nit)', () => {
+      const genesis = genesisWithHeldRoadBuilding();
+
+      const result = validate(
+        genesis,
+        {
+          type: 'intent.playDevCard',
+          playerId: 'player-1',
+          card: 'roadBuilding',
+          edgeIds: ['edge-does-not-exist', edgeBC.id],
+        },
+        'player-1',
+        SEED,
+      );
+      expect(result).toEqual({ ok: false, reason: 'MALFORMED_INTENT' });
+    });
+
+    it('silently skips a detached-until-chained edge rather than rejecting it (S1.2.4 coverage nit)', () => {
+      const genesis = genesisWithHeldRoadBuilding();
+
+      // edgeCD only touches player-1's network once edgeBC (its own chain
+      // predecessor) is placed first — requesting ONLY edgeCD exercises the
+      // "place fewer" drop path: not an error, just skipped.
+      const result = validate(
+        genesis,
+        {
+          type: 'intent.playDevCard',
+          playerId: 'player-1',
+          card: 'roadBuilding',
+          edgeIds: [edgeCD.id],
+        },
+        'player-1',
+        SEED,
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error('expected ok result');
+      const event = result.events[0] as RoadBuildingPlayedEvent;
+      expect(event.edgeIds).toEqual([]);
+    });
+
     it('one-dev-card-per-turn: rejects DEV_CARD_ALREADY_PLAYED after a card was already played this turn', () => {
       const genesis: GameState = {
         ...genesisWithHeldRoadBuilding(),

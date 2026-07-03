@@ -124,6 +124,19 @@ function snakeOrder(playerIds: readonly PlayerId[]): PlayerId[] {
 }
 
 /**
+ * The canonical seat order (S1.2.4): reads {@link GameState.playerOrder}
+ * once `match.started` has set it, falling back to `state.players`' own
+ * array order for a state assembled without that event (see the field's
+ * docstring, `types.ts`) — the ONE place both the setup snake-draft's exit
+ * ({@link snakeOrder}'s caller below) and the main loop's `intent.endTurn`
+ * derive "next player" from, replacing the two separate ad hoc derivations
+ * this story consolidates.
+ */
+function seatOrder(state: GameState): readonly PlayerId[] {
+  return state.playerOrder ?? state.players.map((player) => player.id);
+}
+
+/**
  * Distance rule (S1.1.3 spec): true if any vertex adjacent to `vertex`
  * already holds a settlement or a city — no two buildings may ever sit next
  * to each other. Shared by the free setup placement and the paid S1.2.2
@@ -312,14 +325,36 @@ export function validate(
   if (!state.players.some((player) => player.id === playerId)) {
     return reject('UNKNOWN_PLAYER');
   }
-  // Setup-phase intents (the snake draft, S1.1.3) require `phase === 'setup'`;
-  // every other intent requires the normal turn loop's `phase === 'main'`.
-  const requiredPhase: GamePhase =
-    intent.type === 'intent.placeSettlement' || intent.type === 'intent.placeRoad'
-      ? 'setup'
-      : 'main';
-  if (state.phase !== requiredPhase) {
-    return reject('INVALID_PHASE');
+  // Phase-guard layer (S1.2.4): every intent is legal in exactly one
+  // canonical phase. Setup-only intents (the snake draft, S1.1.3) require
+  // 'setup'; `intent.rollDice` requires 'roll' (the turn's mandatory first
+  // step — attempting a 2nd roll means phase has already advanced to 'main',
+  // which earns the more specific ALREADY_ROLLED over a generic
+  // INVALID_PHASE); every other intent (endTurn, build*, buyDevCard,
+  // playDevCard) is the post-roll 'main' group — attempting one from 'roll'
+  // earns MUST_ROLL_FIRST, this guard's other named reason. Any phase
+  // outside an intent's legal/adjacent pair (mid-setup, 'finished', ...)
+  // falls through to the generic INVALID_PHASE, same as before this story.
+  const isSetupIntent =
+    intent.type === 'intent.placeSettlement' || intent.type === 'intent.placeRoad';
+  if (isSetupIntent) {
+    if (state.phase !== 'setup') {
+      return reject('INVALID_PHASE');
+    }
+  } else if (intent.type === 'intent.rollDice') {
+    if (state.phase === 'main') {
+      return reject('ALREADY_ROLLED');
+    }
+    if (state.phase !== 'roll') {
+      return reject('INVALID_PHASE');
+    }
+  } else {
+    if (state.phase === 'roll') {
+      return reject('MUST_ROLL_FIRST');
+    }
+    if (state.phase !== 'main') {
+      return reject('INVALID_PHASE');
+    }
   }
   if (state.currentPlayerId !== playerId) {
     return reject('NOT_YOUR_TURN');
@@ -355,7 +390,10 @@ export function validate(
       // holding >7 cards — that's the robber story's job, not this one's.
       // Production is a deliberate no-op on 7 (nobody's tiles pay out while
       // the robber relocates); only `dice.rolled` is emitted, no
-      // `resources.produced`.
+      // `resources.produced`. S1.2.4 adds a documented `'robber'` phase seam
+      // (`types.ts`'s `GamePhase`) for S1.3.1 to enter here, but doesn't wire
+      // it up — `reduce.ts`'s `dice.rolled` case still lands phase on `main`
+      // for every roll, 7 included, exactly like before this story.
       if (total === 7) {
         return { ok: true, events: [diceEvent] };
       }
@@ -370,13 +408,15 @@ export function validate(
       return { ok: true, events: [diceEvent, producedEvent] };
     }
     case 'intent.endTurn': {
-      const players = state.players;
-      const currentIndex = players.findIndex((player) => player.id === playerId);
-      const nextPlayer = players[(currentIndex + 1) % players.length];
-      if (nextPlayer === undefined) {
+      // Rotation reads the explicit seat order (S1.2.4), not `state.players`'
+      // incidental array order (see {@link seatOrder}).
+      const order = seatOrder(state);
+      const currentIndex = order.indexOf(playerId);
+      const nextPlayerId = order[(currentIndex + 1) % order.length];
+      if (nextPlayerId === undefined) {
         // Unreachable: the membership check above already guarantees
         // `playerId` (and therefore `currentIndex`) is valid and
-        // `players.length >= 1`. Guarded defensively instead of asserted
+        // `order.length >= 1`. Guarded defensively instead of asserted
         // away, so a future regression rejects rather than throws.
         return reject('UNKNOWN_PLAYER');
       }
@@ -384,7 +424,7 @@ export function validate(
         type: 'turn.ended',
         index: state.eventIndex,
         playerId,
-        nextPlayerId: nextPlayer.id,
+        nextPlayerId,
       };
       return { ok: true, events: [event] };
     }
@@ -446,14 +486,17 @@ export function validate(
 
       // This turn's road completes the draft turn — work out who (and what
       // phase) comes next so `reduce` only ever applies a fact (ADR-0003).
-      const order = snakeOrder(state.players.map((player) => player.id));
+      // The draft order derives from the explicit seat order (S1.2.4), not
+      // `state.players`' incidental array order (see {@link seatOrder}).
+      const order = snakeOrder(seatOrder(state));
       const completedTurns = Object.keys(buildings.roads).length;
       const nextStep = completedTurns + 1;
       const isLastTurn = nextStep >= order.length;
-      // The draft's very last road hands the turn back to P1 for the normal
-      // turn loop's first roll (S1.1.3 spec's "exit" rule).
+      // The draft's very last road hands the turn back to P1 — into the
+      // normal turn loop's 'roll' phase (S1.2.4: the FSM's mandatory first
+      // step), not directly 'main' as before this story.
       const nextPlayerId = (isLastTurn ? order[0] : order[nextStep]) as PlayerId;
-      const nextPhase: GamePhase = isLastTurn ? 'main' : 'setup';
+      const nextPhase: GamePhase = isLastTurn ? 'roll' : 'setup';
 
       const event: RoadPlacedEvent = {
         type: 'road.placed',

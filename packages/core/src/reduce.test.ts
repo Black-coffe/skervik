@@ -53,6 +53,11 @@ const setupState: GameState = {
   seedHash: 'deadbeef',
 };
 
+// S1.2.4: rollDice is only legal from 'roll' — `mainState` above now
+// represents the post-roll main phase, so `intent.rollDice` tests need this
+// dedicated fixture instead.
+const rollState: GameState = { ...mainState, phase: 'roll' };
+
 describe('reduce', () => {
   it('never mutates its input state', () => {
     const before: GameState = JSON.parse(JSON.stringify(mainState)) as GameState;
@@ -85,6 +90,8 @@ describe('reduce', () => {
     expect(next.seedHash).toBe('cafebabe');
     expect(next.currentPlayerId).toBe(alice.id);
     expect(next.players.map((p) => p.id)).toEqual([alice.id, bob.id]);
+    // S1.2.4: the fixed seat order is set from the same `playerIds`.
+    expect(next.playerOrder).toEqual([alice.id, bob.id]);
     expect(next.eventIndex).toBe(1);
   });
 
@@ -136,6 +143,8 @@ describe('reduce', () => {
 
     expect(next.currentPlayerId).toBe(bob.id);
     expect(next.turn).toBe(mainState.turn + 1);
+    // S1.2.4: the next player's turn always starts in 'roll'.
+    expect(next.phase).toBe('roll');
     expect(next.eventIndex).toBe(mainState.eventIndex + 1);
   });
 
@@ -240,7 +249,7 @@ describe('validate', () => {
     expect(result).toEqual({ ok: false, reason: 'UNKNOWN_PLAYER' });
   });
 
-  it('rejects INVALID_PHASE outside the main phase', () => {
+  it('rejects INVALID_PHASE for rollDice outside setup/roll/main entirely', () => {
     const setupState: GameState = { ...mainState, phase: 'setup' };
 
     const result = validate(
@@ -271,8 +280,9 @@ describe('validate', () => {
   });
 
   it('validates intent.rollDice into a fair-RNG dice.rolled (+ resources.produced) event', () => {
+    // S1.2.4: rollDice is only legal from 'roll' — `rollState`, not `mainState`.
     const result = validate(
-      mainState,
+      rollState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
       SEED,
@@ -280,29 +290,29 @@ describe('validate', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected ok result');
-    // SEED @ mainState.eventIndex resolves to a non-7 total, so both
+    // SEED @ rollState.eventIndex resolves to a non-7 total, so both
     // `dice.rolled` and `resources.produced` are emitted (S1.2.1 scheme).
     expect(result.events).toHaveLength(2);
     expect(result.events[0]).toMatchObject({
       type: 'dice.rolled',
       playerId: alice.id,
-      index: mainState.eventIndex,
+      index: rollState.eventIndex,
     });
     expect(result.events[1]).toMatchObject({
       type: 'resources.produced',
-      index: mainState.eventIndex + 1,
-      grants: {}, // mainState has no board/buildings — nothing to produce from
+      index: rollState.eventIndex + 1,
+      grants: {}, // rollState has no board/buildings — nothing to produce from
     });
 
     // Provably-fair: each die is exactly what an auditor recomputes from the
     // revealed seed + gameplay stream index (A1 acceptance, S1.2.1 scheme).
-    const dieA = rollDie(SEED, gameplayStreamIndex(mainState.eventIndex, 0));
-    const dieB = rollDie(SEED, gameplayStreamIndex(mainState.eventIndex, 1));
+    const dieA = rollDie(SEED, gameplayStreamIndex(rollState.eventIndex, 0));
+    const dieB = rollDie(SEED, gameplayStreamIndex(rollState.eventIndex, 1));
     expect(result.events[0]).toMatchObject({ dieA, dieB, total: dieA + dieB });
 
     // Same (state, seed) in -> same events out (no ambient randomness, ADR-0003).
     const again = validate(
-      mainState,
+      rollState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
       SEED,
@@ -314,7 +324,7 @@ describe('validate', () => {
     // This seed happens to resolve to a 7 at this eventIndex, exercising the
     // no-production seam: only `dice.rolled` is emitted (TODO(S1.3.1)).
     const otherSeed = validate(
-      mainState,
+      rollState,
       { type: 'intent.rollDice', playerId: alice.id },
       alice.id,
       'skervik-golden-seed-1',
@@ -325,11 +335,11 @@ describe('validate', () => {
     expect(otherSeed.events[0]).toMatchObject({
       dieA: rollDie(
         'skervik-golden-seed-1',
-        gameplayStreamIndex(mainState.eventIndex, 0),
+        gameplayStreamIndex(rollState.eventIndex, 0),
       ),
       dieB: rollDie(
         'skervik-golden-seed-1',
-        gameplayStreamIndex(mainState.eventIndex, 1),
+        gameplayStreamIndex(rollState.eventIndex, 1),
       ),
       total: 7,
     });

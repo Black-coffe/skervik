@@ -377,6 +377,8 @@ describe('RejectReason', () => {
       'DEV_CARD_ALREADY_PLAYED',
       'KNIGHT_DEFERRED',
       'BANK_EXHAUSTED',
+      'ALREADY_ROLLED',
+      'MUST_ROLL_FIRST',
     ];
     for (const reason of reasons) {
       expect(typeof reason).toBe('string');
