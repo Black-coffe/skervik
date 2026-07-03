@@ -2,12 +2,22 @@
 // and join/leave/seat-cap behavior. Uses the official `@colyseus/testing`
 // harness (a real Colyseus server + WS client) — this IS the Fork 4 ESM/Node
 // 22 spike, exercised end to end rather than by reaching into Room internals.
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import {
   buildTopology,
   type EdgeId,
+  type GameState,
+  parseGameEventLog,
   type PlayerId,
+  type PlayerIntent,
   type PlayerState,
+  replay,
+  type Seed,
+  validate,
   type VertexId,
 } from '@skervik/core';
 import type {
@@ -20,7 +30,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createGameServer, GAME_ROOM_NAME, type GameRoom } from '../index.js';
 import { InMemoryMatchMetadataStore } from '../matchMetadata.js';
 import { sha256Hex } from '../seed.js';
-import { InMemoryEventSink } from './eventSink.js';
+import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
 /** Gives the room's `onJoin`/`onLeave` sends a tick to reach the client. */
 function nextTick(): Promise<void> {
@@ -337,6 +347,41 @@ describe('GameRoom', () => {
     await c2.leave();
   });
 
+  it('turn-gate: a seated player acting under its OWN id on another player’s turn → NOT_YOUR_TURN (NIT-3)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    // It is B's turn. c1 acts under ITS OWN id (a) — no impersonation, so the
+    // identity check passes — but the turn-gate at the server boundary rejects
+    // it because the current turn belongs to B.
+    startMainTurn(room, a, b, b);
+    const before = JSON.stringify(room.gameState);
+
+    const rejects: RejectMessage[] = [];
+    const batches2: EventBatchMessage[] = [];
+    c1.onMessage('intent.rejected', (m: RejectMessage) => rejects.push(m));
+    c2.onMessage('event.batch', (m: EventBatchMessage) => batches2.push(m));
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0]?.payload.reason).toBe('NOT_YOUR_TURN');
+    expect(batches2).toHaveLength(0); // a rejection is never broadcast
+    expect(JSON.stringify(room.gameState)).toBe(before); // state untouched
+
+    await c1.leave();
+    await c2.leave();
+  });
+
   it('identity binding: an unseated sender is rejected', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
     const c1 = await testServer.connectTo(room);
@@ -507,5 +552,251 @@ describe('GameRoom', () => {
     expect(JSON.stringify(rejects[0])).not.toMatch(HEX64);
 
     await c1.leave();
+  });
+
+  // --- S1.4.4b durable persistence + persist-before-commit ordering --------
+
+  it('FsEventSink round-trip: the durable ndjson log replays back to the room’s exact gameState', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'skervik-events-'));
+    try {
+      const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+        matchesDir: tempDir,
+      });
+      // Production wiring: the `matchesDir` option selects the durable writer.
+      expect(room.eventSink).toBeInstanceOf(FsEventSink);
+
+      const c1 = await testServer.connectTo(room);
+      const c2 = await testServer.connectTo(room);
+      await nextTick();
+
+      const a = c1.sessionId;
+      const b = c2.sessionId;
+      startMainTurn(room, a, b, a);
+      // The state the log must replay FROM (before the intent's events).
+      const initialState = structuredClone(room.gameState);
+
+      c1.send('intent', {
+        v: 1,
+        type: 'intent',
+        payload: { type: 'intent.endTurn', playerId: a },
+      });
+      await nextTick();
+
+      // The batch was persisted as bare-GameEvent ndjson, one event per line.
+      const ndjson = await readFile(join(tempDir, room.roomId, 'events.ndjson'), 'utf8');
+      expect(ndjson.trimEnd().split('\n')).toHaveLength(1);
+
+      // Round-trip: parse the on-disk log and replay it from the pre-intent
+      // state — it reconstructs the room's exact post-intent gameState.
+      const events = parseGameEventLog(ndjson);
+      expect(events).toEqual([
+        { type: 'turn.ended', index: 0, playerId: a, nextPlayerId: b },
+      ]);
+      expect(replay(initialState, events)).toEqual(room.gameState);
+
+      // The durable log never leaks the seed (raw or hashed).
+      expect(ndjson).not.toMatch(HEX64);
+
+      await c1.leave();
+      await c2.leave();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('persist-before-commit: a rejecting sink → sender gets a private error, NO broadcast, state untouched, no crash (NIT-1)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    startMainTurn(room, a, b, a);
+
+    // Inject a sink that fails every write (a durable-FS error) — ASYNCHRONOUSLY
+    // (an `async` `append` that awaits nothing then rejects, so the pipeline's
+    // `await this.eventSink.append(...)` genuinely suspends before the
+    // rejection surfaces). A SYNCHRONOUSLY-throwing `append` would never
+    // exercise the real async-rejection path this guard exists for (a real
+    // `FsEventSink` failure is always an async rejection, e.g. a disk error
+    // surfacing from `appendFile`'s promise) — lead-review nit: this must
+    // prove the crash-safety guard for the case that actually occurs in
+    // production, not merely for a synchronous throw.
+    const throwingSink: GameEventSink = {
+      async append() {
+        throw new Error('disk write failed');
+      },
+    };
+    room.eventSink = throwingSink;
+    const before = structuredClone(room.gameState);
+
+    const errors: unknown[] = [];
+    const batches2: EventBatchMessage[] = [];
+    c1.onMessage('intent.error', (m: unknown) => errors.push(m));
+    c2.onMessage('event.batch', (m: EventBatchMessage) => batches2.push(m));
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    // Two ticks: the (voided, async) handler must fully settle. A regression
+    // that let the sink rejection escape would surface here as an unhandled
+    // rejection, which Vitest fails the run on.
+    await nextTick();
+    await nextTick();
+
+    // The sender got a private infrastructure error (NOT a validation reject)...
+    expect(errors).toHaveLength(1);
+    expect((errors[0] as { type?: string }).type).toBe('intent.error');
+    expect(JSON.stringify(errors[0])).not.toMatch(HEX64); // no seed in the reply
+    // ...no event.batch was broadcast (nothing was durably recorded)...
+    expect(batches2).toHaveLength(0);
+    // ...and the authoritative state was NOT advanced past the unpersisted event.
+    expect(room.gameState).toEqual(before);
+
+    await c1.leave();
+    await c2.leave();
+  });
+
+  it('concurrency: two intents in the same tick are SERIALIZED — the second validates against the COMMITTED state, not a stale one (lead-review TOCTOU fix)', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
+    const c1 = await testServer.connectTo(room);
+    const c2 = await testServer.connectTo(room);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    startMainTurn(room, a, b, a);
+    // `a` holds EXACTLY one bank-trade's worth of timber (base 4:1 rate, no
+    // ports owned) — enough for ONE `intent.bankTrade`, not two. A double-spend
+    // regression lets BOTH succeed; the fix lets only the first.
+    room.gameState = {
+      ...room.gameState,
+      players: [{ ...player(a), resources: { timber: 4 } }, player(b)],
+    };
+
+    // A sink whose `append` genuinely suspends across a macrotask (like real
+    // disk I/O) — this is the exact window a fire-and-forget handler would
+    // race inside: without serialization, a SECOND intent arriving while the
+    // first is still awaiting `append` would `validate` against `this.gameState`
+    // BEFORE the first intent's commit — i.e. against STALE state.
+    const delayedSink: GameEventSink = {
+      append: () => new Promise((resolve) => setTimeout(resolve, 30)),
+    };
+    room.eventSink = delayedSink;
+
+    const rejects: RejectMessage[] = [];
+    const batches: EventBatchMessage[] = [];
+    c1.onMessage('intent.rejected', (m: RejectMessage) => rejects.push(m));
+    c1.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+
+    const bankTradeIntent = {
+      v: 1,
+      type: 'intent' as const,
+      payload: {
+        type: 'intent.bankTrade' as const,
+        playerId: a,
+        give: 'timber',
+        count: 4,
+        get: 'clay',
+      },
+    };
+    // Fire the SAME intent TWICE back-to-back, with no `await` between the two
+    // `send`s — both land while the first's `#handleIntent` is (at best) still
+    // in flight, exercising the exact race the queue must close.
+    c1.send('intent', bankTradeIntent);
+    c1.send('intent', bankTradeIntent);
+
+    // Give the delayed sink (30ms) and the serialized queue time to fully
+    // drain BOTH intents before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // Exactly ONE trade was applied — a single `bank.trade` broadcast...
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.payload).toHaveLength(1);
+    expect(batches[0]?.payload[0]).toMatchObject({
+      type: 'bank.trade',
+      playerId: a,
+      give: 'timber',
+      count: 4,
+      get: 'clay',
+    });
+    // ...and the SECOND was rejected CANNOT_AFFORD — validated against the
+    // COMMITTED (post-first-trade, 0-timber) state, not the stale 4-timber one
+    // a race would have handed it.
+    expect(rejects).toHaveLength(1);
+    expect(rejects[0]?.payload.reason).toBe('CANNOT_AFFORD');
+    // The room ends with exactly 0 timber — spent ONCE, never double-spent (the
+    // fingerprint a race would leave is a SECOND `bank.trade` broadcast, which
+    // `batches` above already proves did not happen).
+    expect(room.gameState.players.find((p) => p.id === a)?.resources['timber']).toBe(0);
+
+    await c1.leave();
+    await c2.leave();
+  });
+});
+
+// --- NIT-2 string-pin (lead-review nit) -------------------------------------
+// `GameRoom`'s `isUnknownIntentError` string-matches the exact prefixes core's
+// `validate()` exhaustiveness guard throws. Pin those two literal messages
+// directly against the REAL exported `validate` here, independent of the room
+// pipeline, so a future core reword of either message breaks THIS test loudly
+// instead of silently flipping the room's MALFORMED_INTENT reply to
+// INTERNAL_ERROR for a case that is actually a legitimate unknown-intent-type
+// (not a real internal bug).
+describe('core validate() exhaustiveness-throw messages GameRoom string-matches (NIT-2 pin)', () => {
+  const minimalMainState = (playerId: string): GameState => ({
+    matchId: 'pin-match',
+    phase: 'main',
+    turn: 1,
+    currentPlayerId: playerId as PlayerId,
+    players: [player(playerId)],
+    playerOrder: [playerId as PlayerId],
+    eventIndex: 0,
+    seedHash: sha256Hex('pin-seed' as Seed),
+  });
+
+  it('an unrecognized top-level intent.type throws with the "unhandled intent type:" prefix', () => {
+    const playerId = 'p1';
+    const bogusIntent = {
+      type: 'intent.totallyUnknownForThisTest',
+      playerId,
+    } as unknown as PlayerIntent;
+
+    expect(() =>
+      validate(
+        minimalMainState(playerId),
+        bogusIntent,
+        playerId as PlayerId,
+        'pin-seed' as Seed,
+      ),
+    ).toThrowError(/^unhandled intent type: /);
+  });
+
+  it('an unrecognized playDevCard card kind throws with the "unhandled playDevCard card kind:" prefix', () => {
+    const playerId = 'p1';
+    // `validate`'s CARD_NOT_HELD/BOUGHT_THIS_TURN guards key off `intent.card`
+    // BEFORE the exhaustiveness switch, so the player must "hold" the bogus
+    // card kind (bought a prior turn) to actually reach that switch's default.
+    const state: GameState = {
+      ...minimalMainState(playerId),
+      devCards: {
+        [playerId]: {
+          held: { totallyUnknownCardKind: 1 },
+          boughtThisTurn: {},
+        },
+      } as unknown as NonNullable<GameState['devCards']>,
+    };
+    const bogusPlayIntent = {
+      type: 'intent.playDevCard',
+      playerId,
+      card: 'totallyUnknownCardKind',
+    } as unknown as PlayerIntent;
+
+    expect(() =>
+      validate(state, bogusPlayIntent, playerId as PlayerId, 'pin-seed' as Seed),
+    ).toThrowError(/^unhandled playDevCard card kind: /);
   });
 });
