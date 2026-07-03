@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { parseEventLog, replayLog } from './replay.js';
-import { rollDie } from './rng.js';
+import { gameplayStreamIndex, rollDie } from './rng.js';
 import type { GameState } from './types.js';
 
 const fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '__fixtures__');
@@ -56,9 +56,17 @@ describe('replayLog (golden fixture)', () => {
     expect(diceLines.length).toBeGreaterThan(0);
     for (const line of diceLines) {
       expect(typeof line.rngStreamIndex).toBe('number');
-      // Recomputable: anyone with the revealed seed can reproduce `result`
-      // from `seed` + `rngStreamIndex` alone — the whole point of §6.4.
-      expect(rollDie(GOLDEN_SEED, line.rngStreamIndex)).toBe(line.data.result);
+      // Recomputable: anyone with the revealed seed can reproduce both dice
+      // faces from `seed` + `rngStreamIndex` alone via the gameplay stream's
+      // slot map (slot 0 = die A, slot 1 = die B — `docs/wiki/rng-stream-map.md`
+      // §1) — the whole point of §6.4.
+      expect(rollDie(GOLDEN_SEED, gameplayStreamIndex(line.rngStreamIndex, 0))).toBe(
+        line.data.dieA,
+      );
+      expect(rollDie(GOLDEN_SEED, gameplayStreamIndex(line.rngStreamIndex, 1))).toBe(
+        line.data.dieB,
+      );
+      expect(line.data.dieA + line.data.dieB).toBe(line.data.total);
     }
   });
 

@@ -73,6 +73,38 @@ export function rollDie(seed: Seed, streamIndex: number): number {
 }
 
 /**
+ * Number of gameplay RNG stream slots reserved per event (S1.2.1 scheme,
+ * `docs/wiki/rng-stream-map.md` §1): `validate.ts` owns the actual per-event
+ * slot map (which slot means "die A", etc. — parallel to `boardgen.ts`
+ * owning `BOARD_GEN_STREAM`); this constant only fixes the stride `K`.
+ */
+export const GAMEPLAY_STREAM_SLOTS = 8;
+
+/** Where `BOARD_GEN_STREAM` starts reserving indices (`boardgen.ts`). Duplicated as a literal (not imported) to avoid a `rng.ts` -> `boardgen.ts` dependency cycle — `boardgen.ts` already imports `shuffle` from here. */
+const GAMEPLAY_STREAM_CEILING = 1_000_000;
+
+/**
+ * Derives the gameplay RNG stream index for one draw within event
+ * `eventIndex`: `eventIndex * GAMEPLAY_STREAM_SLOTS + slot`. Throws if the
+ * result would ever reach `boardgen.ts`'s reserved band — a headroom guard,
+ * not an expected rejection (unlike `validate`'s `RejectReason`s): with
+ * `GAMEPLAY_STREAM_SLOTS = 8` this can only trip at `eventIndex >= 125_000`,
+ * unreachable in any real Classic match (`docs/wiki/rng-stream-map.md` §1).
+ */
+export function gameplayStreamIndex(eventIndex: number, slot: number): number {
+  if (
+    eventIndex * GAMEPLAY_STREAM_SLOTS + GAMEPLAY_STREAM_SLOTS >
+    GAMEPLAY_STREAM_CEILING
+  ) {
+    throw new Error(
+      `gameplay RNG stream headroom exceeded at eventIndex=${eventIndex} — would collide ` +
+        'with the board-gen reserved band (docs/wiki/rng-stream-map.md)',
+    );
+  }
+  return eventIndex * GAMEPLAY_STREAM_SLOTS + slot;
+}
+
+/**
  * Deterministic Fisher-Yates shuffle of `items`, driven by `deriveValue`
  * draws starting at `streamIndex` (one stream slot consumed per swap, so
  * an `n`-item shuffle consumes slots `streamIndex .. streamIndex + n - 2`).

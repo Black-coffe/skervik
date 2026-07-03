@@ -13,18 +13,37 @@ independent producers currently derive `streamIndex` from different sources; thi
 doc is the single place that tracks both, so no future story accidentally makes
 them collide.
 
-## 1. Gameplay draws — `state.eventIndex`
+## 1. Gameplay draws — `eventIndex * K + slot` (S1.2.1)
 
-`validate.ts` draws gameplay randomness (currently just dice) at
-`rollDie(seed, state.eventIndex)` — the same counter that becomes the emitted
-event's `index`. This is a small, densely-packed range: `0, 1, 2, ...` counting
-every event ever applied in the match.
+`validate.ts` draws gameplay randomness at `rollDie(seed,
+gameplayStreamIndex(state.eventIndex, slot))` (`gameplayStreamIndex`, `rng.ts`) —
+**never** a bare `rollDie(seed, state.eventIndex)` anymore. `state.eventIndex`
+is the same counter that becomes the resolving event's `index`; `K = 8` fixed
+slots are reserved per event so an event needing several draws (e.g. the
+robber steal-pick, S1.3.1) never collides with itself or a later event.
+**This scheme is fixed as of S1.2.1 — never renumber a slot once shipped**; an
+auditor's post-match recomputation depends on the mapping staying stable.
 
-_(Future note, not yet implemented: the M1 plan (§3) anticipates events needing
-multiple draws — e.g. robber-steal victim pick — via
-`streamIndex = state.eventIndex * K + slot` with a documented per-event slot map.
-That scheme lands with S1.2.1+; until then `streamIndex === state.eventIndex`
-exactly, one draw per event.)_
+`gameplayStreamIndex(eventIndex, slot) = eventIndex * 8 + slot` (`rng.ts`,
+generic — knows only `K`). `validate.ts` owns the actual slot map (parallel to
+`boardgen.ts` owning `BOARD_GEN_STREAM`, §2 below):
+
+| Event | Slot | Draw |
+|---|---|---|
+| `dice.rolled` (roll production) | `0` | die A |
+| `dice.rolled` (roll production) | `1` | die B |
+| _reserved_ | `2`–`7` | later same-event draws (e.g. robber steal-pick, S1.3.1) |
+
+### Headroom guard
+
+`gameplayStreamIndex` throws rather than silently colliding with the
+board-gen reserved band (§2) if a draw would ever reach it: the guard is
+`eventIndex * K + K <= 1_000_000`, i.e. `eventIndex <= 124_999`. With `K = 8`
+this can only trip at `eventIndex >= 125_000` — unreachable in any real
+Classic match (a 60-minute session, plan §1, lands nowhere close to
+125,000 events). The bound is duplicated as a literal in `rng.ts` (not
+imported from `boardgen.ts`) to avoid a `rng.ts` -> `boardgen.ts` import
+cycle, since `boardgen.ts` already imports `shuffle` from `rng.ts`.
 
 ## 2. Board generation — reserved band (S1.1.2, `boardgen.ts`)
 
