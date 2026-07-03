@@ -39,5 +39,6 @@ export {
   CLASSIC_BANK_TRADE_PROFILE,
   CLASSIC_BUILD_PROFILE,
   CLASSIC_SETUP_PROFILE,
+  CLASSIC_VICTORY_PROFILE,
   validate,
 } from './validate.js';
