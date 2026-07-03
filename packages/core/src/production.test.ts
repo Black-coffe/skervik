@@ -73,7 +73,9 @@ function makeBuildings(): BuildingsState {
 function makeState(overrides: Partial<GameState> = {}): GameState {
   return {
     matchId: 'match-production-1',
-    phase: 'main',
+    // S1.2.4: rollDice is only legal from 'roll' (this story's mandatory
+    // turn-FSM first step) — was 'main' pre-S1.2.4.
+    phase: 'roll',
     turn: 1,
     currentPlayerId: 'player-1',
     players: makePlayers(['player-1', 'player-2', 'player-3']),
@@ -223,8 +225,9 @@ describe('resource production on roll (S1.2.1)', () => {
     if (!result.ok) throw new Error('expected ok result');
     const next = result.events.reduce(reduce, state);
 
-    // S1.2.4 formalizes a dedicated roll sub-phase; this story keeps the
-    // existing 'main' phase (roll + build + end-turn all happen inside it).
+    // S1.2.4 formalized the dedicated 'roll' phase (state starts there, see
+    // makeState) — `dice.rolled`'s own reduce case lands it on 'main' once
+    // resolved, ready for build/buy/play/endTurn.
     expect(next.phase).toBe('main');
     expect(next.eventIndex).toBe(state.eventIndex + 2); // dice.rolled + resources.produced
     expect(next.players.find((p) => p.id === 'player-1')?.resources).toEqual({
@@ -253,7 +256,7 @@ describe('resource production on roll (S1.2.1)', () => {
     expect(state).toEqual(before);
   });
 
-  it('rejects NOT_YOUR_TURN and INVALID_PHASE for rollDice like every other main-phase intent', () => {
+  it('rejects NOT_YOUR_TURN and INVALID_PHASE for rollDice like every other phase-guarded intent', () => {
     const state = makeState();
 
     const wrongTurn = validate(

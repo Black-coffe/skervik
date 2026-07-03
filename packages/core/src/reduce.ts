@@ -92,6 +92,12 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         phase: 'setup',
         turn: 1,
         players,
+        // The fixed seat order (S1.2.4) — `event.playerIds` IS the seating
+        // order `players` was just built from; storing it separately makes
+        // that order an explicit, standalone fact instead of something every
+        // caller re-derives from `players`' array order (`types.ts`'s
+        // `GameState.playerOrder` docstring).
+        playerOrder: event.playerIds,
         currentPlayerId: firstPlayer ? firstPlayer.id : state.currentPlayerId,
         eventIndex: event.index + 1,
       };
@@ -109,11 +115,16 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       };
     }
     case 'dice.rolled': {
-      // The roll itself only advances the event-stream index — production
-      // (if any) is a separate `resources.produced` event (S1.2.1), applied
-      // below, so a 7 (no production, robber deferred to S1.3.1) still
-      // advances state correctly from `dice.rolled` alone.
-      return { ...state, eventIndex: event.index + 1 };
+      // Landing the phase on 'main' happens here (S1.2.4), not on the
+      // paired `resources.produced` event: `dice.rolled` is the ONE event
+      // every roll always emits (7 included), so it's the natural,
+      // single place the turn FSM exits 'roll'. Production (if any) is a
+      // zero-duration pass-through — there's no persisted "produce" phase to
+      // sit in — applied below via a separate `resources.produced` event
+      // (S1.2.1) that leaves phase untouched (it's already 'main' by then).
+      // A 7 (no production, robber deferred to S1.3.1 — see the documented
+      // `'robber'` phase seam) still lands on 'main' the same way.
+      return { ...state, phase: 'main', eventIndex: event.index + 1 };
     }
     case 'resources.produced': {
       const players = state.players.map((player) => {
@@ -125,13 +136,25 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       return { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
     }
     case 'turn.ended': {
-      // Drop `devCardPlayedThisTurn` entirely (not set to `undefined`) —
+      // Consolidated per-turn-marker reset (S1.2.4, absorbing S1.2.3's
+      // interim version): the next player's turn starts in 'roll' — nobody
+      // has rolled yet, the FSM's own way of tracking that (`types.ts`'s
+      // `GamePhase` docstring) — with no dev card played, no dev-card
+      // purchase counting as "bought this turn" for ANY player (Classic's
+      // "can't play a card you bought this turn" rule is evaluated per
+      // player, per turn, not just for whoever's turn just ended), and no
+      // leftover setup-draft `pendingRoadVertexId` (defensive: the draft's
+      // own `road.placed` always clears it before a turn legitimately ends,
+      // but a turn should never persist a dangling one regardless). Drop
+      // both markers entirely rather than setting them `undefined` —
       // `exactOptionalPropertyTypes` treats those differently, and an
-      // absent key is the correct "no dev card played yet" representation
-      // (same convention as `road.placed`'s `pendingRoadVertexId` drop
-      // below). S1.2.3's minimal per-turn-marker reset; S1.2.4 formalizes
-      // the full architecture.
-      const { devCardPlayedThisTurn: _played, ...rest } = state;
+      // absent key is the correct "hasn't happened this turn" shape (same
+      // convention as `road.placed`'s own `pendingRoadVertexId` drop).
+      const {
+        devCardPlayedThisTurn: _played,
+        pendingRoadVertexId: _pending,
+        ...rest
+      } = state;
       const devCards = state.devCards
         ? (Object.fromEntries(
             Object.entries(state.devCards).map(([id, holdings]) => [
@@ -143,6 +166,7 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       return {
         ...rest,
         currentPlayerId: event.nextPlayerId,
+        phase: 'roll',
         turn: state.turn + 1,
         ...(devCards ? { devCards } : {}),
         eventIndex: event.index + 1,

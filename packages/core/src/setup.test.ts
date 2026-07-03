@@ -134,7 +134,9 @@ describe('setup phase: snake-draft placement', () => {
       const roadEvent = roadResult.events[0] as RoadPlacedEvent;
 
       const isLastTurn = step === draftPlayers.length - 1;
-      expect(roadEvent.nextPhase).toBe(isLastTurn ? 'main' : 'setup');
+      // S1.2.4: the draft's last road hands P1 the turn loop's mandatory
+      // first step ('roll'), not 'main' directly (was 'main' pre-S1.2.4).
+      expect(roadEvent.nextPhase).toBe(isLastTurn ? 'roll' : 'setup');
       expect(roadEvent.nextPlayerId).toBe(
         isLastTurn ? playerIds[0] : draftPlayers[step + 1],
       );
@@ -145,7 +147,8 @@ describe('setup phase: snake-draft placement', () => {
 
     expect(Object.keys(state.buildings?.settlements ?? {})).toHaveLength(8);
     expect(Object.keys(state.buildings?.roads ?? {})).toHaveLength(8);
-    expect(state.phase).toBe('main');
+    // S1.2.4: setup exits into the turn loop's 'roll' phase, not 'main'.
+    expect(state.phase).toBe('roll');
     expect(state.currentPlayerId).toBe(playerIds[0]);
     expect(state.pendingRoadVertexId).toBeUndefined();
 

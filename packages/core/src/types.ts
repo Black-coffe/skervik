@@ -22,8 +22,23 @@ export type PlayerId = string;
  */
 export type ResourceType = string;
 
-/** Coarse lifecycle stage of a match. M1 will refine/extend this set. */
-export type GamePhase = 'lobby' | 'setup' | 'main' | 'finished';
+/**
+ * A match's lifecycle stage, including the per-turn FSM `S1.2.4` formalizes
+ * on top of the original coarse `lobby`/`setup`/`main`/`finished` set. Once a
+ * match exits `setup` (the snake-draft placement, S1.1.3), every turn cycles
+ * `roll` -> `main`: `roll` is the turn's mandatory first step (only
+ * `intent.rollDice` is legal there); resource production (S1.2.1) is an
+ * automatic, zero-duration pass-through straight to `main` — there is no
+ * persisted "produce" state to sit in, `reduce.ts`'s `dice.rolled` case lands
+ * the phase on `main` directly, whether or not a paired `resources.produced`
+ * event follows. `main` covers everything else (build/buy/play/endTurn);
+ * `intent.endTurn` returns the NEXT player to `roll` (`reduce.ts`'s
+ * `turn.ended` case). `robber` is a **documented seam only** — no code path
+ * enters it yet; S1.3.1 owns wiring a rolled 7 (or a played knight) into it
+ * for discard/robber-relocation. Until then a 7 falls straight through to
+ * `main` like any other roll (`validate.ts`'s `rollDice` branch).
+ */
+export type GamePhase = 'lobby' | 'setup' | 'roll' | 'main' | 'robber' | 'finished';
 
 /**
  * Classic development-card kind (S1.2.3, `devcards.ts`). `victoryPoint` is
@@ -124,6 +139,22 @@ export interface GameState {
   readonly turn: number;
   readonly currentPlayerId: PlayerId;
   readonly players: ReadonlyArray<PlayerState>;
+  /**
+   * The fixed clockwise seating order (S1.2.4), set once by `match.started`
+   * from `MatchStartedEvent.playerIds` (`reduce.ts`) and never reordered
+   * afterward — unlike {@link GameState.currentPlayerId}, which rotates every
+   * `turn.ended`. Both the setup snake-draft's exit transition
+   * (`road.placed`'s `nextPlayerId`, S1.1.3) and the main loop's `endTurn`
+   * rotation read this ONE array (`validate.ts`'s `seatOrder` helper) instead
+   * of each re-deriving "next player" from {@link GameState.players}'
+   * incidental array order — the implicit coupling S1.1.3's review flagged.
+   * Absent before `match.started` lands, the same "fact of an event having
+   * landed" optionality as {@link GameState.board} — `seatOrder` falls back
+   * to `players`' own order for a state assembled without that event
+   * (pre-S1.2.4 test fixtures), a defensive fallback only: once
+   * `playerOrder` IS set, every rotation reads it exclusively.
+   */
+  readonly playerOrder?: ReadonlyArray<PlayerId>;
   /**
    * Count of events applied so far. Doubles as the PRNG stream index
    * (`docs/wiki/fair-rng-commit-reveal.md`): randomness is derived from
@@ -563,4 +594,8 @@ export type RejectReason =
   | 'BOUGHT_THIS_TURN'
   | 'DEV_CARD_ALREADY_PLAYED'
   | 'KNIGHT_DEFERRED'
-  | 'BANK_EXHAUSTED';
+  | 'BANK_EXHAUSTED'
+  /** rollDice attempted from `main` — this turn already rolled (S1.2.4). */
+  | 'ALREADY_ROLLED'
+  /** A post-roll intent (build/buy/play/endTurn) attempted from `roll` — this turn hasn't rolled yet (S1.2.4). */
+  | 'MUST_ROLL_FIRST';

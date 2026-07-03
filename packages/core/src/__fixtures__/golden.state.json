@@ -1,8 +1,9 @@
 {
   "matchId": "golden-match-1",
-  "phase": "setup",
+  "phase": "roll",
   "turn": 3,
   "currentPlayerId": "player-1",
+  "playerOrder": ["player-1", "player-2"],
   "players": [
     {
       "id": "player-1",
