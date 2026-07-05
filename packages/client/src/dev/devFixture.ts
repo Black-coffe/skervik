@@ -9,6 +9,7 @@ import type {
   CityBuiltEvent,
   GameState,
   MatchStartedEvent,
+  ResourcesProducedEvent,
   RoadPlacedEvent,
   SettlementPlacedEvent,
   VertexTopology,
@@ -138,6 +139,24 @@ draftPlayers.forEach((playerId, step) => {
 // real `CityBuiltEvent`, same shape `build.test.ts` asserts, cost taken
 // verbatim from the real `CLASSIC_BUILD_PROFILE`) and applied through the
 // real `reduce()` — every other piece above went through full `validate`.
+//
+// S1.6.2 nit-2 fix (S1.6.3): the setup-draft payouts above don't guarantee
+// player-1 already holds `iron:3, barley:2` — subtracting the city cost
+// without prior income could leave NEGATIVE resources, and this HUD story
+// renders those resources as pills. So a `resources.produced` income event
+// grants player-1 EXACTLY the city's cost first (through the real
+// `reduce()`, same as every other event here) — netting player-1's
+// iron/barley back to their pre-income values (unchanged, and non-negative,
+// since every prior event only ever added resources) while still proving
+// the city build's debit path for real.
+const cityIncome: ResourcesProducedEvent = {
+  type: 'resources.produced',
+  index: state.eventIndex,
+  grants: { [DEV_PLAYER_IDS[0]]: CLASSIC_BUILD_PROFILE.costs.city },
+  bank: {},
+};
+state = reduce(state, cityIncome);
+
 const cityVertexId = (draftVertices[0] as VertexTopology).id; // player-1's first (setup-phase) settlement
 const cityBuilt: CityBuiltEvent = {
   type: 'city.built',
@@ -151,7 +170,9 @@ state = reduce(state, cityBuilt);
 /**
  * The dev-harness `GameState`: `match.started` + `board.generated` +
  * 8 setup-phase `settlement.placed`/`road.placed` events (all 4 flotillas,
- * via real `validate` -> `reduce`) + 1 direct `city.built` event, all
- * applied through the real core `reduce()` — never hand-mutated state.
+ * via real `validate` -> `reduce`) + 1 `resources.produced` income event +
+ * 1 direct `city.built` event, all applied through the real core `reduce()`
+ * — never hand-mutated state. No player ends up with a negative resource
+ * count (S1.6.2 nit-2, fixed in S1.6.3 — see the `cityIncome` comment above).
  */
 export const devFixtureState: GameState = state;
