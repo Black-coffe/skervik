@@ -1,0 +1,43 @@
+/* LocaleSwitcher — DESIGN.md §11 component. Endonym labels are the ONLY
+   non-`t()` UI text in the app (proper nouns, not translatable). */
+
+.locale-switcher {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.locale-switcher__option {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.locale-switcher__option:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.locale-switcher__option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.locale-switcher__option:active {
+  background: var(--surface-2);
+}
+
+.locale-switcher__option[data-active='true'] {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
