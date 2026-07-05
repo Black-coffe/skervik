@@ -45,4 +45,10 @@ export const en: Messages = {
   'hud.flotilla.orca': 'Orca Flotilla',
   'hud.flotilla.walrus': 'Walrus Flotilla',
   'hud.flotilla.narwhal': 'Narwhal Flotilla',
+  'resource.timber': 'Timber',
+  'resource.clay': 'Clay',
+  'resource.fleece': 'Fleece',
+  'resource.barley': 'Barley',
+  'resource.iron': 'Iron',
+  'a11y.resourceCount': '{resource}: {count}',
 };

@@ -52,4 +52,10 @@ export const uk: Messages = {
   'hud.flotilla.orca': 'Флотилія Косатки',
   'hud.flotilla.walrus': 'Флотилія Моржа',
   'hud.flotilla.narwhal': 'Флотилія Нарвала',
+  'resource.timber': 'Ліс',
+  'resource.clay': 'Глина',
+  'resource.fleece': 'Руно',
+  'resource.barley': 'Ячмінь',
+  'resource.iron': 'Залізо',
+  'a11y.resourceCount': '{resource}: {count}',
 };

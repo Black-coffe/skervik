@@ -43,6 +43,12 @@ export const TRANSLATION_KEYS = [
   'hud.flotilla.orca',
   'hud.flotilla.walrus',
   'hud.flotilla.narwhal',
+  'resource.timber',
+  'resource.clay',
+  'resource.fleece',
+  'resource.barley',
+  'resource.iron',
+  'a11y.resourceCount',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

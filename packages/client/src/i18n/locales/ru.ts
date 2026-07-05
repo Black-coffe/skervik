@@ -53,4 +53,10 @@ export const ru: Messages = {
   'hud.flotilla.orca': 'Флотилия Косатки',
   'hud.flotilla.walrus': 'Флотилия Моржа',
   'hud.flotilla.narwhal': 'Флотилия Нарвала',
+  'resource.timber': 'Лес',
+  'resource.clay': 'Глина',
+  'resource.fleece': 'Руно',
+  'resource.barley': 'Ячмень',
+  'resource.iron': 'Железо',
+  'a11y.resourceCount': '{resource}: {count}',
 };

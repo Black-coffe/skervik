@@ -8,15 +8,16 @@ import './BottomDeck.css';
 import { useTranslation } from '../i18n/index.js';
 import { Button } from './components/Button.js';
 import { Pill } from './components/Pill.js';
+import { ResourceGlyph } from './resourceGlyphs.js';
+import { RESOURCE_KEY } from './resourceLabels.js';
 import { useUiStore } from './store.js';
 
-// Resource swatch colors mirror `theme/tokens.css` §2.3 — a small local
-// mirror (DOM can't read CSS custom properties as inline `background`
-// shorthand without `var()`, which IS supported here; kept explicit per
-// resource so the pill icon is a stable, resource-specific color+swatch,
-// never hue-only alone since the resource NAME (icon label) still
-// accompanies every pill as visible text).
-const RESOURCE_SWATCH: Readonly<Record<string, string>> = {
+// Resource colors mirror `theme/tokens.css` §2.3 — used ONLY to tint each
+// resource's distinct `ResourceGlyph` SILHOUETTE (never a bare color swatch
+// on its own): DESIGN.md §2.3 "resources are NEVER hue-only" requires a
+// unique icon shape per resource, which `ResourceGlyph` supplies; color here
+// is the reinforcing second cue, not the sole one.
+const RESOURCE_COLOR: Readonly<Record<string, string>> = {
   timber: 'var(--res-timber)',
   clay: 'var(--res-clay)',
   fleece: 'var(--res-fleece)',
@@ -48,12 +49,15 @@ export function BottomDeck() {
               key={resource}
               variant="resource"
               icon={
-                <span
-                  style={{ background: RESOURCE_SWATCH[resource] }}
-                  className="bottom-deck__swatch"
+                <ResourceGlyph
+                  resource={resource}
+                  color={RESOURCE_COLOR[resource] ?? 'var(--muted)'}
                 />
               }
-              aria-label={t('hud.resourceCards', { count: resources[resource] ?? 0 })}
+              aria-label={t('a11y.resourceCount', {
+                resource: t(RESOURCE_KEY[resource]),
+                count: resources[resource] ?? 0,
+              })}
             >
               {formatNumber(resources[resource] ?? 0)}
             </Pill>

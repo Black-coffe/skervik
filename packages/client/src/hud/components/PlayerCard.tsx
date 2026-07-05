@@ -50,7 +50,16 @@ export function PlayerCard({
       data-flotilla={flotillaId}
     >
       <div className="player-card__header">
-        <FlotillaEmblem flotillaId={flotillaId} color={colorCss} />
+        <span
+          className={[
+            'player-card__emblem-wrap',
+            isCurrentPlayer ? 'player-card__emblem-wrap--current' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <FlotillaEmblem flotillaId={flotillaId} color={colorCss} />
+        </span>
         <span className="player-card__name">{flotillaLabel}</span>
         <Pill variant="count" aria-label={`${renownLabel}: ${renownValue}`}>
           {renownValue}
