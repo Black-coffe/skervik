@@ -1,13 +1,16 @@
-import { buildTopology } from '@skervik/core';
+import { buildTopology, findTile } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
 import {
   axialToPixel,
+  edgeToPixel,
   EXTRUDE_DEPTH,
   HEX_SIZE,
   hexCorners,
   parseTileId,
+  parseVertexId,
   tokenPipCount,
+  vertexToPixel,
   Y_SCALE,
 } from './hexGeometry.js';
 
@@ -44,6 +47,76 @@ describe('hexGeometry', () => {
     for (const corner of corners) {
       // y is flattened by Y_SCALE, x is not — distance check against x only.
       expect(Math.abs(corner.x)).toBeLessThanOrEqual(HEX_SIZE + 1e-9);
+    }
+  });
+
+  it('parseVertexId splits a VertexId into its 3 defining AxialCoords', () => {
+    expect(parseVertexId('0,0|1,0|1,-1')).toEqual([
+      { q: 0, r: 0 },
+      { q: 1, r: 0 },
+      { q: 1, r: -1 },
+    ]);
+  });
+
+  it('parseVertexId throws on a malformed id', () => {
+    expect(() => parseVertexId('0,0|1,0')).toThrow(/Malformed VertexId/);
+  });
+
+  it('vertexToPixel maps all 54 real board vertices to 54 distinct pixel positions', () => {
+    const topology = buildTopology();
+    expect(topology.vertices).toHaveLength(54);
+    const points = topology.vertices.map((v) => vertexToPixel(v.id));
+    const keys = new Set(points.map((p) => `${p.x.toFixed(6)},${p.y.toFixed(6)}`));
+    expect(keys.size).toBe(54);
+  });
+
+  it('vertexToPixel: an interior vertex sits at pre-flatten distance HEX_SIZE from each of its 3 adjacent tile centers', () => {
+    const topology = buildTopology();
+    const interior = topology.vertices.find((v) => v.adjacentTileIds.length === 3);
+    expect(interior).toBeDefined();
+    if (!interior) throw new Error('expected an interior vertex');
+
+    const point = vertexToPixel(interior.id);
+    for (const tileId of interior.adjacentTileIds) {
+      const tile = findTile(topology, tileId);
+      expect(tile).toBeDefined();
+      if (!tile) throw new Error('expected tile');
+      const center = axialToPixel(tile.coord);
+      const dx = point.x - center.x;
+      // Undo the y-flatten before measuring distance — pre-flatten, every
+      // vertex sits exactly HEX_SIZE (the circumradius) from each of its
+      // on-board tile centers.
+      const dy = (point.y - center.y) / Y_SCALE;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      expect(distance).toBeCloseTo(HEX_SIZE, 5);
+    }
+  });
+
+  it("edgeToPixel: mid is the mean of a/b, and a/b are the edge vertices' own pixels", () => {
+    const topology = buildTopology();
+    const edge = topology.edges[0];
+    expect(edge).toBeDefined();
+    if (!edge) throw new Error('expected an edge');
+
+    const geometry = edgeToPixel(edge.id, topology);
+    expect(geometry.a).toEqual(vertexToPixel(edge.vertexIds[0]));
+    expect(geometry.b).toEqual(vertexToPixel(edge.vertexIds[1]));
+    expect(geometry.mid.x).toBeCloseTo((geometry.a.x + geometry.b.x) / 2, 9);
+    expect(geometry.mid.y).toBeCloseTo((geometry.a.y + geometry.b.y) / 2, 9);
+  });
+
+  it('edgeToPixel throws on an unknown EdgeId', () => {
+    const topology = buildTopology();
+    expect(() => edgeToPixel('nope::nope', topology)).toThrow(/Unknown EdgeId/);
+  });
+
+  it("a road's endpoints match its edge's two vertex pixels, for every real board edge", () => {
+    const topology = buildTopology();
+    expect(topology.edges).toHaveLength(72);
+    for (const edge of topology.edges) {
+      const geometry = edgeToPixel(edge.id, topology);
+      expect(geometry.a).toEqual(vertexToPixel(edge.vertexIds[0]));
+      expect(geometry.b).toEqual(vertexToPixel(edge.vertexIds[1]));
     }
   });
 

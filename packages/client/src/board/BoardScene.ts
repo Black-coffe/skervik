@@ -9,8 +9,15 @@
 import { Application, Color, Container, FillGradient, Graphics, Text } from 'pixi.js';
 
 import { CANVAS_COLORS } from '../theme/canvasColors.js';
+import type { FlotillaId } from '../theme/flotillaColors.js';
 import type { TileDescriptor } from './boardModel.js';
 import { EXTRUDE_DEPTH, HEX_SIZE, hexCorners, type Point } from './hexGeometry.js';
+import type {
+  BuildingDescriptors,
+  PieceDescriptor,
+  PortDescriptor,
+  RoadDescriptor,
+} from './pieceModel.js';
 
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 2.5;
@@ -196,6 +203,196 @@ function buildTileTopper(descriptor: TileDescriptor): Container | null {
   return container;
 }
 
+/**
+ * The per-flotilla non-color cue (DESIGN.md §2.2 a11y invariant: "color
+ * NEVER without the flotilla emblem glyph"). 4 mutually-distinguishable
+ * badge silhouettes — circle/triangle/square/diamond — stamped on every
+ * piece (settlement, city, road) regardless of its flotilla color, so all 4
+ * flotillas read apart under deutan/protan color vision. Full engraved
+ * emblem art (DESIGN.md §5) can replace these later; a color-only piece must
+ * never merge (S1.6.2 spec).
+ */
+function drawFlotillaBadge(g: Graphics, flotillaId: FlotillaId, radius: number): void {
+  const badgeColor = CANVAS_COLORS.ink;
+  switch (flotillaId) {
+    case 'petrel':
+      g.circle(0, 0, radius).fill(badgeColor);
+      break;
+    case 'orca':
+      g.poly([0, -radius, radius, radius, -radius, radius]).fill(badgeColor);
+      break;
+    case 'walrus':
+      g.rect(-radius, -radius, radius * 2, radius * 2).fill(badgeColor);
+      break;
+    case 'narwhal':
+      g.poly([0, -radius, radius, 0, 0, radius, -radius, 0]).fill(badgeColor);
+      break;
+  }
+}
+
+/** A settlement: a small hut silhouette (pentagon: square base + peaked roof) — deliberately smaller and shape-distinct from a city (DESIGN.md a11y: shape, not just size). */
+function buildSettlementPiece(descriptor: PieceDescriptor): Container {
+  const container = new Container();
+  container.position.set(descriptor.position.x, descriptor.position.y);
+
+  const halfBase = HEX_SIZE * 0.16;
+  const roofTop = HEX_SIZE * 0.16;
+  const baseBottom = HEX_SIZE * 0.06;
+
+  const hut = new Graphics();
+  hut
+    .poly([
+      -halfBase,
+      baseBottom,
+      halfBase,
+      baseBottom,
+      halfBase,
+      0,
+      0,
+      -roofTop,
+      -halfBase,
+      0,
+    ])
+    .fill(descriptor.color)
+    .stroke({ width: 1.5, color: CANVAS_COLORS.ink });
+  container.addChild(hut);
+
+  const badge = new Graphics();
+  drawFlotillaBadge(badge, descriptor.flotillaId, HEX_SIZE * 0.05);
+  badge.position.set(0, -HEX_SIZE * 0.03);
+  container.addChild(badge);
+
+  return container;
+}
+
+/** A city: a taller, wider "keep" silhouette (base block + narrower tower) — clearly bigger AND a different shape from the settlement hut, never distinguished by size alone. */
+function buildCityPiece(descriptor: PieceDescriptor): Container {
+  const container = new Container();
+  container.position.set(descriptor.position.x, descriptor.position.y);
+
+  const halfBase = HEX_SIZE * 0.24;
+  const baseBottom = HEX_SIZE * 0.08;
+  const midY = -HEX_SIZE * 0.02;
+  const halfTower = HEX_SIZE * 0.13;
+  const topY = -HEX_SIZE * 0.28;
+
+  const city = new Graphics();
+  city
+    .poly([
+      -halfBase,
+      baseBottom,
+      halfBase,
+      baseBottom,
+      halfBase,
+      midY,
+      halfTower,
+      midY,
+      halfTower,
+      topY,
+      -halfTower,
+      topY,
+      -halfTower,
+      midY,
+      -halfBase,
+      midY,
+    ])
+    .fill(descriptor.color)
+    .stroke({ width: 1.5, color: CANVAS_COLORS.ink });
+  container.addChild(city);
+
+  const badge = new Graphics();
+  drawFlotillaBadge(badge, descriptor.flotillaId, HEX_SIZE * 0.06);
+  badge.position.set(0, topY + HEX_SIZE * 0.09);
+  container.addChild(badge);
+
+  return container;
+}
+
+/** A road: a flotilla-colored bar centered on the edge, oriented by its angle and inset so it reads as sitting between (not overlapping) the 2 vertex pieces. */
+function buildRoadPiece(descriptor: RoadDescriptor): Container {
+  const container = new Container();
+  container.position.set(descriptor.mid.x, descriptor.mid.y);
+  container.rotation = descriptor.angle;
+
+  const dx = descriptor.b.x - descriptor.a.x;
+  const dy = descriptor.b.y - descriptor.a.y;
+  const fullLength = Math.sqrt(dx * dx + dy * dy);
+  const length = fullLength * 0.6;
+  const width = HEX_SIZE * 0.12;
+
+  const bar = new Graphics();
+  bar
+    .roundRect(-length / 2, -width / 2, length, width, width / 2)
+    .fill(descriptor.color)
+    .stroke({ width: 1, color: CANVAS_COLORS.ink });
+  container.addChild(bar);
+
+  // Counter-rotate the badge so it stays upright regardless of the road's angle.
+  const badgeHolder = new Container();
+  badgeHolder.rotation = -descriptor.angle;
+  const badge = new Graphics();
+  drawFlotillaBadge(badge, descriptor.flotillaId, HEX_SIZE * 0.045);
+  badgeHolder.addChild(badge);
+  container.addChild(badgeHolder);
+
+  return container;
+}
+
+/**
+ * A port marker: a disc showing the rate as locale-independent digits
+ * (`"3:1"`/`"2:1"`), sitting just beyond its coastal edge. For a 2:1
+ * resource port, the disc carries the SAME §2.3 resource color + stroke
+ * pattern as the matching tile kind (no new icon art, per spec) — ports
+ * carry no flotilla color, they belong to no player.
+ */
+function buildPortMarker(descriptor: PortDescriptor): Container {
+  const container = new Container();
+  container.position.set(descriptor.markerPosition.x, descriptor.markerPosition.y);
+
+  const radius = HEX_SIZE * 0.22;
+
+  if (descriptor.resourceColor !== null && descriptor.patternKind !== null) {
+    const patch = new Graphics();
+    patch.circle(0, 0, radius).fill(descriptor.resourceColor);
+    container.addChild(patch);
+
+    const pattern = new Graphics();
+    drawPattern(pattern, descriptor.patternKind, descriptor.resourceColor);
+    const mask = new Graphics().circle(0, 0, radius).fill(0xffffff);
+    pattern.mask = mask;
+    container.addChild(mask);
+    container.addChild(pattern);
+
+    const ring = new Graphics();
+    ring.circle(0, 0, radius).stroke({ width: 1.5, color: CANVAS_COLORS.ink });
+    container.addChild(ring);
+  } else {
+    const disc = new Graphics();
+    disc
+      .circle(0, 0, radius)
+      .fill(CANVAS_COLORS.chartPaper)
+      .stroke({ width: 1.5, color: CANVAS_COLORS.chartPaperInk });
+    container.addChild(disc);
+  }
+
+  const labelColor =
+    descriptor.resourceColor !== null ? CANVAS_COLORS.ink : CANVAS_COLORS.chartPaperInk;
+  const label = new Text({
+    text: descriptor.rateLabel,
+    style: {
+      fontFamily: 'monospace',
+      fontSize: 24,
+      fontWeight: 'bold',
+      fill: labelColor,
+    },
+  });
+  label.anchor.set(0.5);
+  label.scale.set(0.5);
+  container.addChild(label);
+
+  return container;
+}
+
 function buildSea(): Graphics {
   const gradient = new FillGradient({
     type: 'radial',
@@ -230,6 +427,8 @@ function prefersReducedMotion(): boolean {
 export async function createBoardScene(
   mountEl: HTMLElement,
   descriptors: readonly TileDescriptor[],
+  buildings: BuildingDescriptors,
+  ports: readonly PortDescriptor[],
 ): Promise<BoardSceneHandle> {
   const app = new Application();
   await app.init({
@@ -270,6 +469,19 @@ export async function createBoardScene(
 
   // Toppers layer drawn ABOVE the mist so tokens/robber stay crisp.
   world.addChild(toppersLayer);
+
+  // Pieces (settlements/cities/roads) + ports: game-critical information,
+  // so — same discipline as the toppers layer — they're built once here and
+  // mounted ABOVE the mist, never rebuilt per frame (S1.6.2).
+  const piecesLayer = new Container();
+  for (const road of buildings.roads) piecesLayer.addChild(buildRoadPiece(road));
+  for (const piece of buildings.pieces) {
+    piecesLayer.addChild(
+      piece.kind === 'city' ? buildCityPiece(piece) : buildSettlementPiece(piece),
+    );
+  }
+  for (const port of ports) piecesLayer.addChild(buildPortMarker(port));
+  world.addChild(piecesLayer);
 
   const reducedMotionQuery =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
