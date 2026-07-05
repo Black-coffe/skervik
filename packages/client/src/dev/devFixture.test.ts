@@ -27,4 +27,15 @@ describe('devFixtureState', () => {
     expect(Object.keys(cities)).toHaveLength(1);
     expect(Object.values(cities)).toEqual(['player-1']);
   });
+
+  // S1.6.2 nit-2 regression (fixed in S1.6.3): the city build debits
+  // iron:3/barley:2 — without prior income that could leave a negative
+  // hand, which the HUD would then render as negative resource pills.
+  it('never leaves any player with a negative resource count', () => {
+    for (const player of devFixtureState.players) {
+      for (const count of Object.values(player.resources)) {
+        expect(count).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
 });

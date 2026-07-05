@@ -49,9 +49,6 @@ export function GameTable({ state }: GameTableProps) {
   }, [state.board, state.buildings, state.playerOrder, state.players]);
 
   return (
-    <div
-      ref={hostRef}
-      style={{ position: 'relative', width: '100vw', height: '100vh' }}
-    />
+    <div ref={hostRef} style={{ position: 'relative', width: '100%', height: '100%' }} />
   );
 }
