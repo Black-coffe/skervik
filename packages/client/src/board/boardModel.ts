@@ -34,13 +34,14 @@ const PATTERN_BY_KIND: Readonly<Record<TileKind, PatternKind>> = {
   desert: 'desert',
 };
 
-function fillColorForKind(kind: TileKind): number {
+/** §2.3 fill color for a `TileKind` — exported so the S1.6.2 port model reuses the exact same resource-color decision (no duplicate palette). */
+export function fillColorForKind(kind: TileKind): number {
   if (kind === 'desert') return DESERT_COLOR;
   return RESOURCE_COLORS[kind] ?? CANVAS_COLORS.chartPaper;
 }
 
-/** `PatternKind` for a `TileKind`, falling back to `'desert'` (no pattern) for any kind outside the known Classic resource set. */
-function patternKindForKind(kind: TileKind): PatternKind {
+/** `PatternKind` for a `TileKind`, falling back to `'desert'` (no pattern) for any kind outside the known Classic resource set. Exported for reuse by the S1.6.2 port model (a 2:1 port's resource cue is this SAME stroke pattern, not new icon art). */
+export function patternKindForKind(kind: TileKind): PatternKind {
   return PATTERN_BY_KIND[kind] ?? 'desert';
 }
 

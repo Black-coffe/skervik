@@ -1,7 +1,8 @@
 // React shell for "The Chart" (DESIGN.md §1) — mounts the Pixi board scene
 // for a given `GameState`, owning its lifecycle (create on mount, destroy
-// on unmount). No settlements/roads/ports yet (S1.6.2); tile field + tokens
-// + robber + sea + pan/zoom + ambient mist only (S1.6.1 scope).
+// on unmount). Tile field + tokens + robber + sea + pan/zoom + ambient mist
+// (S1.6.1) plus settlements/cities/roads/ports (S1.6.2) — all static render,
+// no interactivity (that's the play-loop stories).
 
 import type { GameState } from '@skervik/core';
 import { buildTopology } from '@skervik/core';
@@ -9,6 +10,7 @@ import { useEffect, useRef } from 'react';
 
 import { buildTileDescriptors } from './boardModel.js';
 import { createBoardScene } from './BoardScene.js';
+import { buildBuildingDescriptors, buildPortDescriptors } from './pieceModel.js';
 
 // Board geometry never changes — computed once, cached module-level
 // (per S1.6.1 spec: "call once, cache").
@@ -29,7 +31,10 @@ export function GameTable({ state }: GameTableProps) {
     let destroyScene: (() => void) | undefined;
 
     const descriptors = buildTileDescriptors(TOPOLOGY, state.board);
-    void createBoardScene(host, descriptors).then((scene) => {
+    const seatOrder = state.playerOrder ?? state.players.map((p) => p.id);
+    const buildings = buildBuildingDescriptors(TOPOLOGY, state.buildings, seatOrder);
+    const ports = buildPortDescriptors(TOPOLOGY, state.board);
+    void createBoardScene(host, descriptors, buildings, ports).then((scene) => {
       if (cancelled) {
         scene.destroy();
         return;
@@ -41,7 +46,7 @@ export function GameTable({ state }: GameTableProps) {
       cancelled = true;
       destroyScene?.();
     };
-  }, [state.board]);
+  }, [state.board, state.buildings, state.playerOrder, state.players]);
 
   return (
     <div
