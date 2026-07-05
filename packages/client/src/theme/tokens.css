@@ -33,6 +33,7 @@
   --res-fleece: oklch(0.86 0.02 90);
   --res-barley: oklch(0.74 0.11 95);
   --res-iron: oklch(0.58 0.02 255);
+  --res-desert: oklch(0.66 0.03 70);
 
   /* §4 Z-scale */
   --z-board: 0;

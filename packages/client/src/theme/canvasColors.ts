@@ -23,21 +23,20 @@ export const CANVAS_COLORS = {
   hotNumber: 0xc53637,
 } as const;
 
-/** §2.3 Resource colors — data palette, keyed by `TileKind` ('desert' has no fill token of its own; the board layer draws it distinctly). */
-export const RESOURCE_COLORS: Readonly<Record<Exclude<TileKind, 'desert'>, number>> = {
+/** §2.3 Resource colors — data palette, keyed by `TileKind` (now includes a dedicated `desert` entry, DESIGN.md §2.3 2026-07-05 update). */
+export const RESOURCE_COLORS: Readonly<Record<TileKind, number>> = {
   timber: 0x428252,
   clay: 0xb16246,
   fleece: 0xd6d1c3,
   barley: 0xc0aa54,
   iron: 0x737b86,
+  desert: 0x9e8f7f,
 };
 
 /**
- * Desert has no dedicated token in DESIGN.md §2.3 (only the 5 resources are
- * listed there) — rather than invent an un-locked hex, the desert tile
- * reuses the existing `--chart-paper` token verbatim: it already reads as
- * arid/sandy parchment and is visually distinct from every §2.3 resource
- * fill. Canvas-only use, so it does not violate the "never a DOM panel bg"
- * restriction on that token.
+ * Desert (the misty sandbank) — dedicated `--res-desert` token, DESIGN.md
+ * §2.3: a barren grey-dun, ~0.20 darker than `--res-fleece`/`--chart-paper`
+ * so a desert tile never reads as a pale-cream resource or a chart-paper
+ * number disc (added 2026-07-05, S1.6.1 follow-up nit).
  */
-export const DESERT_COLOR = CANVAS_COLORS.chartPaper;
+export const DESERT_COLOR = 0x9e8f7f;
