@@ -7,11 +7,13 @@
 import './GameScreen.css';
 
 import { GameTable } from '../board/GameTable.js';
+import { TradeDemoControls } from '../dev/TradeDemoControls.js';
 import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
 import { PlayersRail } from './PlayersRail.js';
 import { useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
+import { TradeZone } from './TradeZone.js';
 
 export function GameScreen() {
   const gameState = useUiStore((state) => state.gameState);
@@ -26,6 +28,7 @@ export function GameScreen() {
       </div>
       <div className="game-screen__chart">
         <GameTable state={gameState} />
+        <TradeZone />
       </div>
       <div className="game-screen__log">
         <LogPanel />
@@ -33,6 +36,7 @@ export function GameScreen() {
       <div className="game-screen__deck">
         <BottomDeck />
       </div>
+      {import.meta.env.DEV ? <TradeDemoControls /> : null}
     </div>
   );
 }
