@@ -1,0 +1,44 @@
+/* Skervik design tokens — DESIGN.md §2 "Color tokens", copied verbatim.
+   Dark, environmental theme is the native and only M1 theme (§2). The
+   Pixi canvas layer consumes the frozen sRGB hex equivalents instead — see
+   `canvasColors.ts` — the two files MUST stay in sync (generated, not
+   hand-picked; DESIGN.md §2 note). */
+
+:root {
+  /* §2.1 Environment & instruments */
+  --bg-abyss: oklch(0.15 0.02 235);
+  --surface: oklch(0.2 0.02 235);
+  --surface-2: oklch(0.24 0.02 230);
+  --line: oklch(0.32 0.02 235);
+  --ink: oklch(0.93 0.005 235);
+  --muted: oklch(0.7 0.015 235);
+  --primary: oklch(0.8 0.14 75);
+  --on-primary: oklch(0.18 0.02 235);
+  --accent: oklch(0.72 0.09 200);
+  --danger: oklch(0.62 0.19 25);
+  --success: oklch(0.7 0.12 150);
+  --chart-paper: oklch(0.88 0.03 85);
+  --chart-paper-ink: oklch(0.3 0.03 60);
+  --hot-number: oklch(0.55 0.18 25);
+
+  /* §2.2 Flotilla (player) colors */
+  --fl-petrel: oklch(0.6 0.13 255);
+  --fl-orca: oklch(0.95 0 0);
+  --fl-walrus: oklch(0.6 0.14 45);
+  --fl-narwhal: oklch(0.78 0.1 190);
+
+  /* §2.3 Resource colors */
+  --res-timber: oklch(0.55 0.1 150);
+  --res-clay: oklch(0.58 0.11 40);
+  --res-fleece: oklch(0.86 0.02 90);
+  --res-barley: oklch(0.74 0.11 95);
+  --res-iron: oklch(0.58 0.02 255);
+
+  /* §4 Z-scale */
+  --z-board: 0;
+  --z-hud: 10;
+  --z-trade: 20;
+  --z-dialog: 30;
+  --z-toast: 40;
+  --z-tooltip: 50;
+}

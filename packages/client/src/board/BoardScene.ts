@@ -1,0 +1,331 @@
+// Pixi.js v8 scene: paints the board's `TileDescriptor[]` (from
+// `boardModel.ts`) once into a Container, plus a sea backdrop and an
+// ambient mist overlay. Ported feel from the E0.4 perf prototype
+// (`src/proto/`, now deleted): y-flattened extrusion, per-kind stroke
+// patterns, drag-pan + wheel-zoom, mist alpha pulse — but repainted with
+// DESIGN.md §2 tokens and driven by real `TileDescriptor`s instead of
+// ad-hoc proto data (DESIGN.md §12).
+
+import { Application, Color, Container, FillGradient, Graphics, Text } from 'pixi.js';
+
+import { CANVAS_COLORS } from '../theme/canvasColors.js';
+import type { TileDescriptor } from './boardModel.js';
+import { EXTRUDE_DEPTH, HEX_SIZE, hexCorners, type Point } from './hexGeometry.js';
+
+const MIN_ZOOM = 0.35;
+const MAX_ZOOM = 2.5;
+/** Ambient mist pulse period, ms — DESIGN.md §9 requires "slow" (>= 4s period). */
+const MIST_PULSE_PERIOD_MS = 6000;
+const MIST_MIN_ALPHA = 0.08;
+const MIST_MAX_ALPHA = 0.22;
+/** Shrink applied to each tile's own outline so neighbours leave a visible gap. */
+const GAP_SCALE = 0.92;
+const CORNERS = hexCorners(HEX_SIZE * GAP_SCALE);
+/** Sea backdrop radius — comfortably covers the 19-tile field plus margin. */
+const SEA_RADIUS = HEX_SIZE * 9;
+
+export interface BoardSceneHandle {
+  readonly app: Application;
+  /** Cleans up ticker/listeners and destroys the Pixi application. Safe to call once. */
+  destroy(): void;
+}
+
+function darken(color: number, amount: number): number {
+  const k = 1 - amount;
+  return new Color(color).multiply([k, k, k]).toNumber();
+}
+
+function pointsToFlat(points: readonly Point[]): number[] {
+  return points.flatMap((p) => [p.x, p.y]);
+}
+
+/** Draws the darker extruded side faces along the tile's lower contour (edges whose midpoint sits below center). */
+function drawExtrusion(g: Graphics, color: number): void {
+  const sideColor = darken(color, 0.45);
+  for (let i = 0; i < CORNERS.length; i++) {
+    const a = CORNERS[i] as Point;
+    const b = CORNERS[(i + 1) % CORNERS.length] as Point;
+    const midY = (a.y + b.y) / 2;
+    if (midY <= 0) continue; // upper-contour edge — no visible side face here
+    g.poly(
+      pointsToFlat([
+        a,
+        b,
+        { x: b.x, y: b.y + EXTRUDE_DEPTH },
+        { x: a.x, y: a.y + EXTRUDE_DEPTH },
+      ]),
+    ).fill(sideColor);
+  }
+}
+
+/** Second visual cue beyond fill color, per resource kind — the a11y-required stroke pattern (DESIGN.md §2.3, §12). */
+function drawPattern(
+  g: Graphics,
+  patternKind: TileDescriptor['patternKind'],
+  color: number,
+): void {
+  const ink = darken(color, 0.3);
+  const r = HEX_SIZE * GAP_SCALE;
+  switch (patternKind) {
+    case 'timber':
+      for (let x = -r; x <= r; x += r / 2.5) {
+        g.moveTo(x, -r).lineTo(x, r);
+      }
+      g.stroke({ width: 2, color: ink, alpha: 0.6 });
+      break;
+    case 'fleece':
+      for (let y = -r; y <= r; y += r / 2.5) {
+        g.moveTo(-r, y).lineTo(r, y);
+      }
+      g.stroke({ width: 2, color: ink, alpha: 0.6 });
+      break;
+    case 'barley':
+      for (let d = -r; d <= r; d += r / 2) {
+        g.moveTo(d - r, -r).lineTo(d + r, r);
+      }
+      g.stroke({ width: 2, color: ink, alpha: 0.55 });
+      break;
+    case 'iron':
+      for (let d = -r; d <= r; d += r / 2) {
+        g.moveTo(d - r, -r).lineTo(d + r, r);
+        g.moveTo(d + r, -r).lineTo(d - r, r);
+      }
+      g.stroke({ width: 1.5, color: ink, alpha: 0.5 });
+      break;
+    case 'clay':
+      for (let y = -r; y <= r; y += r / 2) {
+        for (let x = -r; x <= r; x += r / 2) {
+          g.circle(x, y, 2.5).fill({ color: ink, alpha: 0.6 });
+        }
+      }
+      break;
+    case 'desert':
+      // No stroke pattern — desert is already visually distinct by fill
+      // color + hosting the robber marker; no resource silhouette to imply.
+      break;
+  }
+}
+
+/** Builds one tile's full display object (side extrusion + top face + pattern + number token + robber marker). */
+function buildTileVisual(descriptor: TileDescriptor): Container {
+  const container = new Container();
+  container.position.set(descriptor.position.x, descriptor.position.y);
+
+  const flatPoints = pointsToFlat(CORNERS);
+  const color = descriptor.fillColor;
+
+  const side = new Graphics();
+  drawExtrusion(side, color);
+  container.addChild(side);
+
+  const top = new Graphics();
+  top.poly(flatPoints).fill(color);
+  container.addChild(top);
+
+  const pattern = new Graphics();
+  drawPattern(pattern, descriptor.patternKind, color);
+  const mask = new Graphics().poly(flatPoints).fill(0xffffff);
+  pattern.mask = mask;
+  container.addChild(mask);
+  container.addChild(pattern);
+
+  if (descriptor.token !== null) {
+    const disc = new Graphics();
+    disc
+      .circle(0, 0, HEX_SIZE * 0.28)
+      .fill(CANVAS_COLORS.chartPaper)
+      .stroke({ width: 1.5, color: CANVAS_COLORS.chartPaperInk });
+    container.addChild(disc);
+
+    const digitColor = descriptor.isHotNumber
+      ? CANVAS_COLORS.hotNumber
+      : CANVAS_COLORS.chartPaperInk;
+    // Render at 2x and scale down for crispness (DESIGN.md §12).
+    const label = new Text({
+      text: String(descriptor.token),
+      style: {
+        fontFamily: 'monospace',
+        fontSize: 36,
+        fontWeight: 'bold',
+        fill: digitColor,
+      },
+    });
+    label.anchor.set(0.5);
+    label.scale.set(0.5);
+    label.position.set(0, -HEX_SIZE * 0.05);
+    container.addChild(label);
+
+    if (descriptor.pipCount !== null && descriptor.pipCount > 0) {
+      const pipRadius = 1.6;
+      const gap = 4.5;
+      const totalWidth = (descriptor.pipCount - 1) * gap;
+      const pips = new Graphics();
+      for (let i = 0; i < descriptor.pipCount; i++) {
+        const px = -totalWidth / 2 + i * gap;
+        pips.circle(px, HEX_SIZE * 0.12, pipRadius).fill(digitColor);
+      }
+      container.addChild(pips);
+    }
+  }
+
+  if (descriptor.isRobber) {
+    const robber = new Graphics();
+    // Neutral piece — no player color (the robber belongs to no flotilla).
+    robber
+      .circle(0, -HEX_SIZE * 0.18, HEX_SIZE * 0.2)
+      .fill(CANVAS_COLORS.surface2)
+      .stroke({ width: 2, color: CANVAS_COLORS.ink });
+    container.addChild(robber);
+  }
+
+  return container;
+}
+
+function buildSea(): Graphics {
+  const gradient = new FillGradient({
+    type: 'radial',
+    center: { x: 0.5, y: 0.5 },
+    innerRadius: 0,
+    outerCenter: { x: 0.5, y: 0.5 },
+    outerRadius: 0.5,
+    colorStops: [
+      { offset: 0, color: CANVAS_COLORS.surface },
+      { offset: 1, color: CANVAS_COLORS.bgAbyss },
+    ],
+    textureSpace: 'local',
+  });
+  const sea = new Graphics();
+  sea.circle(0, 0, SEA_RADIUS).fill(gradient);
+  return sea;
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+/**
+ * Builds the full board scene into `mountEl` and wires pan/zoom + the
+ * ambient mist pulse (paused under `prefers-reduced-motion`). Call
+ * `destroy()` on unmount to leave no leaked Pixi app/ticker.
+ */
+export async function createBoardScene(
+  mountEl: HTMLElement,
+  descriptors: readonly TileDescriptor[],
+): Promise<BoardSceneHandle> {
+  const app = new Application();
+  await app.init({
+    resizeTo: mountEl,
+    backgroundColor: CANVAS_COLORS.bgAbyss,
+    antialias: true,
+    preference: 'webgpu',
+  });
+  mountEl.appendChild(app.canvas);
+
+  const world = new Container();
+  world.position.set(app.screen.width / 2, app.screen.height / 2);
+  app.stage.addChild(world);
+
+  world.addChild(buildSea());
+
+  const tilesLayer = new Container();
+  for (const descriptor of descriptors) {
+    tilesLayer.addChild(buildTileVisual(descriptor));
+  }
+  world.addChild(tilesLayer);
+
+  // Ambient mist: a soft haze over the whole tile field. Built once; only
+  // its alpha animates per tick (never rebuilt), and that animation itself
+  // is skipped/paused whenever `prefers-reduced-motion: reduce` matches
+  // (DESIGN.md §9 merge gate) — swapped for a static mid-alpha frame.
+  const mist = new Graphics();
+  mist.circle(0, 0, SEA_RADIUS * 0.7).fill({ color: CANVAS_COLORS.ink, alpha: 1 });
+  mist.alpha = (MIST_MIN_ALPHA + MIST_MAX_ALPHA) / 2;
+  world.addChild(mist);
+
+  const reducedMotionQuery =
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)')
+      : null;
+  let reducedMotion = prefersReducedMotion();
+
+  let elapsedMs = 0;
+  function onTick(deltaMS: number): void {
+    if (reducedMotion) {
+      mist.alpha = (MIST_MIN_ALPHA + MIST_MAX_ALPHA) / 2;
+      return;
+    }
+    elapsedMs += deltaMS;
+    const phase = (elapsedMs / MIST_PULSE_PERIOD_MS) * Math.PI * 2;
+    mist.alpha =
+      MIST_MIN_ALPHA + (MIST_MAX_ALPHA - MIST_MIN_ALPHA) * (0.5 + 0.5 * Math.sin(phase));
+  }
+  app.ticker.add((ticker) => onTick(ticker.deltaMS));
+
+  function onReducedMotionChange(event: MediaQueryListEvent): void {
+    reducedMotion = event.matches;
+  }
+  reducedMotionQuery?.addEventListener('change', onReducedMotionChange);
+
+  // --- Drag-pan + wheel-zoom on the world container (plain pointer events). ---
+  let dragging = false;
+  let lastX = 0;
+  let lastY = 0;
+
+  function onPointerDown(e: PointerEvent): void {
+    dragging = true;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  }
+
+  function onPointerMove(e: PointerEvent): void {
+    if (!dragging) return;
+    world.x += e.clientX - lastX;
+    world.y += e.clientY - lastY;
+    lastX = e.clientX;
+    lastY = e.clientY;
+  }
+
+  function onPointerUp(): void {
+    dragging = false;
+  }
+
+  function onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    const rect = app.canvas.getBoundingClientRect();
+    const pointerX = e.clientX - rect.left;
+    const pointerY = e.clientY - rect.top;
+    const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+    const nextScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, world.scale.x * zoomFactor));
+
+    const worldX = (pointerX - world.x) / world.scale.x;
+    const worldY = (pointerY - world.y) / world.scale.y;
+    world.scale.set(nextScale);
+    world.x = pointerX - worldX * nextScale;
+    world.y = pointerY - worldY * nextScale;
+  }
+
+  const canvas = app.canvas;
+  canvas.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+
+  let destroyed = false;
+  return {
+    app,
+    destroy: () => {
+      if (destroyed) return;
+      destroyed = true;
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('wheel', onWheel);
+      reducedMotionQuery?.removeEventListener('change', onReducedMotionChange);
+      app.destroy(true, { children: true, texture: true, textureSource: true });
+    },
+  };
+}
