@@ -1,0 +1,49 @@
+/* DESIGN.md §6 desktop (>=1280px) game-screen zoning — top bar, left players
+   rail, center Chart (canvas), right log panel, bottom deck. The Chart stays
+   the hero; instruments frame it (§1 two-surface model). */
+
+.game-screen {
+  display: grid;
+  grid-template-areas:
+    'topbar topbar topbar'
+    'rail chart log'
+    'deck deck deck';
+  grid-template-columns: 280px 1fr 320px;
+  grid-template-rows: auto 1fr auto;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-abyss);
+  color: var(--ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.game-screen__topbar {
+  grid-area: topbar;
+  z-index: var(--z-hud);
+}
+
+.game-screen__rail {
+  grid-area: rail;
+  z-index: var(--z-hud);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.game-screen__chart {
+  grid-area: chart;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.game-screen__log {
+  grid-area: log;
+  z-index: var(--z-hud);
+  min-height: 0;
+}
+
+.game-screen__deck {
+  grid-area: deck;
+  z-index: var(--z-hud);
+}
