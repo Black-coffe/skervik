@@ -13,13 +13,13 @@ const ENDONYMS: Record<Locale, string> = {
 };
 
 export function LocaleSwitcher() {
-  const { locale, setLocale } = useTranslation();
+  const { locale, setLocale, t } = useTranslation();
 
   return (
     <div
       className="locale-switcher"
       role="radiogroup"
-      aria-label="Language / Мова / Язык"
+      aria-label={t('a11y.languageSwitcher')}
     >
       {LOCALES.map((candidate) => {
         const active = candidate === locale;

@@ -5,11 +5,17 @@ import { isPluralForms } from './messages.js';
 
 export type TranslateParams = Record<string, string | number>;
 
-function interpolate(template: string, params?: TranslateParams): string {
+// Numeric params render through `Intl.NumberFormat` (locale-grouped, tabular
+// per DESIGN.md §10) instead of a bare `String(value)` — S1.6.6a lead-review
+// nit 3. Non-numeric params interpolate as plain strings, unchanged.
+function interpolate(template: string, locale: Locale, params?: TranslateParams): string {
   if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (match, name: string) => {
     const value = params[name];
-    return value === undefined ? match : String(value);
+    if (value === undefined) return match;
+    return typeof value === 'number'
+      ? new Intl.NumberFormat(locale).format(value)
+      : value;
   });
 }
 
@@ -35,7 +41,7 @@ export function translate(
   }
 
   if (!isPluralForms(message)) {
-    return interpolate(message, params);
+    return interpolate(message, locale, params);
   }
 
   const count = params?.count;
@@ -45,10 +51,10 @@ export function translate(
         `[i18n] plural key "${key}" used without a numeric "count" param — falling back to "other"`,
       );
     }
-    return interpolate(message.other, params);
+    return interpolate(message.other, locale, params);
   }
 
   const form = new Intl.PluralRules(locale).select(count);
   const template = message[form] ?? message.other;
-  return interpolate(template, params);
+  return interpolate(template, locale, params);
 }
