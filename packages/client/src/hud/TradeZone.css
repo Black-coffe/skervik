@@ -1,0 +1,79 @@
+/* Trade zone — DESIGN.md §6/§7: docked panels overlaid top-left of the Chart
+   (mockup `game-table.html`: fixed geometry, z-index --z-trade, the one
+   allowed floating-layer shadow). The container itself is pointer-transparent
+   so the rest of the canvas stays draggable; only the panels catch clicks. */
+
+.trade-zone {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  width: 372px;
+  max-height: calc(100% - 28px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: var(--z-trade);
+  pointer-events: none;
+}
+
+.trade-zone > * {
+  pointer-events: auto;
+}
+
+.trade-zone__hint {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.5);
+}
+
+.trade-zone__reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.5);
+}
+
+.trade-zone__reaction {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.trade-zone__recent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.trade-zone__recent-head {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+/* Visually-hidden live region — announces incoming offers to screen readers
+   (§10 `aria-live="polite"`) without occupying layout. */
+.trade-zone__sr-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
