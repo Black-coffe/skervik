@@ -7,8 +7,8 @@
 > Reference mockup: `docs/design/mockups/game-table.html`.
 
 **Mood formula** (test every visual decision against it):
-*"Chart-room at dusk, ≈1900: kerosene light over the navigation chart —
-gray water, wet granite, brass instruments."* Not steampunk costume, not
+_"Chart-room at dusk, ≈1900: kerosene light over the navigation chart —
+gray water, wet granite, brass instruments."_ Not steampunk costume, not
 viking kitsch, not cartoon pastel, not grimdark, not SaaS chrome.
 
 ## 1. Two-surface model
@@ -16,10 +16,10 @@ viking kitsch, not cartoon pastel, not grimdark, not SaaS chrome.
 The game screen is two layers with different registers:
 
 - **The Chart (Лоция)** — the Pixi canvas: board, pieces, sea, mist, storm.
-  This is the *brand* surface: painterly, atmospheric, the light source of
+  This is the _brand_ surface: painterly, atmospheric, the light source of
   the screen. All drama lives here.
 - **The Instruments** — every DOM/React surface around and above the canvas
-  (HUD, trade panel, lobby, dialogs, dashboards). *Product* register:
+  (HUD, trade panel, lobby, dialogs, dashboards). _Product_ register:
   calm, exact, dense where useful, zero decoration that doesn't convey state.
 
 Rule of thumb: atmosphere on the canvas, information in the instruments.
@@ -37,22 +37,22 @@ they are generated, not hand-picked; see `docs/design/` notes).
 
 ### 2.1 Environment & instruments
 
-| Token | OKLCH | sRGB (canvas) | Role |
-|---|---|---|---|
-| `--bg-abyss` | `oklch(0.15 0.02 235)` | `#040c12` | page & sea background |
-| `--surface` | `oklch(0.20 0.02 235)` | `#0d181e` | HUD panels, cards |
-| `--surface-2` | `oklch(0.24 0.02 230)` | `#152127` | rails, toolbars, hover |
-| `--line` | `oklch(0.32 0.02 235)` | `#29353c` | 1px borders, dividers |
-| `--ink` | `oklch(0.93 0.005 235)` | `#e5e8eb` | primary text (16:1 on abyss) |
-| `--muted` | `oklch(0.70 0.015 235)` | `#96a0a7` | secondary text (≥6.7:1) |
-| `--primary` | `oklch(0.80 0.14 75)` | `#f2af48` | "kerosene" — primary actions, active turn, selection |
-| `--on-primary` | `oklch(0.18 0.02 235)` | `#091319` | text on primary fills (9.8:1) |
-| `--accent` | `oklch(0.72 0.09 200)` | `#56b6bb` | "sea-glass" — links, info, focus ring |
-| `--danger` | `oklch(0.62 0.19 25)` | `#e24947` | storm, destructive actions, timer critical |
-| `--success` | `oklch(0.70 0.12 150)` | `#63b376` | confirmations, "deal sealed" |
-| `--chart-paper` | `oklch(0.88 0.03 85)` | `#e1d6c2` | aged chart paper — number tokens, board labels ONLY (never a DOM panel bg) |
-| `--chart-paper-ink` | `oklch(0.30 0.03 60)` | `#392a1e` | ink on chart paper (9.6:1) |
-| `--hot-number` | `oklch(0.55 0.18 25)` | `#c53637` | 6/8 tide marks |
+| Token               | OKLCH                   | sRGB (canvas) | Role                                                                       |
+| ------------------- | ----------------------- | ------------- | -------------------------------------------------------------------------- |
+| `--bg-abyss`        | `oklch(0.15 0.02 235)`  | `#040c12`     | page & sea background                                                      |
+| `--surface`         | `oklch(0.20 0.02 235)`  | `#0d181e`     | HUD panels, cards                                                          |
+| `--surface-2`       | `oklch(0.24 0.02 230)`  | `#152127`     | rails, toolbars, hover                                                     |
+| `--line`            | `oklch(0.32 0.02 235)`  | `#29353c`     | 1px borders, dividers                                                      |
+| `--ink`             | `oklch(0.93 0.005 235)` | `#e5e8eb`     | primary text (16:1 on abyss)                                               |
+| `--muted`           | `oklch(0.70 0.015 235)` | `#96a0a7`     | secondary text (≥6.7:1)                                                    |
+| `--primary`         | `oklch(0.80 0.14 75)`   | `#f2af48`     | "kerosene" — primary actions, active turn, selection                       |
+| `--on-primary`      | `oklch(0.18 0.02 235)`  | `#091319`     | text on primary fills (9.8:1)                                              |
+| `--accent`          | `oklch(0.72 0.09 200)`  | `#56b6bb`     | "sea-glass" — links, info, focus ring                                      |
+| `--danger`          | `oklch(0.62 0.19 25)`   | `#e24947`     | storm, destructive actions, timer critical                                 |
+| `--success`         | `oklch(0.70 0.12 150)`  | `#63b376`     | confirmations, "deal sealed"                                               |
+| `--chart-paper`     | `oklch(0.88 0.03 85)`   | `#e1d6c2`     | aged chart paper — number tokens, board labels ONLY (never a DOM panel bg) |
+| `--chart-paper-ink` | `oklch(0.30 0.03 60)`   | `#392a1e`     | ink on chart paper (9.6:1)                                                 |
+| `--hot-number`      | `oklch(0.55 0.18 25)`   | `#c53637`     | 6/8 tide marks                                                             |
 
 Usage discipline: **Restrained** on instruments — kerosene amber ≤10% of any
 instrument surface, reserved for the current-turn indicator, the primary
@@ -63,12 +63,12 @@ action, and the active selection. If everything is amber, nothing is.
 Owner-locked identities (lore-primer). Color NEVER appears without the
 flotilla emblem glyph (a11y invariant: symbol + color).
 
-| Flotilla | Token | OKLCH | sRGB | Emblem |
-|---|---|---|---|---|
-| Буревестник / Petrel | `--fl-petrel` | `oklch(0.60 0.13 255)` | `#4682cc` | petrel silhouette |
-| Косатка / Orca | `--fl-orca` | `oklch(0.95 0 0)` | `#eeeeee` | orca fin (black on white) |
-| Морж / Walrus | `--fl-walrus` | `oklch(0.60 0.14 45)` | `#c26030` | walrus tusks |
-| Нарвал / Narwhal | `--fl-narwhal` | `oklch(0.78 0.10 190)` | `#60ccc5` | narwhal horn |
+| Flotilla             | Token          | OKLCH                  | sRGB      | Emblem                    |
+| -------------------- | -------------- | ---------------------- | --------- | ------------------------- |
+| Буревестник / Petrel | `--fl-petrel`  | `oklch(0.60 0.13 255)` | `#4682cc` | petrel silhouette         |
+| Косатка / Orca       | `--fl-orca`    | `oklch(0.95 0 0)`      | `#eeeeee` | orca fin (black on white) |
+| Морж / Walrus        | `--fl-walrus`  | `oklch(0.60 0.14 45)`  | `#c26030` | walrus tusks              |
+| Нарвал / Narwhal     | `--fl-narwhal` | `oklch(0.78 0.10 190)` | `#60ccc5` | narwhal horn              |
 
 Separability: petrel vs narwhal differ in lightness (0.60 vs 0.78), not just
 hue — verified for deutan/protan reads. Orca is achromatic. On the canvas,
@@ -79,13 +79,21 @@ pieces additionally differ by flag shape per flotilla when budget allows.
 Resources are NEVER hue-only: each has a unique icon silhouette AND the tile
 pattern (proto's stroke-pattern approach is correct — keep it).
 
-| Resource | Token | OKLCH | sRGB |
-|---|---|---|---|
-| Лес / Timber | `--res-timber` | `oklch(0.55 0.10 150)` | `#428252` |
-| Глина / Clay | `--res-clay` | `oklch(0.58 0.11 40)` | `#b16246` |
-| Руно / Fleece | `--res-fleece` | `oklch(0.86 0.02 90)` | `#d6d1c3` |
-| Ячмень / Barley | `--res-barley` | `oklch(0.74 0.11 95)` | `#c0aa54` |
-| Железо / Iron | `--res-iron` | `oklch(0.58 0.02 255)` | `#737b86` |
+| Resource                | Token          | OKLCH                  | sRGB      |
+| ----------------------- | -------------- | ---------------------- | --------- |
+| Лес / Timber            | `--res-timber` | `oklch(0.55 0.10 150)` | `#428252` |
+| Глина / Clay            | `--res-clay`   | `oklch(0.58 0.11 40)`  | `#b16246` |
+| Руно / Fleece           | `--res-fleece` | `oklch(0.86 0.02 90)`  | `#d6d1c3` |
+| Ячмень / Barley         | `--res-barley` | `oklch(0.74 0.11 95)`  | `#c0aa54` |
+| Железо / Iron           | `--res-iron`   | `oklch(0.58 0.02 255)` | `#737b86` |
+| Мглистая банка / Desert | `--res-desert` | `oklch(0.66 0.03 70)`  | `#9e8f7f` |
+
+Desert (the misty sandbank) produces nothing, but its board tile still needs a
+fill — a **barren grey-dun**, deliberately ~0.20 darker in lightness than
+`--res-fleece`/`--chart-paper` so a desert tile never reads as a pale-cream
+resource or as a chart-paper number disc. Added 2026-07-05 (owner-approved S1.6.1
+follow-up nit); the OKLCH↔sRGB pair is generated (Ottosson OKLab transform), not
+hand-picked, per this section's discipline. Robber starts here (S1.1.2).
 
 ### 2.4 Hard bans (color)
 
@@ -103,11 +111,11 @@ cover RU + UA (ґ є і ї) + EN. Never render UI text into canvas textures —
 text lives in DOM for i18n/scaling/screen readers (canvas exception: tide
 marks / numbers on board tokens, which are locale-independent digits).
 
-| Face | Family | Role |
-|---|---|---|
-| Instrument | **Inter** (fallback `system-ui`) | all UI: labels, buttons, body, tables. `font-feature-settings: "tnum"` on every numeric cell/timer. |
-| Chart & lore | **PT Serif** (fallback Georgia) | match title, island names, lore flavor lines, end-of-match "Большой атлас" screens. Period-correct ≈1900 print flavor. Never for buttons/labels/data. |
-| Ledger | **JetBrains Mono** (fallback Consolas) | seed hash, event log entries, replay timestamps — the "telegraph/ledger" voice of fairness surfaces. |
+| Face         | Family                                 | Role                                                                                                                                                  |
+| ------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Instrument   | **Inter** (fallback `system-ui`)       | all UI: labels, buttons, body, tables. `font-feature-settings: "tnum"` on every numeric cell/timer.                                                   |
+| Chart & lore | **PT Serif** (fallback Georgia)        | match title, island names, lore flavor lines, end-of-match "Большой атлас" screens. Period-correct ≈1900 print flavor. Never for buttons/labels/data. |
+| Ledger       | **JetBrains Mono** (fallback Consolas) | seed hash, event log entries, replay timestamps — the "telegraph/ledger" voice of fairness surfaces.                                                  |
 
 Scale: fixed rem, ratio 1.2 — `12 / 14 (base) / 17 / 20 / 24 / 29px`.
 Weights: 400/500/600 only. Line-height 1.5 body, 1.2 headings.
@@ -172,7 +180,7 @@ Desktop ≥1280px zoning (mockup: `docs/design/mockups/game-table.html`):
 
 ## 7. Trade UI constitution (the heart — S1.6.4)
 
-Lore anchor: *"слово капитана твёрже якорной цепи"* — a sealed deal is
+Lore anchor: _"слово капитана твёрже якорной цепи"_ — a sealed deal is
 logged and irrevocable, so the UI must make sealing deliberate and
 error-proof.
 
@@ -228,7 +236,7 @@ states teach ("Жребий ещё не брошен — распределен�
   ticks up/down), button feedback, toast in/out. No page-load choreography.
 - The Chart (canvas): slow ambient allowed and encouraged — mist alpha
   pulse (proto's is right), water shimmer, storm pass on a 7-roll, piece
-  placement drop (200ms). Ambient loops must be *slow* (≥4s period) and
+  placement drop (200ms). Ambient loops must be _slow_ (≥4s period) and
   must pause under `prefers-reduced-motion` (swap to static frame).
 - Dice/tide roll: ≤900ms from intent to settled result, skippable by click;
   the result number is readable within the first 300ms (don't gate
@@ -272,7 +280,7 @@ ours either way.
 
 ## 12. Verdict on the E0.4 proto (what carries into S1.6.1)
 
-Keep the *patterns*, not the code (proto dir is slated for deletion):
+Keep the _patterns_, not the code (proto dir is slated for deletion):
 
 - ✅ **Keep:** tile stroke-patterns as second visual cue (a11y-correct);
   y-flattened 2.5D extrusion read; zero-state-in-canvas discipline;
