@@ -39,7 +39,8 @@ describe('renown — settlement/city counts', () => {
   });
 
   it('returns 0 for a state with no buildings yet', () => {
-    const empty: GameState = { ...BASE_STATE, buildings: undefined };
+    const { buildings: _buildings, ...rest } = BASE_STATE;
+    const empty: GameState = rest;
     expect(settlementCount(empty, 'p1')).toBe(0);
     expect(cityCount(empty, 'p1')).toBe(0);
   });
