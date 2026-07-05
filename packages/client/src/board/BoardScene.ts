@@ -106,8 +106,8 @@ function drawPattern(
   }
 }
 
-/** Builds one tile's full display object (side extrusion + top face + pattern + number token + robber marker). */
-function buildTileVisual(descriptor: TileDescriptor): Container {
+/** Builds one tile's base display object: side extrusion + top face + a11y stroke pattern. No token/robber — those live in the topper layer (see `buildTileTopper`) so they can render ABOVE the ambient mist while this base stays under it. */
+function buildTileBase(descriptor: TileDescriptor): Container {
   const container = new Container();
   container.position.set(descriptor.position.x, descriptor.position.y);
 
@@ -128,6 +128,21 @@ function buildTileVisual(descriptor: TileDescriptor): Container {
   pattern.mask = mask;
   container.addChild(mask);
   container.addChild(pattern);
+
+  return container;
+}
+
+/**
+ * Builds one tile's "topper" — the number-token disc + digit + probability
+ * pips + robber marker — or `null` when the tile has neither (bare desert
+ * with no robber). Toppers are mounted in a layer drawn ABOVE the ambient
+ * mist overlay so these info-dense elements stay crisp (DESIGN.md §10).
+ */
+function buildTileTopper(descriptor: TileDescriptor): Container | null {
+  if (descriptor.token === null && !descriptor.isRobber) return null;
+
+  const container = new Container();
+  container.position.set(descriptor.position.x, descriptor.position.y);
 
   if (descriptor.token !== null) {
     const disc = new Graphics();
@@ -231,9 +246,16 @@ export async function createBoardScene(
 
   world.addChild(buildSea());
 
+  // Render order (bottom to top): sea -> tile bases (fills + patterns +
+  // extrusion) -> ambient mist -> toppers (number tokens + robber). This
+  // keeps the info-dense toppers crisp/un-hazed while the tile field still
+  // reads the atmospheric mist (DESIGN.md §10 contrast, S1.6.1a nit-1).
   const tilesLayer = new Container();
+  const toppersLayer = new Container();
   for (const descriptor of descriptors) {
-    tilesLayer.addChild(buildTileVisual(descriptor));
+    tilesLayer.addChild(buildTileBase(descriptor));
+    const topper = buildTileTopper(descriptor);
+    if (topper !== null) toppersLayer.addChild(topper);
   }
   world.addChild(tilesLayer);
 
@@ -245,6 +267,9 @@ export async function createBoardScene(
   mist.circle(0, 0, SEA_RADIUS * 0.7).fill({ color: CANVAS_COLORS.ink, alpha: 1 });
   mist.alpha = (MIST_MIN_ALPHA + MIST_MAX_ALPHA) / 2;
   world.addChild(mist);
+
+  // Toppers layer drawn ABOVE the mist so tokens/robber stay crisp.
+  world.addChild(toppersLayer);
 
   const reducedMotionQuery =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'

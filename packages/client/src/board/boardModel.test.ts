@@ -35,6 +35,7 @@ describe('buildTileDescriptors', () => {
     for (const d of descriptors) {
       if (d.isDesert) {
         expect(d.fillColor).toBe(DESERT_COLOR);
+        expect(d.fillColor).toBe(0x9e8f7f);
       } else {
         expect(d.fillColor).toBe(RESOURCE_COLORS[d.kind as keyof typeof RESOURCE_COLORS]);
       }
