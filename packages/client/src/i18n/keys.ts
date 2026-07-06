@@ -66,7 +66,6 @@ export const TRANSLATION_KEYS = [
   'trade.back',
   'trade.item',
   'trade.dealSentence',
-  'trade.dealSwap',
   'trade.reasonEmptyGive',
   'trade.reasonEmptyGet',
   'trade.reasonCannotAfford',
@@ -98,6 +97,28 @@ export const TRANSLATION_KEYS = [
   'trade.statusReaction',
   'trade.incomingAnnounce',
   'trade.youLabel',
+  // --- Connection state (S1.6.5, DESIGN.md §6) ---
+  'a11y.connectionStatus',
+  'connection.connecting',
+  'connection.connected',
+  'connection.reconnecting',
+  'connection.disconnected',
+  'connection.error',
+  'connection.updateRequired',
+  'connection.updateRequiredDetail',
+  // --- Failure notices (S1.6.5, §7.6) ---
+  'a11y.notice',
+  'notice.dismiss',
+  'notice.tryAgain',
+  'reject.generic',
+  'reject.notYourTurn',
+  'reject.cannotAfford',
+  'reject.tradeOfferAlreadyOpen',
+  'reject.noOpenTradeOffer',
+  'reject.notATradeTarget',
+  'reject.notTradeProposer',
+  'reject.counterLimitReached',
+  'reject.gameAlreadyEnded',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

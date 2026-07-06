@@ -87,6 +87,31 @@ describe('OfferCard', () => {
     expect(html.match(/disabled/g)?.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('shows the pending state and disables ALL responses on an incoming card while a response is in flight (S1.6.4-review nit 1)', () => {
+    const html = render(
+      <OfferCard
+        variant="incoming"
+        proposerFlotillaId="orca"
+        proposerColorCss="#eeeeee"
+        proposerLabel="Orca"
+        theyGive={{ ...EMPTY, fleece: 3 }}
+        theyGet={{ ...EMPTY, iron: 1 }}
+        isCounter={false}
+        canAccept={true}
+        canCounter={true}
+        pending={true}
+        onAccept={() => undefined}
+        onDecline={() => undefined}
+        onCounter={() => undefined}
+      />,
+    );
+    // The pending marker is shown even though I *could* afford/counter…
+    expect(html).toContain('offer-card__seal');
+    // …and every response (Accept / Decline / Counter) is disabled so a second
+    // click cannot dispatch a duplicate intent once the real send is wired.
+    expect(html.match(/disabled/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
   it('renders an outgoing offer with the pending-seal state', () => {
     const html = render(
       <OfferCard
