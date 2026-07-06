@@ -129,21 +129,36 @@ export function attachRoom(room: RoomLike, callbacks: WsClientCallbacks): WsClie
 }
 
 /**
+ * Optional anonymous guest identity (S1.7.1) forwarded in the join options —
+ * DISPLAY metadata only. The authoritative seat identity is still the
+ * server-assigned `sessionId`; the server accepts these as optional fields on
+ * the handshake and ignores them for authoritative logic.
+ */
+export interface GuestJoinFields {
+  readonly guestId?: string;
+  readonly displayName?: string;
+}
+
+/**
  * Connect to the authoritative room: announce `connecting`, `joinOrCreate` with
- * the protocol-version handshake, and on success {@link attachRoom} + announce
- * `connected`. A rejected join is interpreted by {@link parseJoinError} into a
- * `version-mismatch` (with versions) or a generic `error`, and returns `null`
- * so the caller keeps its fallback (dev-fixture) view. Never throws.
+ * the protocol-version handshake (plus optional guest {@link GuestJoinFields}),
+ * and on success {@link attachRoom} + announce `connected`. A rejected join is
+ * interpreted by {@link parseJoinError} into a `version-mismatch` (with
+ * versions) or a generic `error`, and returns `null` so the caller keeps its
+ * fallback (dev-fixture) view. Never throws.
  */
 export async function connect(
   url: string,
   callbacks: WsClientCallbacks,
+  guest?: GuestJoinFields,
 ): Promise<WsClientHandle | null> {
   callbacks.onConnectionChange('connecting');
   const client = new Client(url);
   try {
     const room = await client.joinOrCreate(GAME_ROOM_NAME, {
       protocolVersion: PROTOCOL_VERSION,
+      ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
+      ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
     });
     const handle = attachRoom(room as unknown as RoomLike, callbacks);
     callbacks.onConnectionChange('connected');
