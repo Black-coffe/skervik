@@ -8,7 +8,12 @@
 // client ever observes an event that was not durably recorded first. The secret
 // seed is revealed to match metadata ONLY after `game.ended` (S1.4.3).
 import {
+  type BoardGeneratedEvent,
+  buildTopology,
+  type GameEvent,
   type GameState,
+  generateBoard,
+  type MatchStartedEvent,
   type PlayerId,
   type PlayerIntent,
   reduce,
@@ -67,6 +72,15 @@ export interface GameRoomOptions {
    * PostgreSQL/JSON-sidecar writer here without touching pipeline logic.
    */
   readonly metadataStore?: MatchMetadataStore;
+  /**
+   * A fixed secret PRNG seed (S1.7.2 test seam) — injected so an E2E can run
+   * the SAME scripted match twice and assert byte-equal final state, and so a
+   * board/roll sequence is reproducible. Production omits it: {@link onCreate}
+   * falls back to a fresh {@link generateSeed}. Like the raw seed it replaces,
+   * this stays a server secret — it is never serialized, broadcast, or logged
+   * (commit-reveal, ADR-0009 Fork 3); only its `sha256Hex` becomes public.
+   */
+  readonly seed?: Seed;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -126,6 +140,16 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   #queue: Promise<void> = Promise.resolve();
 
+  /**
+   * The one-way match-start latch (S1.7.2): flips exactly once, when the last
+   * seat needed to reach the room's start condition is taken, so seating the
+   * final player triggers the `match.started` + `board.generated` genesis
+   * batch a single time — a re-entrant/duplicate `onJoin` can never fire a
+   * second start. Set synchronously in `onJoin` BEFORE the (async) enqueue so
+   * two joins landing in the same tick can't both pass the guard.
+   */
+  #matchStarted = false;
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
@@ -139,7 +163,10 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         : new InMemoryEventSink());
     this.matchMetadataStore = options?.metadataStore ?? new InMemoryMatchMetadataStore();
 
-    this.#seed = generateSeed();
+    // Fixed injected seed (S1.7.2 E2E: reproducible board + rolls) or a fresh
+    // CSPRNG seed (production). Either way it stays a server secret — only its
+    // hash is ever published (commit-reveal, ADR-0009 Fork 3).
+    this.#seed = options?.seed ?? generateSeed();
     const seedHash = sha256Hex(this.#seed);
 
     this.gameState = {
@@ -185,6 +212,83 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
           error,
         );
       });
+  }
+
+  /**
+   * The match-start genesis batch (S1.7.2): folds the two events that turn the
+   * lobby `GameState` into a playable Classic game and drives them through the
+   * SAME persist-before-commit pipeline as every intent (`#handleIntent`'s
+   * tail) — PERSIST the batch first, and only on a successful append commit the
+   * authoritative state, refresh the public projection, and broadcast. Not a
+   * side channel: no client ever observes a start event that was not durably
+   * logged, exactly like a gameplay event.
+   *
+   * - `match.started` fixes the seated `playerOrder` (seat order) and moves the
+   *   phase to `setup` (`reduce`), so the snake-draft (S1.1.3) can begin.
+   * - `board.generated` carries the deterministic Classic layout from the
+   *   room's secret `#seed` (`generateBoard`, the SAME path S1.6.1's dev
+   *   fixture uses) — a fixed seed ⇒ a fixed board, no wall-clock / ambient RNG.
+   *
+   * The two hand-built genesis events (there is no player intent for them,
+   * S1.4.1) keep `@skervik/core` byte-unchanged. Never throws: an append
+   * failure leaves `this.gameState` untouched (assignment happens only after
+   * `append` resolves) and is logged with the public `seedHash` only.
+   */
+  async #startMatch(): Promise<void> {
+    const playerIds = this.state.seats.map((seat) => seat.playerId as PlayerId);
+
+    const matchStarted: MatchStartedEvent = {
+      type: 'match.started',
+      index: this.gameState.eventIndex,
+      matchId: this.gameState.matchId,
+      seedHash: this.gameState.seedHash,
+      playerIds,
+    };
+    const afterStart = reduce(this.gameState, matchStarted);
+
+    // The layout is generated from the SECRET seed (never serialized) — the
+    // full board travels as event data so replay never re-runs the generator
+    // (ADR-0003). `board.generated`'s index continues from the post-start
+    // `eventIndex`, so both events form one contiguous batch.
+    const layout = generateBoard(this.#seed, buildTopology());
+    const boardGenerated: BoardGeneratedEvent = {
+      type: 'board.generated',
+      index: afterStart.eventIndex,
+      tileKinds: layout.tileKinds,
+      tileTokens: layout.tileTokens,
+      portContents: layout.portContents,
+      robberTileId: layout.robberTileId,
+    };
+
+    const events: GameEvent[] = [matchStarted, boardGenerated];
+    const nextState = events.reduce(
+      (state, event) => reduce(state, event),
+      this.gameState,
+    );
+
+    try {
+      // PERSIST first (same ordering invariant as `#handleIntent`): only on a
+      // successful append do we commit + broadcast.
+      await this.eventSink.append(events);
+      this.gameState = nextState;
+      this.state.phase = this.gameState.phase;
+      this.state.currentPlayerId = this.gameState.currentPlayerId;
+
+      const batch: EventBatchMessage = {
+        v: 1,
+        type: 'event.batch',
+        payload: events,
+      };
+      this.broadcast(batch.type, batch);
+    } catch (error) {
+      // Append failed: state was NOT advanced, nothing broadcast. Log with the
+      // public seedHash only (never the raw seed) and swallow — nothing escapes
+      // this voided handler as an unhandled rejection.
+      this.#logInternalError(
+        'failed to persist the match-start batch; state left uncommitted',
+        error,
+      );
+    }
   }
 
   /**
@@ -237,6 +341,21 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       payload: this.gameState,
     };
     client.send(snapshot.type, snapshot);
+
+    // Match-start orchestration (S1.7.2): when the last seat needed to reach
+    // the start condition (the room's full seat cap) is taken, auto-start the
+    // match — no lobby-ready UI / host button for M1 (later). The latch is set
+    // synchronously here BEFORE the async enqueue so it fires exactly once, and
+    // the start batch rides the SAME per-room `#queue` as every intent (so it
+    // can never interleave with an in-flight intent's persist window).
+    if (!this.#matchStarted && this.state.seats.length >= this.maxClients) {
+      this.#matchStarted = true;
+      this.#queue = this.#queue
+        .then(() => this.#startMatch())
+        .catch((error: unknown) => {
+          this.#logInternalError('match-start queue link threw unexpectedly', error);
+        });
+    }
   }
 
   override onLeave(client: Client): void {
