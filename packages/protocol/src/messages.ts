@@ -577,15 +577,25 @@ export const ErrorEnvelopeSchema = z.object({
 });
 
 /**
- * Client → server JOIN options (S1.5.2 handshake): the client presents its
- * `protocolVersion` in the Colyseus join `options`. The server `safeParse`s
- * this in `onAuth` and compares it against the single-source `PROTOCOL_VERSION`
- * via {@link isCompatibleProtocolVersion} BEFORE seating. This is NOT a WS
- * envelope — it rides the join handshake, not the message bus, so it carries no
- * `v`/`type` wrapper.
+ * Client → server JOIN options (S1.5.2 handshake + S1.7.1 guest fields): the
+ * client presents its `protocolVersion` in the Colyseus join `options`. The
+ * server `safeParse`s this in `onAuth` and compares it against the single-source
+ * `PROTOCOL_VERSION` via {@link isCompatibleProtocolVersion} BEFORE seating.
+ * This is NOT a WS envelope — it rides the join handshake, not the message bus,
+ * so it carries no `v`/`type` wrapper.
+ *
+ * `guestId`/`displayName` (S1.7.1) are OPTIONAL, anonymous, DISPLAY-ONLY lobby
+ * metadata — NOT the authoritative identity. `protocolVersion` stays REQUIRED
+ * and the version gate still rejects a mismatch first; the guest fields are
+ * ignored by authoritative logic (the seat's `playerId` remains the unspoofable
+ * Colyseus `sessionId`, S1.4.2/S1.5.2). They are typed here only so the wire
+ * contract documents them; wiring `displayName` onto a seat for HUD display is
+ * deferred (S1.7.1b/S1.6.6).
  */
 export const ConnectOptionsSchema = z.object({
   protocolVersion: z.string(),
+  guestId: z.string().optional(),
+  displayName: z.string().optional(),
 });
 export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
 

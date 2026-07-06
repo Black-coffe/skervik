@@ -12,9 +12,9 @@
     "lint": "eslint src"
   },
   "dependencies": {
+    "@colyseus/sdk": "^0.17.43",
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
-    "colyseus.js": "^0.16.22",
     "pixi.js": "^8.19.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",

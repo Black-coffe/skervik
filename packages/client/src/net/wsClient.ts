@@ -1,4 +1,5 @@
-// The WS net layer (S1.6.5) — the ONLY module that imports `colyseus.js`. It
+// The WS net layer (S1.6.5) — the ONLY module that imports `@colyseus/sdk` (the
+// 0.17 client line; migrated from `colyseus.js@0.16` per ADR-0011). It
 // wraps the Colyseus `Client`/`Room` and maps the raw transport to the typed
 // callbacks the store consumes, translating join/leave/error into a
 // {@link ConnectionStatus}. Framework-free (no React, no zustand) so the whole
@@ -6,6 +7,7 @@
 // room with no socket. Real cross-process wiring is E1.7; here every inbound
 // frame is zod-validated at the boundary (the server is trusted, but the schema
 // is the client's contract — a malformed frame must never crash the fold).
+import { Client } from '@colyseus/sdk';
 import type {
   GameEvent,
   GameState,
@@ -22,7 +24,6 @@ import {
   RejectEnvelopeSchema,
   StateSnapshotEnvelopeSchema,
 } from '@skervik/protocol';
-import { Client } from 'colyseus.js';
 
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { parseJoinError, statusForLeaveCode } from './connection.js';
@@ -54,7 +55,7 @@ export interface WsClientHandle {
 }
 
 /**
- * The minimal `colyseus.js` `Room` surface the net layer touches — declared
+ * The minimal `@colyseus/sdk` `Room` surface the net layer touches — declared
  * structurally so {@link attachRoom} unit-tests against a mock room with no
  * transport. `Room<T>`'s real API is far wider (state schema, reconnection);
  * we deliberately depend on only these members.
@@ -128,21 +129,36 @@ export function attachRoom(room: RoomLike, callbacks: WsClientCallbacks): WsClie
 }
 
 /**
+ * Optional anonymous guest identity (S1.7.1) forwarded in the join options —
+ * DISPLAY metadata only. The authoritative seat identity is still the
+ * server-assigned `sessionId`; the server accepts these as optional fields on
+ * the handshake and ignores them for authoritative logic.
+ */
+export interface GuestJoinFields {
+  readonly guestId?: string;
+  readonly displayName?: string;
+}
+
+/**
  * Connect to the authoritative room: announce `connecting`, `joinOrCreate` with
- * the protocol-version handshake, and on success {@link attachRoom} + announce
- * `connected`. A rejected join is interpreted by {@link parseJoinError} into a
- * `version-mismatch` (with versions) or a generic `error`, and returns `null`
- * so the caller keeps its fallback (dev-fixture) view. Never throws.
+ * the protocol-version handshake (plus optional guest {@link GuestJoinFields}),
+ * and on success {@link attachRoom} + announce `connected`. A rejected join is
+ * interpreted by {@link parseJoinError} into a `version-mismatch` (with
+ * versions) or a generic `error`, and returns `null` so the caller keeps its
+ * fallback (dev-fixture) view. Never throws.
  */
 export async function connect(
   url: string,
   callbacks: WsClientCallbacks,
+  guest?: GuestJoinFields,
 ): Promise<WsClientHandle | null> {
   callbacks.onConnectionChange('connecting');
   const client = new Client(url);
   try {
     const room = await client.joinOrCreate(GAME_ROOM_NAME, {
       protocolVersion: PROTOCOL_VERSION,
+      ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
+      ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
     });
     const handle = attachRoom(room as unknown as RoomLike, callbacks);
     callbacks.onConnectionChange('connected');

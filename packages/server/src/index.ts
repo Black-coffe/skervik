@@ -8,6 +8,19 @@ import { GameRoom } from './room/GameRoom.js';
 export const SERVER_VERSION = '0.0.1' as const;
 
 export {
+  type GuestIdentity,
+  type GuestStore,
+  InMemoryGuestStore,
+} from './auth/guestStore.js';
+export {
+  createHttpServer,
+  type CreateHttpServerOptions,
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  type HttpServerHandle,
+  startServer,
+} from './boot.js';
+export {
   InMemoryMatchMetadataStore,
   type MatchMetadataStore,
   NoopMatchMetadataStore,

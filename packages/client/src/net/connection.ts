@@ -1,4 +1,4 @@
-// Pure connection-state helpers (S1.6.5) — no `colyseus.js`, no React, no I/O,
+// Pure connection-state helpers (S1.6.5) — no `@colyseus/sdk`, no React, no I/O,
 // so every mapping is unit-testable in isolation and the net layer's lib
 // coupling stays confined to `wsClient.ts`. These translate raw transport
 // signals (a leave close-code, a rejected `joinOrCreate`) into the small
@@ -35,7 +35,8 @@ export interface VersionMismatchInfo {
 }
 
 /**
- * Colyseus `CloseCode.CONSENTED` (colyseus.js `Protocol`, 0.16.x). A leave the
+ * Colyseus `CloseCode.CONSENTED` (`@colyseus/sdk` `CloseCode`, 0.17.x — value
+ * unchanged from the 0.16 `Protocol`). A leave the
  * client asked for closes with this code; any other close is an unexpected
  * drop. Mirrored as a plain const so this module stays lib-free (and testable).
  */
