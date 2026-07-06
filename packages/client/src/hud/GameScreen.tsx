@@ -10,6 +10,7 @@ import { GameTable } from '../board/GameTable.js';
 import { TradeDemoControls } from '../dev/TradeDemoControls.js';
 import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
+import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
 import { useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
@@ -29,6 +30,7 @@ export function GameScreen() {
       <div className="game-screen__chart">
         <GameTable state={gameState} />
         <TradeZone />
+        <NoticeBar />
       </div>
       <div className="game-screen__log">
         <LogPanel />

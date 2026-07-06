@@ -6,6 +6,16 @@ import type { PlayerId } from '@skervik/core';
 export const PROTOCOL_VERSION = '0.0.1' as const;
 
 /**
+ * The matchmaking name the server registers the `GameRoom` under and the client
+ * passes to `joinOrCreate` (S1.6.5). Single-sourced HERE because the room name
+ * is part of the wire contract: hoisting it out of `@skervik/server` lets the
+ * client join by name without depending on the server package, and kills the
+ * magic-string drift risk of each side declaring its own copy. `@skervik/server`
+ * re-exports this so its existing `GAME_ROOM_NAME` consumers keep working.
+ */
+export const GAME_ROOM_NAME = 'skervik_game';
+
+/**
  * The ONE protocol-version compatibility gate (S1.5.2). Exact-string equality
  * with {@link PROTOCOL_VERSION}: a missing / non-string / mismatched client
  * version is INCOMPATIBLE (rejected at join), never treated as legacy-allowed.

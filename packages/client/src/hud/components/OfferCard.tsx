@@ -86,13 +86,22 @@ function DealBundle({ bundle }: { readonly bundle: Bundle }) {
   );
 }
 
-/** Localized comma-joined "N resource" list, for the "in words" sentence. */
+/**
+ * Localized comma-joined "N resource" list, for the "in words" sentence. The
+ * resource noun is lower-cased for the running sentence (DESIGN.md §7.2:
+ * "2 руно, 1 железо") — the `resource.*` labels are Title-Case for standalone
+ * pills, so this mid-sentence use lower-cases them per the active locale (nit 3
+ * from the S1.6.4 review).
+ */
 function useItemsText() {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   return (bundle: Bundle): string =>
     bundleItems(bundle)
       .map(({ resource, count }) =>
-        t('trade.item', { count, resource: t(RESOURCE_KEY[resource]) }),
+        t('trade.item', {
+          count,
+          resource: t(RESOURCE_KEY[resource]).toLocaleLowerCase(locale),
+        }),
       )
       .join(', ');
 }
@@ -140,25 +149,43 @@ function IncomingCard(props: IncomingProps) {
 
       <p className="offer-card__words">{words}</p>
 
+      {/* Server-truth pending state (§7.6): once I respond, the deal is pending
+          the server echo — show it AND disable every response so a second click
+          can't dispatch a duplicate intent (S1.6.4-review nit 1: the real send
+          lands in S1.6.5, so the double-dispatch guard becomes load-bearing). */}
+      {props.pending ? (
+        <div className="offer-card__pending">
+          <span className="offer-card__seal" aria-hidden="true">
+            ◈
+          </span>
+          {t('trade.pendingSeal')}
+        </div>
+      ) : null}
+
       <div className="offer-card__actions">
         <button
           type="button"
           className="btn btn--primary"
           onClick={props.onAccept}
-          disabled={!props.canAccept}
+          disabled={!props.canAccept || props.pending}
           aria-label={!props.canAccept ? t('trade.acceptCannotAfford') : undefined}
           title={!props.canAccept ? t('trade.acceptCannotAfford') : undefined}
         >
           {t('trade.accept')}
         </button>
-        <button type="button" className="btn btn--quiet" onClick={props.onDecline}>
+        <button
+          type="button"
+          className="btn btn--quiet"
+          onClick={props.onDecline}
+          disabled={props.pending}
+        >
           {t('trade.decline')}
         </button>
         <button
           type="button"
           className="offer-card__counter"
           onClick={props.onCounter}
-          disabled={!props.canCounter}
+          disabled={!props.canCounter || props.pending}
           aria-label={!props.canCounter ? t('trade.counterDisabledDepth') : undefined}
           title={!props.canCounter ? t('trade.counterDisabledDepth') : undefined}
         >

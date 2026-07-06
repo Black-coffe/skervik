@@ -1,0 +1,49 @@
+.connection-indicator {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px; /* ≥44px touch/target row (§10) */
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font-size: 0.85rem;
+}
+
+.connection-indicator__dot {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.connection-indicator__label {
+  font-weight: 600;
+}
+
+/* Status color is a SECONDARY channel — the glyph + label already carry the
+   state (§10, never color-only). */
+.connection-indicator[data-status='connected'] {
+  color: var(--success);
+  border-color: var(--success);
+}
+.connection-indicator[data-status='connecting'],
+.connection-indicator[data-status='reconnecting'] {
+  color: var(--muted);
+}
+.connection-indicator[data-status='disconnected'] {
+  color: var(--muted);
+}
+.connection-indicator[data-status='error'],
+.connection-indicator[data-status='version-mismatch'] {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.connection-indicator__update {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 400;
+}

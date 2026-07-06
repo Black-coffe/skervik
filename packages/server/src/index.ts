@@ -1,5 +1,6 @@
 // @skervik/server — Colyseus stateful rooms + Fastify REST.
 // Colyseus room shell lands in S1.4.1; Fastify REST is deferred (ADR-0009 Fork 4).
+import { GAME_ROOM_NAME } from '@skervik/protocol';
 import { Server } from 'colyseus';
 
 import { GameRoom } from './room/GameRoom.js';
@@ -22,8 +23,12 @@ export {
 export { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
 export { generateSeed, sha256Hex } from './seed.js';
 
-/** Matchmaking name the S1.4.1 `GameRoom` is registered under. */
-export const GAME_ROOM_NAME = 'skervik_game';
+/**
+ * Matchmaking name the `GameRoom` is registered under. Single source of truth is
+ * `@skervik/protocol` (S1.6.5, part of the wire contract) — re-exported here so
+ * existing `@skervik/server` consumers of `GAME_ROOM_NAME` are unaffected.
+ */
+export { GAME_ROOM_NAME } from '@skervik/protocol';
 
 export interface CreateGameServerOptions {
   /**

@@ -7,6 +7,7 @@ import { publicDevCardCount } from '@skervik/core';
 
 import { useTranslation } from '../i18n/index.js';
 import { flotillaForPlayer } from '../theme/flotillaColors.js';
+import { ConnectionIndicator } from './components/ConnectionIndicator.js';
 import { PlayerCard } from './components/PlayerCard.js';
 import { FLOTILLA_KEY } from './flotillaLabels.js';
 import { handSize, myHiddenVictoryPointCards, publicRenown } from './renown.js';
@@ -16,6 +17,8 @@ export function PlayersRail() {
   const { t } = useTranslation();
   const gameState = useUiStore((state) => state.gameState);
   const myPlayerId = useUiStore((state) => state.myPlayerId);
+  const connectionStatus = useUiStore((state) => state.connectionStatus);
+  const versionMismatch = useUiStore((state) => state.versionMismatch);
 
   const seatOrder = selectSeatOrder(gameState);
   const isMyTurn = selectIsMyTurn(gameState, myPlayerId);
@@ -25,6 +28,7 @@ export function PlayersRail() {
       <p className="players-rail__live" aria-live="polite">
         {isMyTurn ? t('hud.yourTurn') : t('hud.opponentTurn')}
       </p>
+      <ConnectionIndicator status={connectionStatus} versionMismatch={versionMismatch} />
       {seatOrder.map((playerId) => {
         const player = gameState.players.find((p) => p.id === playerId);
         if (!player) return null;
