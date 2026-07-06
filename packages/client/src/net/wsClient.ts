@@ -1,4 +1,5 @@
-// The WS net layer (S1.6.5) — the ONLY module that imports `colyseus.js`. It
+// The WS net layer (S1.6.5) — the ONLY module that imports `@colyseus/sdk` (the
+// 0.17 client line; migrated from `colyseus.js@0.16` per ADR-0011). It
 // wraps the Colyseus `Client`/`Room` and maps the raw transport to the typed
 // callbacks the store consumes, translating join/leave/error into a
 // {@link ConnectionStatus}. Framework-free (no React, no zustand) so the whole
@@ -6,6 +7,7 @@
 // room with no socket. Real cross-process wiring is E1.7; here every inbound
 // frame is zod-validated at the boundary (the server is trusted, but the schema
 // is the client's contract — a malformed frame must never crash the fold).
+import { Client } from '@colyseus/sdk';
 import type {
   GameEvent,
   GameState,
@@ -22,7 +24,6 @@ import {
   RejectEnvelopeSchema,
   StateSnapshotEnvelopeSchema,
 } from '@skervik/protocol';
-import { Client } from 'colyseus.js';
 
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { parseJoinError, statusForLeaveCode } from './connection.js';
@@ -54,7 +55,7 @@ export interface WsClientHandle {
 }
 
 /**
- * The minimal `colyseus.js` `Room` surface the net layer touches — declared
+ * The minimal `@colyseus/sdk` `Room` surface the net layer touches — declared
  * structurally so {@link attachRoom} unit-tests against a mock room with no
  * transport. `Room<T>`'s real API is far wider (state schema, reconnection);
  * we deliberately depend on only these members.
