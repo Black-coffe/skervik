@@ -420,6 +420,35 @@ describe('ConnectOptionsSchema (client join handshake)', () => {
     expect(ConnectOptionsSchema.safeParse({ protocolVersion: 1 }).success).toBe(false);
     expect(ConnectOptionsSchema.safeParse({ protocolVersion: null }).success).toBe(false);
   });
+
+  it('accepts OPTIONAL guest fields alongside the required protocolVersion (S1.7.1)', () => {
+    const parsed = ConnectOptionsSchema.safeParse({
+      protocolVersion: PROTOCOL_VERSION,
+      guestId: 'g-123',
+      displayName: 'Nemo',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.guestId).toBe('g-123');
+      expect(parsed.data.displayName).toBe('Nemo');
+    }
+  });
+
+  it('guest fields stay OPTIONAL — a bare protocolVersion still parses (drift-pin intact)', () => {
+    const parsed = ConnectOptionsSchema.safeParse({ protocolVersion: PROTOCOL_VERSION });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.guestId).toBeUndefined();
+      expect(parsed.data.displayName).toBeUndefined();
+    }
+  });
+
+  it('a non-string guest field is rejected (wire-shape guard)', () => {
+    expect(
+      ConnectOptionsSchema.safeParse({ protocolVersion: PROTOCOL_VERSION, guestId: 5 })
+        .success,
+    ).toBe(false);
+  });
 });
 
 describe('VersionErrorEnvelopeSchema (error.version, E1.6 client contract)', () => {

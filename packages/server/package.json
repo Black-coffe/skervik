@@ -8,15 +8,21 @@
     "typecheck": "tsc --noEmit",
     "build": "tsup",
     "test": "vitest run",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "start": "node dist/start.js"
   },
   "dependencies": {
     "@colyseus/schema": "^4.0.27",
+    "@colyseus/ws-transport": "^0.17.13",
+    "@fastify/cors": "^11.2.0",
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
-    "colyseus": "^0.17.10"
+    "colyseus": "^0.17.10",
+    "fastify": "^5.10.0",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@colyseus/sdk": "^0.17.43",
     "@colyseus/testing": "^0.17.11",
     "tsup": "^8",
     "typescript": "^5"
