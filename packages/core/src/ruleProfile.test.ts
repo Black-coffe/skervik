@@ -87,7 +87,12 @@ describe('CLASSIC_PROFILE composes the former module constants byte-for-byte', (
       cities: 4,
     });
     expect(CLASSIC_PROFILE.bankTrade.baseRate).toBe(4);
-    expect(CLASSIC_PROFILE.robber).toEqual({ handLimit: 7, halfDivisor: 2 });
+    expect(CLASSIC_PROFILE.robber).toEqual({
+      handLimit: 7,
+      halfDivisor: 2,
+      friendlyRobber: false,
+      friendlyRobberVpCeiling: 2,
+    });
     expect(CLASSIC_PROFILE.victory).toEqual({
       vpToWin: 10,
       longestRoadMin: 5,

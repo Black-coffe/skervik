@@ -23,6 +23,7 @@
 // seed draw, precisely so verify stays untouched.
 import {
   buildTopology,
+  computePublicVictoryPoints,
   type GameState,
   loadRuleProfile,
   type PlayerId,
@@ -194,6 +195,12 @@ function preferOver(a: ResourceType, b: ResourceType): boolean {
  * `intent.moveRobber` (validate requires a named victim whenever one is
  * stealable). The stolen RESOURCE itself is the normal seed-derived draw inside
  * validate/reduce (verify already covers it — no change). Pure.
+ *
+ * **S2.2.1 friendly-robber cross-check**: when `friendlyRobber` is on, a
+ * protected player (PUBLIC VP <= ceiling) is never picked as this deterministic
+ * victim — `validate` would reject a forced move naming one, which would hang
+ * the turn ([[turn-timer-forced-action-hang-risk]]). If every adjacent
+ * card-holder is protected, the forced move steals from no one (still legal).
  */
 function resolveMoveRobber(state: GameState): ForcedAction | null {
   const board = state.board;
@@ -205,6 +212,7 @@ function resolveMoveRobber(state: GameState): ForcedAction | null {
   );
   if (!defaultTile) return null; // defensive: 19 tiles, always one other than the robber's
 
+  const { robber } = loadRuleProfile(state.profileId ?? 'classic');
   const buildings = state.buildings ?? { settlements: {}, roads: {} };
   const eligibleOwners: PlayerId[] = [];
   for (const vertexId of defaultTile.vertexIds) {
@@ -217,14 +225,17 @@ function resolveMoveRobber(state: GameState): ForcedAction | null {
       eligibleOwners.push(owner);
     }
   }
-  // A deterministic victim only when one is actually stealable (adjacent + holds
-  // ≥1 card); the first such owner in fixed `state.players` order.
+  // A deterministic victim only when one is actually stealable (adjacent, holds
+  // ≥1 card, and — under friendlyRobber — is not protected); the first such
+  // owner in fixed `state.players` order.
   const victimId = state.players
     .map((p) => p.id)
     .find(
       (id) =>
         eligibleOwners.includes(id) &&
-        handSize(state.players.find((p) => p.id === id)?.resources ?? {}) > 0,
+        handSize(state.players.find((p) => p.id === id)?.resources ?? {}) > 0 &&
+        (!robber.friendlyRobber ||
+          computePublicVictoryPoints(state, id) > robber.friendlyRobberVpCeiling),
     );
 
   const intent: PlayerIntent =

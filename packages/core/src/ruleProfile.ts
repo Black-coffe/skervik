@@ -67,10 +67,14 @@ export interface BankTradeProfile {
   readonly baseRate: number;
 }
 
-/** Post-7 discard constants — `validate.ts`. */
+/** Post-7 discard constants + the S2.2.1 friendly-robber catch-up gate — `validate.ts`. */
 export interface RobberProfile {
   readonly handLimit: number;
   readonly halfDivisor: number;
+  /** When `true`, the robber cannot steal from a player at/below {@link RobberProfile.friendlyRobberVpCeiling} PUBLIC VP (S2.2.1 catch-up). */
+  readonly friendlyRobber: boolean;
+  /** PUBLIC-VP protection threshold consumed only while {@link RobberProfile.friendlyRobber} is `true`. */
+  readonly friendlyRobberVpCeiling: number;
 }
 
 /**
@@ -277,6 +281,11 @@ export const CLASSIC_PROFILE: RuleProfile = {
   robber: {
     handLimit: 7,
     halfDivisor: 2,
+    // Byte-frozen off (S2.2.1) — Balanced/Blitz/twoPlayer inherit `false` via
+    // their `...CLASSIC_PROFILE` spread; liveness proven by the internal
+    // FRIENDLY_ROBBER_TEST_PROFILE below, the S2.1.5 precedent.
+    friendlyRobber: false,
+    friendlyRobberVpCeiling: 2,
   },
   victory: {
     vpToWin: 10,
@@ -391,14 +400,42 @@ export const PARALLEL_TRADE_TEST_PROFILE: RuleProfile = {
 };
 
 /**
+ * INTERNAL, NON-SHIPPING profile id used ONLY to prove the `friendlyRobber`
+ * config path in tests (S2.2.1) — deliberately absent from
+ * {@link RuleProfileId} (and the protocol's `profileId` enum), so no client
+ * can select it. No shipping preset enables `friendlyRobber` yet (assigning
+ * catch-up flags to specific presets is a batched product decision once E2.2
+ * exists), yet the flag's live behavior still needs coverage — the S2.1.5
+ * precedent of proving a knob via a distinct profile.
+ */
+export const FRIENDLY_ROBBER_TEST_PROFILE_ID = '__friendly_robber_test__';
+
+/**
+ * Classic in every rule value EXCEPT `robber.friendlyRobber: true` — the
+ * internal fixture behind {@link FRIENDLY_ROBBER_TEST_PROFILE_ID}. Its `.id`
+ * stays `'classic'` (inherited via the spread; {@link RuleProfileId} has no
+ * test member) — the registry key, not `.id`, is what resolves it.
+ */
+export const FRIENDLY_ROBBER_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  robber: {
+    ...CLASSIC_PROFILE.robber,
+    friendlyRobber: true,
+    friendlyRobberVpCeiling: 2,
+  },
+};
+
+/**
  * The profile registry: the shipping presets plus the internal
- * parallel-trade test profile. Keyed by `string` (not {@link RuleProfileId}) so
- * the non-shipping test id has a home without widening the public union —
- * {@link SHIPPING_PROFILES} still guarantees every `RuleProfileId` has an entry.
+ * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
+ * {@link RuleProfileId}) so the non-shipping test ids have a home without
+ * widening the public union — {@link SHIPPING_PROFILES} still guarantees
+ * every `RuleProfileId` has an entry.
  */
 const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   ...SHIPPING_PROFILES,
   [PARALLEL_TRADE_TEST_PROFILE_ID]: PARALLEL_TRADE_TEST_PROFILE,
+  [FRIENDLY_ROBBER_TEST_PROFILE_ID]: FRIENDLY_ROBBER_TEST_PROFILE,
 };
 
 /**
