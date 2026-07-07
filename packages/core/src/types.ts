@@ -1114,6 +1114,8 @@ export type RejectReason =
   | 'NO_SUCH_VICTIM'
   /** Named `victimId` is adjacent but holds 0 resource cards — pick a different eligible victim (S1.3.1). */
   | 'VICTIM_HAS_NO_CARDS'
+  /** Named `victimId` is adjacent + holds cards, but is protected by `friendlyRobber` (PUBLIC VP <= ceiling, S2.2.1). */
+  | 'VICTIM_PROTECTED'
   /** `intent.discard` / `intent.moveRobber` attempted outside the `'robber'` phase (S1.3.1). */
   | 'NOT_IN_ROBBER_PHASE'
   /** `intent.proposeTrade` attempted while `GameState.openTradeOffer` is already set (S1.3.2). */

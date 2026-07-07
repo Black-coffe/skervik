@@ -408,6 +408,33 @@ function computeVictoryPoints(state: GameState, playerId: PlayerId): number {
 }
 
 /**
+ * The PUBLIC/visible VP standing (S2.2.1): identical to
+ * {@link computeVictoryPoints} EXCEPT it OMITS held VP dev cards — a
+ * catch-up rule that gates on "how far behind does this player LOOK" must
+ * never read hidden state, or "you can't rob X" would itself leak that X
+ * holds a hidden VP card. Used ONLY by the `friendlyRobber` steal-eligibility
+ * gate (below) and its forced-action mirror; `computeVictoryPoints` (the win
+ * check) stays untouched. S2.2.3 (hidden VP) will further refine what
+ * "public" means — this helper just must stay hidden-VP-blind until then.
+ */
+export function computePublicVictoryPoints(state: GameState, playerId: PlayerId): number {
+  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
+  const buildings = state.buildings;
+  let vp = 0;
+  if (buildings) {
+    vp += Object.values(buildings.settlements).filter(
+      (owner) => owner === playerId,
+    ).length;
+    vp +=
+      Object.values(buildings.cities ?? {}).filter((owner) => owner === playerId).length *
+      2;
+  }
+  if (state.longestRoadHolder === playerId) vp += victory.longestRoadVP;
+  if (state.largestArmyHolder === playerId) vp += victory.largestArmyVP;
+  return vp;
+}
+
+/**
  * Appends the award-change and victory events S1.3.4 derives AFTER a
  * VP/award-affecting action (build road/settlement/city, road-building card,
  * knight play, dev-card buy). `primaryEvents` are the action's own events;
@@ -697,8 +724,33 @@ function resolveRobberMove(
     // card to steal, regardless of whether a victimId was even named.
     return { ok: true };
   }
+
+  // S2.2.1 friendly robber: a validate LEGALITY rule, NOT a randomness
+  // change — the seed-derived steal draw below is completely untouched,
+  // only WHO may be named victim is restricted. `friendlyRobber:false`
+  // (every shipping preset today) makes this block a no-op, so the rest of
+  // the function runs byte-identically to before this story.
+  const { robber } = loadRuleProfile(state.profileId ?? 'classic');
+  if (robber.friendlyRobber) {
+    const stealableOwners = eligibleWithCards.filter(
+      (id) => computePublicVictoryPoints(state, id) > robber.friendlyRobberVpCeiling,
+    );
+    if (stealableOwners.length === 0) {
+      // Every adjacent card-holder is protected — same documented no-op as
+      // the unfiltered "nobody has cards" case above: the move is still
+      // legal, it simply steals from no one.
+      return { ok: true };
+    }
+  }
+
   if (victimId === undefined || !eligibleOwners.includes(victimId)) {
     return { ok: false, reason: 'NO_SUCH_VICTIM' };
+  }
+  if (
+    robber.friendlyRobber &&
+    computePublicVictoryPoints(state, victimId) <= robber.friendlyRobberVpCeiling
+  ) {
+    return { ok: false, reason: 'VICTIM_PROTECTED' };
   }
   const hand = expandHand(findPlayer(state, victimId)?.resources ?? {});
   if (hand.length === 0) {

@@ -82,6 +82,7 @@ export {
   CLASSIC_BUILD_PROFILE,
   CLASSIC_SETUP_PROFILE,
   CLASSIC_VICTORY_PROFILE,
+  computePublicVictoryPoints,
   validate,
 } from './validate.js';
 export type { RandomnessMismatch, VerifyRandomnessResult } from './verify.js';

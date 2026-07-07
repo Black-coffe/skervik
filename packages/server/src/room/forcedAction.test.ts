@@ -18,6 +18,7 @@ import {
   type PlayerState,
   reduce,
   replay,
+  type RuleProfileId,
   type Seed,
   type TileId,
   validate,
@@ -187,6 +188,83 @@ describe('resolveForcedAction — the deterministic robber move (S2.1.4)', () =>
       playerId: 'p1',
       tileId: lowestOtherTile,
       victimId: 'p2',
+    });
+    const result = validate(state, forced!.intent, forced!.playerId, SEED);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('resolveForcedAction — friendlyRobber cross-check, no-hang (S2.2.1)', () => {
+  // `'__friendly_robber_test__'` is the internal, non-shipping profile id
+  // behind `FRIENDLY_ROBBER_TEST_PROFILE` (`packages/core/src/ruleProfile.ts`,
+  // S2.1.5's own precedent) — deliberately NOT re-exported from
+  // `@skervik/core`'s index (like its S2.1.5 `parallelTrade` counterpart), so
+  // it's referenced here by its literal registry key rather than an import.
+  const FRIENDLY_PROFILE_ID = '__friendly_robber_test__' as unknown as RuleProfileId;
+  const layout = generateBoard(SEED, topology);
+  const board = {
+    tileKinds: layout.tileKinds,
+    tileTokens: layout.tileTokens,
+    portContents: layout.portContents,
+    robberTileId: layout.robberTileId,
+  };
+  const defaultTile = topology.tiles.find((t) => t.id !== board.robberTileId);
+  const lowestOtherTile = defaultTile?.id as TileId;
+  const protectedVertex = defaultTile?.vertexIds[0] as VertexId;
+  // Elsewhere on the board (never adjacent to `defaultTile`) — used only to
+  // push a player's PUBLIC VP above the friendly-robber ceiling.
+  const boostTile = topology.tiles[9];
+  const boostVertex = boostTile?.vertexIds[0] as VertexId;
+
+  it('never names a protected victim: picks the unprotected adjacent player instead (no hang)', () => {
+    // p2: 1 settlement on the default tile = 1 public VP <= ceiling(2) ->
+    // protected. p3: same settlement (1) + a city elsewhere (2) = 3 public
+    // VP -> unprotected, and also adjacent+carded via a second settlement
+    // on the default tile's OTHER vertex.
+    const victimVertex = defaultTile?.vertexIds[1] as VertexId;
+    const state = baseState({
+      phase: 'robber',
+      currentPlayerId: 'p1' as PlayerId,
+      profileId: FRIENDLY_PROFILE_ID,
+      players: [player('p1'), player('p2', { iron: 2 }), player('p3', { iron: 3 })],
+      board,
+      buildings: {
+        settlements: {
+          [protectedVertex]: 'p2' as PlayerId,
+          [victimVertex]: 'p3' as PlayerId,
+        },
+        roads: {},
+        cities: { [boostVertex]: 'p3' as PlayerId },
+      },
+    });
+    const forced = resolveForcedAction(state);
+    expect(forced?.intent).toEqual({
+      type: 'intent.moveRobber',
+      playerId: 'p1',
+      tileId: lowestOtherTile,
+      victimId: 'p3', // NOT the protected p2
+    });
+    // The load-bearing proof: validate ACCEPTS it — no VICTIM_PROTECTED
+    // reject, so the turn cannot hang.
+    const result = validate(state, forced!.intent, forced!.playerId, SEED);
+    expect(result.ok).toBe(true);
+  });
+
+  it('omits victimId (steals from no one) when the ONLY adjacent card-holder is protected', () => {
+    const state = baseState({
+      phase: 'robber',
+      currentPlayerId: 'p1' as PlayerId,
+      profileId: FRIENDLY_PROFILE_ID,
+      players: [player('p1'), player('p2', { iron: 2 })],
+      board,
+      buildings: { settlements: { [protectedVertex]: 'p2' as PlayerId }, roads: {} },
+    });
+    const forced = resolveForcedAction(state);
+    expect(forced?.intent).toEqual({
+      type: 'intent.moveRobber',
+      playerId: 'p1',
+      tileId: lowestOtherTile,
+      // no victimId — the only adjacent card-holder is protected.
     });
     const result = validate(state, forced!.intent, forced!.playerId, SEED);
     expect(result.ok).toBe(true);
