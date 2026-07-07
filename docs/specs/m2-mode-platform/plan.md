@@ -163,7 +163,7 @@ already writes; S2.6.3 moves it off local FS). GDPR self-service delete/export.
 
 | Seam | Owner story | Memory |
 |---|---|---|
-| verify **board-leg** (verifier still Classic-board-hardcoded) | **S2.1.6** (first board-diverging profile) | [[verify-profile-blindness-carryforward]] |
+| verify **board-leg** (verifier still Classic-board-hardcoded) | a future **trimmed-board / variable-radius** story (S2.1.6 chose phantom on the STANDARD board → board does NOT diverge, so it does NOT discharge this) | [[verify-profile-blindness-carryforward]] |
 | **profile-override delivery** (adjusted non-preset profile → live match; state carries only `profileId`) | **E2.5 / S2.5.4** (lobby-apply; record in `match.started`) | [[adaptive-profile-override-delivery-seam]] |
 | turn-timer **forced-action hang** (no re-arm watchdog if a forced intent fails validate) + multi-ower busy-spin + per-kind test | **E2.2** story that changes discard/robber legality, or **S2.1.6** setup forced-placement | [[turn-timer-forced-action-hang-risk]] |
 | **setup-phase timeout auto-placement** (S2.1.4 returns `null` for setup) | **S2.1.6** (needs board topology helpers) | (in S2.1.4 spec) |
