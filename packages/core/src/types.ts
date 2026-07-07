@@ -8,6 +8,7 @@
 // full ruleset.
 
 import type { EdgeId, TileId, VertexId } from './board.js';
+import type { RuleProfileId } from './ruleProfile.js';
 
 /** Opaque identifier for a match (room / game instance). */
 export type MatchId = string;
@@ -186,6 +187,18 @@ export interface GameState {
   /** `SHA256(seed)`, published before the match (commit step of commit-reveal). */
   readonly seedHash: string;
   /**
+   * The rule profile in force for this match (S2.1.1), fixed once by
+   * `match.started` from {@link MatchStartedEvent.profileId} and never changed.
+   * The engine resolves it to a full {@link RuleProfile} via `loadRuleProfile`
+   * (`ruleProfile.ts`) at each rule-knob read, so a match's rules are a fact
+   * carried in the log — replay and the S1.7.3 verifier resolve identical
+   * rules (event-sourcing). Optional (like {@link GameState.board}) so states
+   * assembled without a `match.started` carrying it — pre-S2.1.1 golden
+   * fixtures and unit-test genesis literals — stay byte-identical; a missing
+   * `profileId` resolves to `'classic'`, the M1 default.
+   */
+  readonly profileId?: RuleProfileId;
+  /**
    * Present once `board.generated` has been applied (S1.1.2), absent
    * before — optional rather than a placeholder value so pre-S1.1.2 golden
    * fixtures (no board event in their log) stay byte-identical unchanged.
@@ -312,6 +325,13 @@ export interface MatchStartedEvent extends BaseGameEvent {
   readonly matchId: MatchId;
   readonly seedHash: string;
   readonly playerIds: ReadonlyArray<PlayerId>;
+  /**
+   * The rule profile selected for this match (S2.1.1). Append-compatible and
+   * optional: an event without it (pre-S2.1.1 golden fixtures) folds to a
+   * `GameState` whose `profileId` stays absent and resolves to `'classic'`.
+   * `GameRoom` always emits `'classic'` for now (mode selection UI = S2.5.4).
+   */
+  readonly profileId?: RuleProfileId;
 }
 
 /**

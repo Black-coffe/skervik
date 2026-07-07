@@ -255,6 +255,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       matchId: this.gameState.matchId,
       seedHash: this.gameState.seedHash,
       playerIds,
+      // The match's rule profile (S2.1.1) — hardcoded Classic for now; lobby
+      // mode selection is S2.5.4. Carried in the log so replay/verify resolve
+      // the same rules (event-sourcing). The pure engine reads it via
+      // `state.profileId` + `loadRuleProfile` — no behavior change from M1.
+      profileId: 'classic',
     };
     const afterStart = reduce(this.gameState, matchStarted);
 

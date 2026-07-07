@@ -32,6 +32,24 @@ export {
   rollDie,
   shuffle,
 } from './rng.js';
+export type {
+  BankTradeProfile,
+  BoardProfile,
+  BuildProfile,
+  DevCardProfile,
+  ProductionProfile,
+  RobberProfile,
+  RuleProfile,
+  RuleProfileId,
+  SetupProfile,
+  VictoryProfile,
+} from './ruleProfile.js';
+export {
+  BALANCED_PROFILE,
+  BLITZ_PROFILE,
+  CLASSIC_PROFILE,
+  loadRuleProfile,
+} from './ruleProfile.js';
 export type * from './types.js';
 export type { ValidateResult } from './validate.js';
 export {

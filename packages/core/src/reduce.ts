@@ -99,6 +99,12 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         // `GameState.playerOrder` docstring).
         playerOrder: event.playerIds,
         currentPlayerId: firstPlayer ? firstPlayer.id : state.currentPlayerId,
+        // The match's rule profile (S2.1.1) becomes a fact carried in state,
+        // so replay/verify resolve identical rules. Only set when the event
+        // carries it — a pre-S2.1.1 `match.started` (golden fixture) leaves
+        // `profileId` absent, and the engine resolves absent → `'classic'`;
+        // this keeps those frozen fixtures byte-identical.
+        ...(event.profileId ? { profileId: event.profileId } : {}),
         eventIndex: event.index + 1,
       };
     }

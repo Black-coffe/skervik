@@ -20,53 +20,18 @@ import {
   type TileTopology,
 } from './board.js';
 import { type Seed, shuffle } from './rng.js';
+import { type BoardProfile, CLASSIC_PROFILE } from './ruleProfile.js';
 import type { PortContent, TileKind } from './types.js';
 
-/** Classic profile constants (tile mix, token multiset, port mix) — a single swappable object per the M1 plan's rule-profile discipline; M2 profiles replace this, not the algorithm below. */
-interface ClassicBoardProfile {
-  /** 19 tile kinds (4 timber / 3 clay / 4 fleece / 4 barley / 3 iron / 1 desert), shuffled onto the 19 tiles. */
-  readonly tileMix: readonly TileKind[];
-  /** 18 number tokens, shuffled onto the 18 non-desert tiles. */
-  readonly tokens: readonly number[];
-  /** 9 port contents (4x generic 3:1, 5x resource 2:1 — one per resource), shuffled onto the 9 fixed port slots. */
-  readonly ports: readonly PortContent[];
-}
-
-export const CLASSIC_BOARD_PROFILE: ClassicBoardProfile = {
-  tileMix: [
-    'timber',
-    'timber',
-    'timber',
-    'timber',
-    'clay',
-    'clay',
-    'clay',
-    'fleece',
-    'fleece',
-    'fleece',
-    'fleece',
-    'barley',
-    'barley',
-    'barley',
-    'barley',
-    'iron',
-    'iron',
-    'iron',
-    'desert',
-  ],
-  tokens: [2, 3, 3, 4, 4, 5, 5, 6, 6, 8, 8, 9, 9, 10, 10, 11, 11, 12],
-  ports: [
-    { kind: 'generic', rate: 3 },
-    { kind: 'generic', rate: 3 },
-    { kind: 'generic', rate: 3 },
-    { kind: 'generic', rate: 3 },
-    { kind: 'resource', rate: 2, resource: 'timber' },
-    { kind: 'resource', rate: 2, resource: 'clay' },
-    { kind: 'resource', rate: 2, resource: 'fleece' },
-    { kind: 'resource', rate: 2, resource: 'barley' },
-    { kind: 'resource', rate: 2, resource: 'iron' },
-  ],
-};
+/**
+ * Back-compat alias for the Classic board sub-profile — the single source of
+ * truth now lives on {@link CLASSIC_PROFILE} (`ruleProfile.ts`, S2.1.1); this
+ * re-derives it so existing importers (`boardgen.test.ts`, `@skervik/core`
+ * re-export) keep working with byte-identical values. `generateBoard` reads
+ * from its `board` parameter, not from this global, so a match under a
+ * different profile generates its own board.
+ */
+export const CLASSIC_BOARD_PROFILE: BoardProfile = CLASSIC_PROFILE.board;
 
 /**
  * Reserved RNG stream-index band for board generation (see
@@ -159,21 +124,21 @@ function satisfiesRedTokenConstraint(
 
 /**
  * Generates the deterministic Classic board layout for `seed`. Pure: same
- * `(seed, topology)` in -> byte-identical `BoardLayout` out, every time
+ * `(seed, topology, board)` in -> byte-identical `BoardLayout` out, every time
  * (ADR-0003). `topology` defaults to a fresh `buildTopology()` call — pass
- * one in to avoid recomputing it when generating many boards.
+ * one in to avoid recomputing it when generating many boards. `board` is the
+ * board sub-profile to lay out; it defaults to Classic (`CLASSIC_PROFILE.board`)
+ * so every existing caller stays byte-identical, and the server passes the
+ * resolved profile's board for other modes (S2.1.1).
  */
 export function generateBoard(
   seed: Seed,
   topology: BoardTopology = buildTopology(),
+  board: BoardProfile = CLASSIC_PROFILE.board,
 ): BoardLayout {
   const tileIds = topology.tiles.map((tile) => tile.id);
 
-  const shuffledKinds = shuffle(
-    CLASSIC_BOARD_PROFILE.tileMix,
-    seed,
-    BOARD_GEN_STREAM.TILE_KIND_SHUFFLE,
-  );
+  const shuffledKinds = shuffle(board.tileMix, seed, BOARD_GEN_STREAM.TILE_KIND_SHUFFLE);
   const tileKinds: Record<TileId, TileKind> = {};
   tileIds.forEach((id, i) => {
     tileKinds[id] = shuffledKinds[i] as TileKind;
@@ -194,7 +159,7 @@ export function generateBoard(
     const streamIndex =
       BOARD_GEN_STREAM.TOKEN_SHUFFLE_BASE +
       attempt * BOARD_GEN_STREAM.TOKEN_SHUFFLE_STRIDE;
-    const candidate = shuffle(CLASSIC_BOARD_PROFILE.tokens, seed, streamIndex);
+    const candidate = shuffle(board.tokens, seed, streamIndex);
     tokensForNonDesert = candidate;
     if (satisfiesRedTokenConstraint(nonDesertTileIds, candidate, tileAdjacency)) {
       redConstraintSatisfied = true;
@@ -207,13 +172,9 @@ export function generateBoard(
     tileTokens[id] = tokensForNonDesert[i] as number;
   });
 
-  const portContents = shuffle(
-    CLASSIC_BOARD_PROFILE.ports,
-    seed,
-    BOARD_GEN_STREAM.PORT_SHUFFLE,
-  );
+  const portContents = shuffle(board.ports, seed, BOARD_GEN_STREAM.PORT_SHUFFLE);
 
-  // Exactly one 'desert' entry in CLASSIC_BOARD_PROFILE.tileMix guarantees
+  // Exactly one 'desert' entry in the board profile's tileMix guarantees
   // `.find` succeeds — the shuffle is a permutation, never drops elements.
   const robberTileId = tileIds.find((id) => tileKinds[id] === 'desert') as TileId;
 
