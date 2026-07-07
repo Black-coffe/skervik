@@ -41,3 +41,5 @@ export {
   CLASSIC_VICTORY_PROFILE,
   validate,
 } from './validate.js';
+export type { RandomnessMismatch, VerifyRandomnessResult } from './verify.js';
+export { verifyMatchRandomness } from './verify.js';
