@@ -17,6 +17,19 @@ export type MatchId = string;
 export type PlayerId = string;
 
 /**
+ * The reserved owner id for NEUTRAL/phantom blocking settlements (S2.1.6, the
+ * 2-player mode). A sentinel that can NEVER equal a real {@link PlayerId} (real
+ * ids come from seated clients; this double-underscore token is reserved), so a
+ * neutral-owned building is excluded from every per-player tally by owner
+ * comparison alone: it takes no turns (not in `playerOrder`), earns no
+ * production (the payout loop skips it), can't be robbed / traded with / counted
+ * for VP (those iterate `state.players`, which never contains it). It exists
+ * only in {@link BuildingsState} so the existing distance rule blocks real
+ * players on and adjacent to it with ZERO new adjacency code.
+ */
+export const NEUTRAL_OWNER_ID: PlayerId = '__neutral__';
+
+/**
  * Resource kind held by a player. Left abstract on purpose: the concrete
  * archipelago resource set (timber, ore, fish, ...) is an M1 ruleset
  * decision, not a core-skeleton concern.
@@ -373,6 +386,25 @@ export interface BoardGeneratedEvent extends BaseGameEvent {
   readonly tileTokens: Readonly<Record<TileId, number>>;
   readonly portContents: readonly PortContent[];
   readonly robberTileId: TileId;
+}
+
+/**
+ * Emitted once per neutral/phantom blocking settlement during match genesis
+ * (S2.1.6, the 2-player mode) — after `board.generated`, before the setup
+ * draft. Places a settlement owned by {@link NEUTRAL_OWNER_ID} at `vertexId`,
+ * chosen by the DETERMINISTIC board policy (`neutral.ts`), NOT a seed draw — so
+ * it needs no PRNG slot and the fair-RNG verifier folds it as a plain
+ * (non-random) event, exactly like the Classic board doesn't diverge. Recorded
+ * as an event so replay reconstructs the identical board (event sourcing).
+ * Append-compatible + only emitted under a profile with
+ * `neutralSettlements` set, so Classic/Balanced/Blitz logs are byte-unchanged.
+ * Unlike {@link SettlementPlacedEvent} it carries no `payout` and sets no
+ * `pendingRoadVertexId` — a neutral placement is a static genesis fact, not a
+ * snake-draft turn.
+ */
+export interface NeutralPlacedEvent extends BaseGameEvent {
+  readonly type: 'neutral.placed';
+  readonly vertexId: VertexId;
 }
 
 /**
@@ -765,6 +797,7 @@ export interface GameEndedEvent extends BaseGameEvent {
 export type GameEvent =
   | MatchStartedEvent
   | BoardGeneratedEvent
+  | NeutralPlacedEvent
   | DiceRolledEvent
   | ResourcesProducedEvent
   | TurnEndedEvent

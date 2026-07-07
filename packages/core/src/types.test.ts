@@ -25,6 +25,7 @@ import type {
   MatchStartedEvent,
   MonopolyPlayedEvent,
   MoveRobberIntent,
+  NeutralPlacedEvent,
   PlaceRoadIntent,
   PlaceSettlementIntent,
   PlayerIntent,
@@ -101,6 +102,7 @@ describe('GameEvent', () => {
       portContents: [{ kind: 'generic', rate: 3 }],
       robberTileId: '0,0',
     },
+    { type: 'neutral.placed', index: 2, vertexId: 'vertex-0' },
     { type: 'dice.rolled', index: 2, playerId: 'player-1', dieA: 5, dieB: 3, total: 8 },
     {
       type: 'resources.produced',
@@ -244,6 +246,11 @@ describe('GameEvent', () => {
         case 'board.generated': {
           const e: BoardGeneratedEvent = event;
           expect(e.robberTileId).toBe('0,0');
+          break;
+        }
+        case 'neutral.placed': {
+          const e: NeutralPlacedEvent = event;
+          expect(e.vertexId).toBe('vertex-0');
           break;
         }
         case 'dice.rolled': {

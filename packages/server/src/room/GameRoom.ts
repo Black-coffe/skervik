@@ -15,9 +15,12 @@ import {
   generateBoard,
   loadRuleProfile,
   type MatchStartedEvent,
+  type NeutralPlacedEvent,
+  neutralPlacementEvents,
   type PlayerId,
   type PlayerIntent,
   reduce,
+  type RuleProfileId,
   type Seed,
   type TimerProfile,
   validate,
@@ -80,6 +83,15 @@ const PROTOCOL_VERSION_MISMATCH_CODE = 4001;
 export interface GameRoomOptions {
   readonly maxSeats?: number;
   /**
+   * The rule profile this match runs under (S2.1.1/S2.1.6). Defaults to
+   * `'classic'` — the M1 behavior, unchanged: lobby mode SELECTION is S2.5.4, so
+   * production rooms stay Classic/4 until that lands. A test/room can set
+   * `'twoPlayer'` (with `maxSeats: 2`) to run the 2-player mode, which places the
+   * profile's `neutralSettlements` neutral blockers at genesis (S2.1.6). Carried
+   * into `match.started` so replay/verify resolve the same rules (event-sourcing).
+   */
+  readonly profileId?: RuleProfileId;
+  /**
    * Where validated events are appended before broadcast (S1.4.2 seam). When
    * given, it wins over `matchesDir`; tests inject an in-memory buffer here.
    * When omitted, the room builds an {@link FsEventSink} if `matchesDir` is set
@@ -130,6 +142,14 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * only at `game.ended`, only into match metadata (S1.4.3).
    */
   #seed!: Seed;
+
+  /**
+   * The match's rule profile id (S2.1.1/S2.1.6), fixed at `onCreate` from the
+   * room option (default `'classic'`). Emitted in `match.started` and read at
+   * `#startMatch` to decide neutral placement — the pure engine itself resolves
+   * rules from `state.profileId` (`loadRuleProfile`), never from this field.
+   */
+  #profileId: RuleProfileId = 'classic';
 
   /**
    * The one-way reveal latch (S1.4.3 / ADR-0009 invariant #4). Flips exactly
@@ -221,6 +241,10 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
 
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
+    // The match's rule profile (S2.1.1/S2.1.6) — Classic by default (production
+    // has no lobby mode selection yet, S2.5.4); a `twoPlayer` room places
+    // neutral blockers at genesis (`#startMatch`). Byte-unchanged for the default.
+    this.#profileId = options?.profileId ?? 'classic';
     // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
     // otherwise `matchesDir` (production) selects the durable ndjson writer keyed
     // to this room's id; with neither, the in-memory default keeps dev/test runs
@@ -328,19 +352,25 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       matchId: this.gameState.matchId,
       seedHash: this.gameState.seedHash,
       playerIds,
-      // The match's rule profile (S2.1.1) — hardcoded Classic for now; lobby
-      // mode selection is S2.5.4. Carried in the log so replay/verify resolve
-      // the same rules (event-sourcing). The pure engine reads it via
-      // `state.profileId` + `loadRuleProfile` — no behavior change from M1.
-      profileId: 'classic',
+      // The match's rule profile (S2.1.1/S2.1.6) — the room's `#profileId`
+      // (Classic by default; `twoPlayer` for a 2p room). Lobby mode selection is
+      // S2.5.4. Carried in the log so replay/verify resolve the same rules
+      // (event-sourcing). The pure engine reads it via `state.profileId` +
+      // `loadRuleProfile` — no behavior change from M1 for the Classic default.
+      profileId: this.#profileId,
     };
     const afterStart = reduce(this.gameState, matchStarted);
 
     // The layout is generated from the SECRET seed (never serialized) — the
     // full board travels as event data so replay never re-runs the generator
-    // (ADR-0003). `board.generated`'s index continues from the post-start
-    // `eventIndex`, so both events form one contiguous batch.
-    const layout = generateBoard(this.#seed, buildTopology());
+    // (ADR-0003). The board sub-profile comes from the resolved rule profile —
+    // `twoPlayer` uses the standard Classic board (S2.1.6: phantom on the
+    // standard board, no topology divergence), so this is byte-identical to the
+    // M1 path for every current profile. `board.generated`'s index continues
+    // from the post-start `eventIndex`, so both events form one contiguous batch.
+    const profile = loadRuleProfile(this.#profileId);
+    const topology = buildTopology();
+    const layout = generateBoard(this.#seed, topology, profile.board);
     const boardGenerated: BoardGeneratedEvent = {
       type: 'board.generated',
       index: afterStart.eventIndex,
@@ -349,8 +379,23 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       portContents: layout.portContents,
       robberTileId: layout.robberTileId,
     };
+    const afterBoard = reduce(afterStart, boardGenerated);
 
-    const events: GameEvent[] = [matchStarted, boardGenerated];
+    // Neutral/phantom blockers (S2.1.6): a profile with `neutralSettlements` set
+    // (only `twoPlayer` today) places that many neutral settlements at genesis,
+    // right after `board.generated` and before the setup draft. The placement is
+    // a DETERMINISTIC function of the public board (`neutralPlacementEvents`) —
+    // NO seed draw, so it needs no PRNG slot and the fair-RNG verifier folds
+    // these as plain events. Empty (`[]`) for every non-`twoPlayer` profile, so
+    // the Classic genesis batch stays exactly `[match.started, board.generated]`.
+    const neutralEvents: NeutralPlacedEvent[] = neutralPlacementEvents(
+      layout,
+      profile.neutralSettlements ?? 0,
+      afterBoard.eventIndex,
+      topology,
+    );
+
+    const events: GameEvent[] = [matchStarted, boardGenerated, ...neutralEvents];
     const nextState = events.reduce(
       (state, event) => reduce(state, event),
       this.gameState,

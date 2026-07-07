@@ -41,6 +41,7 @@ export {
   publicDevCardCount,
   shuffledDevDeck,
 } from './devcards.js';
+export { computeNeutralPlacements, neutralPlacementEvents } from './neutral.js';
 export { reduce, replay } from './reduce.js';
 export { parseGameEventLog } from './replay.js';
 export type { Seed } from './rng.js';
@@ -69,8 +70,12 @@ export {
   BLITZ_PROFILE,
   CLASSIC_PROFILE,
   loadRuleProfile,
+  TWO_PLAYER_PROFILE,
 } from './ruleProfile.js';
 export type * from './types.js';
+// `NEUTRAL_OWNER_ID` is a runtime VALUE (unlike the rest of `types.js`, which is
+// type-only) — re-exported separately so `export type *` above stays type-only.
+export { NEUTRAL_OWNER_ID } from './types.js';
 export type { ValidateResult } from './validate.js';
 export {
   CLASSIC_BANK_TRADE_PROFILE,

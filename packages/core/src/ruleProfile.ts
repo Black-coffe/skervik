@@ -15,10 +15,11 @@
 import type { DevCardKind, PortContent, ResourceType, TileKind } from './types.js';
 
 /**
- * The selectable rule-profile ids (CLAUDE.md's `classic | balanced | blitz`).
- * `'deep'` is reserved for M4 and deliberately NOT added yet.
+ * The selectable rule-profile ids (CLAUDE.md's `classic | balanced | blitz`,
+ * plus the S2.1.6 `twoPlayer` mode). `'deep'` is reserved for M4 and
+ * deliberately NOT added yet.
  */
-export type RuleProfileId = 'classic' | 'balanced' | 'blitz';
+export type RuleProfileId = 'classic' | 'balanced' | 'blitz' | 'twoPlayer';
 
 /** Classic board composition (tile mix, token multiset, port mix) — `boardgen.ts`. */
 export interface BoardProfile {
@@ -156,6 +157,18 @@ export interface RuleProfile {
    * room to arm `this.clock`, never by `reduce`/`validate` (grep-confirmed).
    */
   readonly timers: TimerProfile;
+  /**
+   * How many NEUTRAL/phantom blocking settlements to place at match genesis
+   * (S2.1.6, the 2-player mode). ABSENT on every profile except `twoPlayer` —
+   * so Classic/Balanced/Blitz (and their golden fixtures) stay byte-frozen: no
+   * neutral placement runs when this is undefined. When set, the deterministic
+   * board policy (`neutral.ts`) places this many neutral settlements on the
+   * highest-production legal vertices at genesis, forcing the two real players
+   * to spread and compete on the full standard board (the "phantom on the
+   * standard board" mechanic — no board topology change, no seed draw). v1
+   * value, documented tunable — calibrate against 2p telemetry in M3.
+   */
+  readonly neutralSettlements?: number;
 }
 
 /**
@@ -323,11 +336,34 @@ export const BLITZ_PROFILE: RuleProfile = {
   },
 };
 
+/**
+ * Two-player — Classic in every rule value (standard board, costs, VP) EXCEPT
+ * it places {@link RuleProfile.neutralSettlements} NEUTRAL blocking settlements
+ * at genesis (S2.1.6). Two real players on the full 19-tile board don't compete
+ * for space, producing a dull solo-build; a handful of neutral blockers on the
+ * best vertices (a DETERMINISTIC board policy, `neutral.ts` — NOT a seed draw)
+ * forces them to spread and contest, reusing the existing distance rule to
+ * block. The neutral is excluded from turns/production/robber/trade/VP (it's not
+ * a real player). `neutralSettlements` is v1 (2) and documented tunable.
+ *
+ * `twoPlayer` is modeled as its own profile id (like Balanced/Blitz), so
+ * "2-player Balanced" isn't expressible yet — making player-count orthogonal to
+ * rule-mode (a flag any profile sets when 2 seats) is a deferred refinement; the
+ * distinct-id path is the simplest coherent thing now (Law 2, plan §S2.1.6).
+ */
+export const TWO_PLAYER_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  id: 'twoPlayer',
+  name: 'Two-Player',
+  neutralSettlements: 2,
+};
+
 /** The shipping profiles — one entry per {@link RuleProfileId} (exhaustive). */
 const SHIPPING_PROFILES: Readonly<Record<RuleProfileId, RuleProfile>> = {
   classic: CLASSIC_PROFILE,
   balanced: BALANCED_PROFILE,
   blitz: BLITZ_PROFILE,
+  twoPlayer: TWO_PLAYER_PROFILE,
 };
 
 /**

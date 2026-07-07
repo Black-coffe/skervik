@@ -279,7 +279,7 @@ const MatchStartedEventSchema = z.object({
   playerIds: z.array(z.string()),
   // S2.1.1: the match's rule profile. Optional + append-compatible — a
   // pre-S2.1.1 emit without it still validates and folds to Classic.
-  profileId: z.enum(['classic', 'balanced', 'blitz']).optional(),
+  profileId: z.enum(['classic', 'balanced', 'blitz', 'twoPlayer']).optional(),
 });
 const BoardGeneratedEventSchema = z.object({
   type: z.literal('board.generated'),
@@ -288,6 +288,13 @@ const BoardGeneratedEventSchema = z.object({
   tileTokens: z.record(z.string(), z.number()),
   portContents: z.array(PortContentSchema),
   robberTileId: z.string(),
+});
+// S2.1.6: a NEUTRAL/phantom blocking settlement placed at genesis (2-player
+// mode). Append-compatible — only emitted under the `twoPlayer` profile.
+const NeutralPlacedEventSchema = z.object({
+  type: z.literal('neutral.placed'),
+  index: z.number(),
+  vertexId: z.string(),
 });
 const DiceRolledEventSchema = z.object({
   type: z.literal('dice.rolled'),
@@ -459,6 +466,7 @@ const GameEndedEventSchema = z.object({
 export const GameEventSchema = z.discriminatedUnion('type', [
   MatchStartedEventSchema,
   BoardGeneratedEventSchema,
+  NeutralPlacedEventSchema,
   DiceRolledEventSchema,
   ResourcesProducedEventSchema,
   TurnEndedEventSchema,

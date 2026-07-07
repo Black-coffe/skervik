@@ -12,7 +12,11 @@ import {
   type EdgeId,
   type GameState,
   generateBoard,
+  loadRuleProfile,
   type MatchStartedEvent,
+  NEUTRAL_OWNER_ID,
+  type NeutralPlacedEvent,
+  neutralPlacementEvents,
   parseGameEventLog,
   type PlayerId,
   type PlayerIntent,
@@ -1152,6 +1156,68 @@ describe('GameRoom', () => {
 
     await c1.leave();
     await c2.leave();
+  });
+
+  // --- S2.1.6: 2-player mode via room options (NO default change) ----------
+  // A room created with `maxSeats: 2` + `profileId: 'twoPlayer'` starts on
+  // seats-full and emits the neutral/phantom blockers as genesis events through
+  // the SAME persist→commit→broadcast pipeline. The production default
+  // (classic/4, proven by the Phase A tests above) is untouched — mode SELECTION
+  // is S2.5.4; this just proves the option wires the mechanic end to end.
+
+  it('a maxSeats:2 + twoPlayer room starts and places the neutral blockers at genesis', async () => {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 2,
+      profileId: 'twoPlayer',
+      seed: MATCH_START_SEED,
+      sink,
+    });
+    const seatIds: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      seatIds.push((await testServer.connectTo(room, CONNECT_OPTS)).sessionId);
+    }
+    await nextTick();
+
+    // Started under the twoPlayer profile.
+    expect(room.gameState.phase).toBe('setup');
+    expect(room.gameState.profileId).toBe('twoPlayer');
+    expect(room.gameState.players.map((p) => p.id)).toEqual(seatIds);
+
+    const expectedNeutrals = loadRuleProfile('twoPlayer').neutralSettlements ?? 0;
+    // Genesis batch: match.started, board.generated, then the neutral blockers.
+    expect(sink.events.map((e) => e.type)).toEqual([
+      'match.started',
+      'board.generated',
+      ...Array<string>(expectedNeutrals).fill('neutral.placed'),
+    ]);
+    expect((sink.events[0] as MatchStartedEvent).profileId).toBe('twoPlayer');
+
+    // The blockers landed on the board under the reserved neutral id, at the
+    // SAME deterministic vertices the pure policy computes from this board.
+    const neutralVertices = sink.events
+      .filter((e): e is NeutralPlacedEvent => e.type === 'neutral.placed')
+      .map((e) => e.vertexId);
+    expect(neutralVertices).toHaveLength(expectedNeutrals);
+    for (const vertexId of neutralVertices) {
+      expect(room.gameState.buildings?.settlements[vertexId]).toBe(NEUTRAL_OWNER_ID);
+    }
+    const layout = generateBoard(
+      MATCH_START_SEED,
+      buildTopology(),
+      loadRuleProfile('twoPlayer').board,
+    );
+    expect(neutralVertices).toEqual(
+      neutralPlacementEvents(layout, expectedNeutrals, 2).map((e) => e.vertexId),
+    );
+    // eventIndex advanced past every genesis event (2 + neutral count).
+    expect(room.gameState.eventIndex).toBe(2 + expectedNeutrals);
+  });
+
+  it('the default room (no profileId) stays Classic and emits NO neutral events', async () => {
+    const { room, sink } = await seatFullRoom(3);
+    expect(room.gameState.profileId).toBe('classic');
+    expect(sink.events.some((e) => e.type === 'neutral.placed')).toBe(false);
   });
 });
 
