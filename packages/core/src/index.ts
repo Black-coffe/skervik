@@ -2,6 +2,12 @@
 // ADR-0003: no Date.now(), no Math.random(), no I/O.
 export const CORE_VERSION = '0.0.1' as const;
 
+export {
+  BALANCED_ROLL_DECK,
+  drawBalancedRoll,
+  ROLL_DECK_STREAM,
+  shuffledRollDeck,
+} from './balancedDeck.js';
 export type {
   AxialCoord,
   BoardTopology,

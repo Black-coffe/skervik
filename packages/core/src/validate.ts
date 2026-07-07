@@ -3,6 +3,7 @@
 // Per the deterministic-core invariant, validate never throws for an expected
 // rejection — it always returns the discriminated ValidateResult below.
 
+import { drawBalancedRoll } from './balancedDeck.js';
 import {
   type BoardTopology,
   buildTopology,
@@ -889,20 +890,27 @@ export function validate(
 
   switch (intent.type) {
     case 'intent.rollDice': {
-      // Fair-RNG draw: Classic play is 2d6, each die its own slot of the
-      // gameplay stream (S1.2.1 scheme, `docs/wiki/rng-stream-map.md` §1) —
-      // `gameplayStreamIndex(state.eventIndex, slot)` — so anyone with the
-      // revealed seed can recompute both faces from the public event log
-      // post-match (commit-reveal, `docs/wiki/fair-rng-commit-reveal.md`).
-      // No ambient randomness (ADR-0003).
-      const dieA = rollDie(
-        seed,
-        gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_A),
-      );
-      const dieB = rollDie(
-        seed,
-        gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_B),
-      );
+      // Fair-RNG draw, branched on the profile's randomness source (S2.1.2).
+      // Both branches emit the SAME `dice.rolled` shape (`dieA`,`dieB`,`total`)
+      // — only the SOURCE of the pair differs — so `reduce`/production/robber
+      // and the client need zero change. No ambient randomness (ADR-0003).
+      const { randomness } = loadRuleProfile(state.profileId ?? 'classic');
+      let dieA: number;
+      let dieB: number;
+      if (randomness === 'balanced_deck') {
+        // Balanced: a without-replacement draw from the 36-outcome deck
+        // (`balancedDeck.ts`), keyed to the cumulative roll count so anyone
+        // with the revealed seed recomputes it from the log (commit-reveal).
+        ({ dieA, dieB } = drawBalancedRoll(seed, state.balancedRollsDrawn ?? 0));
+      } else {
+        // Classic 2d6: each die its own slot of the gameplay stream (S1.2.1
+        // scheme, `docs/wiki/rng-stream-map.md` §1) —
+        // `gameplayStreamIndex(state.eventIndex, slot)` — recomputable from the
+        // revealed seed post-match (`docs/wiki/fair-rng-commit-reveal.md`).
+        // Byte-frozen: this path is untouched by S2.1.2.
+        dieA = rollDie(seed, gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_A));
+        dieB = rollDie(seed, gameplayStreamIndex(state.eventIndex, GAMEPLAY_SLOT.DICE_B));
+      }
       const total = dieA + dieB;
       const diceEvent: DiceRolledEvent = {
         type: 'dice.rolled',
