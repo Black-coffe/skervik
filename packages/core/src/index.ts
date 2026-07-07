@@ -2,6 +2,19 @@
 // ADR-0003: no Date.now(), no Math.random(), no I/O.
 export const CORE_VERSION = '0.0.1' as const;
 
+export type {
+  AdaptiveAdjustment,
+  AdaptiveDurationResult,
+  AdaptiveWarningCode,
+} from './adaptiveDuration.js';
+export {
+  ADAPTIVE_CEILING_MINUTES,
+  ADAPTIVE_MAX_PLAYERS,
+  ADAPTIVE_MIN_PLAYERS,
+  ADAPTIVE_VP_FLOOR,
+  computeAdaptiveDuration,
+  estimateMatchMinutes,
+} from './adaptiveDuration.js';
 export {
   BALANCED_ROLL_DECK,
   drawBalancedRoll,
