@@ -11,7 +11,23 @@ import type {
   PlayerId,
   PlayerState,
   ResourceType,
+  TradeOffer,
 } from './types.js';
+
+/**
+ * Parallel-mode (S2.1.5) open-offer list update: store `offers`, or DROP the
+ * `openTradeOffers` key entirely when the list is empty — the same "absent key
+ * = nothing pending" convention the singular `openTradeOffer` and
+ * `playersToDiscard` use, so a resolved parallel offer and a never-parallel
+ * match share one shape. Does NOT touch `eventIndex` — the caller bumps it.
+ */
+function replaceOpenTradeOffers(
+  state: GameState,
+  offers: readonly TradeOffer[],
+): GameState {
+  const { openTradeOffers: _prev, ...rest } = state;
+  return offers.length === 0 ? rest : { ...rest, openTradeOffers: offers };
+}
 
 /**
  * Merges a resource grant into a player's holdings. Pure — returns a new
@@ -190,8 +206,11 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         pendingRoadVertexId: _pending,
         // An open trade offer never survives past the turn it was made in
         // (S1.3.2) — dropped here the same way, rather than requiring every
-        // caller to `cancelTrade` before ending their turn.
+        // caller to `cancelTrade` before ending their turn. Parallel mode's
+        // list (S2.1.5) is dropped too, so `turn.ended` clears whichever field
+        // is set (they are mutually exclusive by the `parallelTrade` flag).
         openTradeOffer: _trade,
+        openTradeOffers: _tradeList,
         ...rest
       } = state;
       const devCards = state.devCards
@@ -474,6 +493,26 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       };
     }
     case 'trade.offered': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): add/replace THIS proposer's entry (one
+        // offer per proposer) — a counter lands as the counterer's OWN entry.
+        const offer: TradeOffer = {
+          proposerId: event.proposerId,
+          give: event.give,
+          get: event.get,
+          targets: event.targets,
+          depth: event.depth,
+        };
+        const others = (state.openTradeOffers ?? []).filter(
+          (existing) => existing.proposerId !== event.proposerId,
+        );
+        return {
+          ...replaceOpenTradeOffers(state, [...others, offer]),
+          eventIndex: event.index + 1,
+        };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       return {
         ...state,
         openTradeOffer: {
@@ -511,10 +550,44 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         }
         return player;
       });
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): same atomic swap; remove only THIS
+        // proposer's entry — every OTHER open offer survives untouched.
+        const remaining = (state.openTradeOffers ?? []).filter(
+          (existing) => existing.proposerId !== event.proposerId,
+        );
+        return {
+          ...replaceOpenTradeOffers(state, remaining),
+          players,
+          eventIndex: event.index + 1,
+        };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const { openTradeOffer: _closed, ...rest } = state;
       return { ...rest, players, eventIndex: event.index + 1 };
     }
     case 'trade.rejected': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): the event's `offerProposerId` names WHICH
+        // offer this rejection narrows — update that entry's targets, or drop
+        // it once every target has rejected. Other offers stay untouched.
+        const offers = state.openTradeOffers ?? [];
+        const next =
+          event.remainingTargets.length === 0
+            ? offers.filter((existing) => existing.proposerId !== event.offerProposerId)
+            : offers.map((existing) =>
+                existing.proposerId === event.offerProposerId
+                  ? { ...existing, targets: event.remainingTargets }
+                  : existing,
+              );
+        return {
+          ...replaceOpenTradeOffers(state, next),
+          eventIndex: event.index + 1,
+        };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       if (event.remainingTargets.length === 0) {
         // Every target has rejected — close the offer entirely, same
         // "absent key = nothing pending" convention `playersToDiscard` uses.
@@ -535,6 +608,19 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       };
     }
     case 'trade.cancelled': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): the proposer withdraws their OWN offer
+        // (`event.playerId === proposerId`) — remove just that list entry.
+        const remaining = (state.openTradeOffers ?? []).filter(
+          (existing) => existing.proposerId !== event.playerId,
+        );
+        return {
+          ...replaceOpenTradeOffers(state, remaining),
+          eventIndex: event.index + 1,
+        };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const { openTradeOffer: _closed, ...rest } = state;
       return { ...rest, eventIndex: event.index + 1 };
     }

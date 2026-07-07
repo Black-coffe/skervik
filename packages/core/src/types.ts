@@ -323,6 +323,21 @@ export interface GameState {
    * per-turn-marker reset).
    */
   readonly openTradeOffer?: TradeOffer;
+  /**
+   * The concurrently open trade offers (S2.1.5), used ONLY when the resolved
+   * rule profile has `parallelTrade: true` — at most ONE offer per proposer,
+   * keyed by {@link TradeOffer.proposerId} (already unique per offer, so no id
+   * generation). Mutually exclusive with {@link GameState.openTradeOffer} by
+   * the flag: a match is either single-offer (this key absent) or parallel
+   * (the singular key absent) — never both. Additive precisely so the shipped
+   * single-offer path (and the client, which reads only the singular field)
+   * stays byte-frozen; the singular field is retired in a later cleanup once
+   * the multi-offer client HUD lands. Dropped entirely (not left empty) when
+   * the last offer resolves, and cleared by `turn.ended` — trades never survive
+   * the turn (same "absent key = nothing pending" convention as the singular
+   * field and {@link GameState.playersToDiscard}).
+   */
+  readonly openTradeOffers?: readonly TradeOffer[];
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -649,6 +664,15 @@ export interface TradeRejectedEvent extends BaseGameEvent {
   readonly type: 'trade.rejected';
   readonly playerId: PlayerId;
   readonly remainingTargets: readonly PlayerId[];
+  /**
+   * Which open offer this rejection acts on in parallel mode (S2.1.5), by its
+   * {@link TradeOffer.proposerId} — `reduce` needs it to update the right entry
+   * in {@link GameState.openTradeOffers} (unlike `trade.executed`/`cancelled`,
+   * whose `proposerId`/`playerId` already name the offer). Optional and
+   * append-compatible: ABSENT in single-offer mode, where the sole
+   * `openTradeOffer` is implied — so M1 event logs replay byte-identically.
+   */
+  readonly offerProposerId?: PlayerId;
 }
 
 /**
@@ -918,6 +942,15 @@ export interface ProposeTradeIntent extends BaseIntent {
  */
 export interface AcceptTradeIntent extends BaseIntent {
   readonly type: 'intent.acceptTrade';
+  /**
+   * Names WHICH open offer to accept in parallel mode (S2.1.5,
+   * `parallelTrade: true`), by its {@link TradeOffer.proposerId}. Optional and
+   * append-compatible: single-offer mode ignores it (the sole `openTradeOffer`
+   * is implied), so every M1 intent stays valid; parallel mode with 2+ offers
+   * requires it (an absent id there resolves only when exactly one offer is
+   * open).
+   */
+  readonly offerProposerId?: PlayerId;
 }
 
 /**
@@ -926,6 +959,8 @@ export interface AcceptTradeIntent extends BaseIntent {
  */
 export interface RejectTradeIntent extends BaseIntent {
   readonly type: 'intent.rejectTrade';
+  /** Which open offer to reject in parallel mode — see {@link AcceptTradeIntent.offerProposerId}. */
+  readonly offerProposerId?: PlayerId;
 }
 
 /**
@@ -938,6 +973,8 @@ export interface CounterTradeIntent extends BaseIntent {
   readonly type: 'intent.counterTrade';
   readonly give: Readonly<Record<ResourceType, number>>;
   readonly get: Readonly<Record<ResourceType, number>>;
+  /** Which open offer to counter in parallel mode — see {@link AcceptTradeIntent.offerProposerId}. */
+  readonly offerProposerId?: PlayerId;
 }
 
 /**
@@ -949,6 +986,13 @@ export interface CounterTradeIntent extends BaseIntent {
  */
 export interface CancelTradeIntent extends BaseIntent {
   readonly type: 'intent.cancelTrade';
+  /**
+   * Which of the canceller's OWN open offers to withdraw in parallel mode
+   * (S2.1.5) — see {@link AcceptTradeIntent.offerProposerId}. The named offer's
+   * proposer must be the canceller (`NOT_TRADE_PROPOSER` otherwise); single
+   * mode ignores it (the sole offer is implied).
+   */
+  readonly offerProposerId?: PlayerId;
 }
 
 /**
