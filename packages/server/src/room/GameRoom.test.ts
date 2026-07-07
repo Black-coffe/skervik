@@ -154,14 +154,18 @@ describe('GameRoom', () => {
     await client.leave();
   });
 
-  it('the public schema exposes ONLY seedHash/phase/currentPlayerId/seats — no seed, no resource/hand/board field', async () => {
+  it('the public schema exposes ONLY the projection fields (seedHash/phase/currentPlayerId/seats + S2.1.4 presentational deadline) — no seed, no resource/hand/board field', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
 
+    // S2.1.4 added the presentational turn-deadline fields to the public
+    // projection (never to GameState/the log). No gameplay/hand/board field.
     expect(Object.keys(room.state.toJSON()).sort()).toEqual([
       'currentPlayerId',
       'phase',
       'seats',
       'seedHash',
+      'turnDeadline',
+      'turnSoftWarnAt',
     ]);
   });
 
@@ -989,7 +993,205 @@ describe('GameRoom', () => {
     expect(serialized).toContain(sha256Hex(MATCH_START_SEED));
     expect(serialized).not.toContain(MATCH_START_SEED);
   });
+
+  // --- S2.1.4 server-enforced turn timers + anti-AFK ----------------------
+  // Colyseus `@colyseus/testing` exposes no tickable clock, so the room takes a
+  // `turnTimerScheduler` seam: production wires it to `this.clock` (the ONLY
+  // wall-clock the room uses), the test injects a manual scheduler it fires
+  // deterministically. This proves arm → expire → forced action through the
+  // #queue → broadcast → re-arm, plus the anti-AFK increment/reset — with no
+  // real wall-clock wait and no timestamp reaching the log.
+
+  it('a hard turn-timeout force-completes the turn through the #queue pipeline, re-arms, and drives anti-AFK (increment + reset)', async () => {
+    const scheduler = new ManualScheduler();
+    const sink = new InMemoryEventSink();
+    // maxSeats 4 with only 2 clients → no auto-start, so the crafted state stands.
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      seed: MATCH_START_SEED,
+      sink,
+      turnTimerScheduler: scheduler,
+    });
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    // A main-phase turn owned by `a`, holding just enough for one proposeTrade —
+    // a committing action that STAYS in `main`, so it arms the MAIN hard timer.
+    room.gameState = {
+      ...room.gameState,
+      phase: 'main',
+      turn: 1,
+      currentPlayerId: a as PlayerId,
+      players: [
+        {
+          id: a as PlayerId,
+          name: a,
+          victoryPoints: 0,
+          resources: { timber: 1, clay: 1 },
+        },
+        { id: b as PlayerId, name: b, victoryPoints: 0, resources: {} },
+      ],
+      playerOrder: [a as PlayerId, b as PlayerId],
+    };
+    room.state.phase = 'main';
+    room.state.currentPlayerId = a;
+
+    const batches: EventBatchMessage[] = [];
+    c1.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+
+    // A real committing intent arms the MAIN hard timer for `a`.
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.proposeTrade',
+        playerId: a,
+        give: { timber: 1 },
+        get: { clay: 1 },
+      },
+    });
+    await nextTick();
+    expect(room.gameState.phase).toBe('main');
+    expect(scheduler.armed).toBe(true);
+    // The presentational deadline is projected onto the schema (never GameState).
+    expect(room.state.turnDeadline).toBeGreaterThan(Date.now());
+    expect(Object.keys(room.gameState)).not.toContain('turnDeadline');
+
+    // Fire the hard timeout → forced endTurn for `a` through the shared tail.
+    scheduler.fire();
+    await nextTick();
+
+    // The forced action produced a NORMAL turn.ended (no timestamp/marker)...
+    const lastBatch = batches[batches.length - 1];
+    expect(lastBatch?.payload.some((e) => e.type === 'turn.ended')).toBe(true);
+    // ...the turn advanced to b (roll)...
+    expect(room.gameState.currentPlayerId).toBe(b);
+    expect(room.gameState.phase).toBe('roll');
+    // ...anti-AFK incremented a's streak (threshold 2 → not yet idle)...
+    const seatA = () => room.state.seats.find((s) => s.playerId === a);
+    expect(seatA()?.consecutiveMisses).toBe(1);
+    expect(seatA()?.idle).toBe(false);
+    // ...and the timer was RE-ARMED for b's roll.
+    expect(scheduler.armed).toBe(true);
+    // The persisted log records only the resulting normal events — no timestamp.
+    expect(JSON.stringify(sink.events)).not.toMatch(/deadline|timedOut|timestamp/i);
+
+    // A subsequent REAL intent from `a` resets a's streak to 0. Re-craft a fresh
+    // main turn owned by `a` and have it end the turn for real.
+    room.gameState = {
+      ...room.gameState,
+      phase: 'main',
+      turn: 2,
+      currentPlayerId: a as PlayerId,
+      players: [player(a), player(b)],
+      playerOrder: [a as PlayerId, b as PlayerId],
+    };
+    room.state.phase = 'main';
+    room.state.currentPlayerId = a;
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+
+    expect(seatA()?.consecutiveMisses).toBe(0);
+    expect(seatA()?.idle).toBe(false);
+
+    await c1.leave();
+    await c2.leave();
+  });
+
+  it('a stale timeout (superseded by a real action that re-armed) is a no-op — the generation guard cancels it', async () => {
+    const scheduler = new ManualScheduler();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      seed: MATCH_START_SEED,
+      turnTimerScheduler: scheduler,
+    });
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+
+    // 1. `a` ends its turn (real) → commit re-arms the timer (generation X) for
+    //    b's roll. Capture that armed callback — it will become stale.
+    startMainTurn(room, a, b, a);
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: a },
+    });
+    await nextTick();
+    expect(room.gameState.currentPlayerId).toBe(b);
+    const staleCallback = scheduler.currentCallback();
+    expect(staleCallback).toBeDefined();
+
+    // 2. `b` ends its turn (real) → commit RE-ARMS again (generation X+1). The
+    //    captured callback now belongs to a superseded generation.
+    startMainTurn(room, a, b, b);
+    c2.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: { type: 'intent.endTurn', playerId: b },
+    });
+    await nextTick();
+    const eventIndexBefore = room.gameState.eventIndex;
+    const currentBefore = room.gameState.currentPlayerId;
+
+    // 3. Fire the STALE callback — the generation guard must no-op it: no forced
+    //    action, no state change (a real action already advanced the turn).
+    staleCallback?.();
+    await nextTick();
+    expect(room.gameState.eventIndex).toBe(eventIndexBefore);
+    expect(room.gameState.currentPlayerId).toBe(currentBefore);
+
+    await c1.leave();
+    await c2.leave();
+  });
 });
+
+/**
+ * A manual turn-timer scheduler (S2.1.4 test seam) — Colyseus `@colyseus/testing`
+ * exposes no tickable clock, so the room's timer is injected here and fired
+ * deterministically. Only ever ONE hard timer is armed at a time (the room clears
+ * before each re-arm), so a single `pending` entry suffices; `clear()` only nulls
+ * it when it is still the current one (a superseded clear is a no-op).
+ */
+class ManualScheduler {
+  #pending: { readonly cb: () => void } | null = null;
+
+  setTimeout(callback: () => void): { clear(): void } {
+    const entry = { cb: callback };
+    this.#pending = entry;
+    return {
+      clear: () => {
+        if (this.#pending === entry) this.#pending = null;
+      },
+    };
+  }
+
+  get armed(): boolean {
+    return this.#pending !== null;
+  }
+
+  /** The currently-armed callback (captured for the stale-generation test), or undefined. */
+  currentCallback(): (() => void) | undefined {
+    return this.#pending?.cb;
+  }
+
+  /** Fire the currently-armed timeout (one-shot: consumes it before invoking). */
+  fire(): void {
+    const entry = this.#pending;
+    if (!entry) throw new Error('no turn timer armed to fire');
+    this.#pending = null;
+    entry.cb();
+  }
+}
 
 // --- NIT-2 string-pin (lead-review nit) -------------------------------------
 // `GameRoom`'s `isUnknownIntentError` string-matches the exact prefixes core's

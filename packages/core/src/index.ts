@@ -61,6 +61,7 @@ export type {
   RuleProfile,
   RuleProfileId,
   SetupProfile,
+  TimerProfile,
   VictoryProfile,
 } from './ruleProfile.js';
 export {

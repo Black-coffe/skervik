@@ -20,12 +20,29 @@ export class SeatSchema extends Schema {
   declare playerId: string;
   declare seatIndex: number;
   declare connected: boolean;
+  /**
+   * Anti-AFK projection (S2.1.4): how many of this seat's turns the server has
+   * consecutively force-completed on a hard timeout (reset to 0 on any real
+   * intent from the player). Session metadata — NOT a game rule, never in
+   * `GameState`/the event log, so the deterministic core stays independent of
+   * liveness.
+   */
+  declare consecutiveMisses: number;
+  /**
+   * True once {@link consecutiveMisses} crosses the profile's `afkThreshold`
+   * (S2.1.4) — a "player is away" hint for the HUD that S2.3.3 bot-fill will
+   * later consume. S2.1.4 only FLAGS: it never removes the player or swaps in a
+   * bot (no karmic ban).
+   */
+  declare idle: boolean;
 }
 
 defineTypes(SeatSchema, {
   playerId: 'string',
   seatIndex: 'number',
   connected: 'boolean',
+  consecutiveMisses: 'number',
+  idle: 'boolean',
 });
 
 /** The room's public lobby/late-join projection — see file header for the invariant this enforces. */
@@ -34,6 +51,23 @@ export class RoomSchema extends Schema {
   declare phase: string;
   declare currentPlayerId: string;
   declare seats: ArraySchema<SeatSchema>;
+  /**
+   * The current turn's HARD deadline as an epoch-ms wall-clock timestamp
+   * (S2.1.4), or `0` when no hard timer is armed (lobby/finished/setup). The
+   * client renders `remaining = turnDeadline − Date.now()`. PRESENTATIONAL
+   * PROJECTION ONLY: this lives in the Colyseus schema (like `phase` /
+   * `currentPlayerId`), NEVER in the deterministic `GameState`, a `GameEvent`,
+   * or the persisted log — that separation is what keeps the event log
+   * timestamp-free and byte-replayable.
+   */
+  declare turnDeadline: number;
+  /**
+   * Epoch-ms wall-clock instant at which the client should start visibly warning
+   * the acting player (`turnDeadline − softWarningMs`), or `0` when no timer is
+   * armed. Presentational only — same non-`GameState`/non-log discipline as
+   * {@link turnDeadline}.
+   */
+  declare turnSoftWarnAt: number;
 }
 
 defineTypes(RoomSchema, {
@@ -41,6 +75,8 @@ defineTypes(RoomSchema, {
   phase: 'string',
   currentPlayerId: 'string',
   seats: [SeatSchema],
+  turnDeadline: 'number',
+  turnSoftWarnAt: 'number',
 });
 
 /**
@@ -54,7 +90,8 @@ export function createRoomSchema(props: {
   phase: string;
   currentPlayerId: string;
 }): RoomSchema {
-  const state = new RoomSchema().assign(props);
+  // No timer is armed in the lobby, so both presentational deadlines start at 0.
+  const state = new RoomSchema().assign({ ...props, turnDeadline: 0, turnSoftWarnAt: 0 });
   state.seats = new ArraySchema<SeatSchema>();
   return state;
 }
