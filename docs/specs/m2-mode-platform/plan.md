@@ -203,7 +203,8 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | S2.1.5 parallel trade | T3 | ✅ done | `06e080d` |
 | S2.1.6 2-player mode (phantom, standard board) | T3 | ✅ done — **E2.1 COMPLETE** | `f0d69b7` |
 | S2.2.1 friendly robber | T2 | ✅ done — first E2.2 mechanic; lead-review MERGE | `cd4b876` |
-| E2.2 catch-up (×4) | T1–T2 | ⏳ S2.2.1 done; S2.2.2–.4 not started | — |
+| S2.2.2 robin-hood / poverty tokens | T3 | 📄 materialized, dispatch-ready (Option A: self-comp poverty tokens; discharges dedup) | — |
+| E2.2 catch-up (×4) | T1–T3 | ⏳ S2.2.1 done; S2.2.2 ready; S2.2.3–.4 not started | — |
 | E2.3 reconnect & bot-fill (×3) | T2–T3 | ▫ not started | — |
 | E2.4 bots (×3) | T2–T3 | ▫ not started | — |
 | E2.5 lobby/matchmaking/presence (×4) | T2–T3 | ▫ not started (S2.5.4 resolves override seam) | — |
