@@ -203,6 +203,22 @@ describe('GET /matches/:id/verify — provably-fair gate (S1.7.3)', () => {
     expect(JSON.stringify(body)).not.toContain(SEED);
   });
 
+  it('does NOT leak the seed when a reveal sidecar exists but the log has no game.ended (N1)', async () => {
+    // Belt-and-suspenders: a stray/partial sidecar (crash, manual copy) must
+    // never leak the seed of an unfinished match. The log here omits
+    // `game.ended`, so the endpoint must refuse even though the sidecar is present.
+    const unfinished = faithfulLog(SEED).filter((event) => event.type !== 'game.ended');
+    await seedMatch(MATCH_ID, unfinished, SEED); // sidecar present, but match unfinished
+
+    const res = await fetch(`${baseHttp}/matches/${MATCH_ID}/verify`);
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as VerifyBody;
+
+    expect(body.error).toBe('MATCH_NOT_ENDED');
+    expect(body.seed).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain(SEED);
+  });
+
   it('returns 404 for an unknown match (no log) without leaking anything', async () => {
     const res = await fetch(`${baseHttp}/matches/no-such-match/verify`);
     expect(res.status).toBe(404);

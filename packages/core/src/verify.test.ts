@@ -172,6 +172,114 @@ describe('verifyMatchRandomness — provably-fair recompute-and-compare (S1.7.3)
     ).toBe(true);
   });
 
+  // --- B1 soundness: draws bind to the TRUE folded position, not log fields ---
+  // These forgeries keep every VALUE self-consistent (an honest face/card at a
+  // grinding-chosen stream slot) — they'd pass a verifier that trusted
+  // `event.index`/`event.deckRemaining`, but must fail one anchored to position.
+
+  it('catches a relabeled dice index — honest faces at a forged stream slot (B1)', () => {
+    const events = faithfulLog();
+    // The review's exact forgery: relabel an honest roll to `total 12` by moving
+    // it to a stream slot that genuinely rolls 6+6, keeping the faces consistent.
+    let forgedIndex = -1;
+    for (let q = 100; q < 5000; q++) {
+      const a = rollDie(SEED, gameplayStreamIndex(q, GAMEPLAY_SLOT.DICE_A));
+      const b = rollDie(SEED, gameplayStreamIndex(q, GAMEPLAY_SLOT.DICE_B));
+      if (a + b === 12) {
+        forgedIndex = q;
+        break;
+      }
+    }
+    expect(forgedIndex).toBeGreaterThan(0); // a double-6 slot exists in range
+    const a = rollDie(SEED, gameplayStreamIndex(forgedIndex, GAMEPLAY_SLOT.DICE_A));
+    const b = rollDie(SEED, gameplayStreamIndex(forgedIndex, GAMEPLAY_SLOT.DICE_B));
+    // Self-consistent faces + total, but at the wrong (forged) index.
+    events[3] = {
+      ...(events[3] as DiceRolledEvent),
+      index: forgedIndex,
+      dieA: a,
+      dieB: b,
+      total: 12,
+    };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    // The tamper is named as an index mismatch at the event's TRUE position (3).
+    expect(
+      result.mismatches.some(
+        (m) =>
+          m.type === 'dice.rolled' && m.field === 'index' && m.actual === forgedIndex,
+      ),
+    ).toBe(true);
+  });
+
+  it('catches a forged devCard.bought deckRemaining selecting a different card (B1)', () => {
+    const events = faithfulLog();
+    const bought = events[4] as DevCardBoughtEvent;
+    const deckSize = CLASSIC_DEV_CARD_PROFILE.deck.length;
+    const deck = shuffledDevDeck(SEED);
+    // Pick some LATER deck slot holding a different card, then forge
+    // `deckRemaining` to point the (naive) verifier at it — the true draw is the
+    // top card (slot 0), so anchoring to the folded deck counter must reject it.
+    let target = -1;
+    for (let j = 1; j < deckSize; j++) {
+      if (deck[j] !== deck[0]) {
+        target = j;
+        break;
+      }
+    }
+    expect(target).toBeGreaterThan(0);
+    events[4] = {
+      ...bought,
+      card: deck[target]!,
+      deckRemaining: deckSize - (target + 1),
+    };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some((m) => m.type === 'devCard.bought' && m.field === 'card'),
+    ).toBe(true);
+    // The forged field is itself flagged as tampering evidence.
+    expect(
+      result.mismatches.some(
+        (m) => m.type === 'devCard.bought' && m.field === 'deckRemaining',
+      ),
+    ).toBe(true);
+  });
+
+  it('catches a total that disagrees with the (honest) dice faces (B1)', () => {
+    const events = faithfulLog();
+    const dice = events[3] as DiceRolledEvent;
+    // Faces stay the true recomputed values; only `total` is inflated.
+    events[3] = { ...dice, total: dice.dieA + dice.dieB + 1 };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some((m) => m.type === 'dice.rolled' && m.field === 'total'),
+    ).toBe(true);
+  });
+
+  it('catches a non-contiguous index gap (B1)', () => {
+    const events = faithfulLog();
+    // Bump one event's self-reported index off its true folded position.
+    const produced = events[2] as ResourcesProducedEvent;
+    events[2] = { ...produced, index: 99 };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some(
+        (m) => m.field === 'index' && m.index === 2 && m.actual === 99,
+      ),
+    ).toBe(true);
+  });
+
   it('does not treat a no-steal robber move as a draw (nothing to check)', () => {
     const events = faithfulLog();
     // Drop the steal fields → a documented no-op move (no random pick happened).

@@ -94,6 +94,19 @@ export function registerMatchVerifyRoute(
     }
     const events: GameEvent[] = parseGameEventLog(ndjson);
 
+    // Defense-in-depth (N1, lead-review S1.7.3): the log itself must show the
+    // match ended before ANY seed is served. The upstream reveal fires only on
+    // `game.ended` (S1.4.3/`GameRoom.ts`), but a stray or partial reveal sidecar
+    // (crash, manual copy) must never leak the seed of an unfinished match — so
+    // gate on a `game.ended` line in the parsed log, not just the sidecar's
+    // presence. No `game.ended` ⇒ 409 with NO seed (reveal-timing invariant).
+    const started = events.find((event) => event.type === 'match.started');
+    const ended = events.find((event) => event.type === 'game.ended');
+    if (ended === undefined) {
+      reply.code(409);
+      return { error: 'MATCH_NOT_ENDED' };
+    }
+
     // The seed is revealed ONLY once the match ended (S1.4.3). No reveal ⇒ the
     // match is still in progress ⇒ 409 with NO seed (reveal-timing invariant).
     const seed = await deps.metadataStore.readSeedReveal(id);
@@ -101,9 +114,6 @@ export function registerMatchVerifyRoute(
       reply.code(409);
       return { error: 'MATCH_NOT_ENDED' };
     }
-
-    const started = events.find((event) => event.type === 'match.started');
-    const ended = events.find((event) => event.type === 'game.ended');
     const seedHash = started?.seedHash ?? '';
     const computedHash = sha256Hex(seed);
 
