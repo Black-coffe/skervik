@@ -58,6 +58,7 @@ import type {
   SettlementPlacedEvent,
   TradeCancelledEvent,
   TradeExecutedEvent,
+  TradeOffer,
   TradeOfferedEvent,
   TradeRejectedEvent,
   TurnEndedEvent,
@@ -572,6 +573,25 @@ function isValidTradeBundle(bundle: Readonly<Record<ResourceType, number>>): boo
   const entries = Object.entries(bundle);
   if (entries.length === 0) return false;
   return entries.every(([, amount]) => Number.isInteger(amount) && amount > 0);
+}
+
+/**
+ * Resolves WHICH concurrent open offer a parallel-mode trade response acts on
+ * (S2.1.5). An explicit `offerProposerId` selects that proposer's offer; absent,
+ * it defaults to the sole open offer (so a single-offer-style intent still works
+ * when only one is open) and is ambiguous — no match — when 2+ are open. Pure
+ * lookup in {@link GameState.openTradeOffers}; the caller maps a missing offer
+ * to `NO_OPEN_TRADE_OFFER`.
+ */
+function resolveParallelOffer(
+  state: GameState,
+  offerProposerId: PlayerId | undefined,
+): TradeOffer | undefined {
+  const offers = state.openTradeOffers ?? [];
+  if (offerProposerId !== undefined) {
+    return offers.find((offer) => offer.proposerId === offerProposerId);
+  }
+  return offers.length === 1 ? offers[0] : undefined;
 }
 
 /** Total resource-card count across all kinds — the discard-owing/steal-eligibility measure (S1.3.1). */
@@ -1414,6 +1434,37 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.proposeTrade': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): one open offer PER PROPOSER — reject only
+        // if THIS player already has one open, not a global "already open".
+        if (
+          (state.openTradeOffers ?? []).some((offer) => offer.proposerId === playerId)
+        ) {
+          return reject('TRADE_OFFER_ALREADY_OPEN');
+        }
+        if (!isValidTradeBundle(intent.give) || !isValidTradeBundle(intent.get)) {
+          return reject('MALFORMED_INTENT');
+        }
+        const proposer = findPlayer(state, playerId);
+        if (!proposer || !canAfford(proposer.resources, intent.give)) {
+          return reject('CANNOT_AFFORD');
+        }
+        const targets = state.players
+          .map((player) => player.id)
+          .filter((id) => id !== playerId);
+        const event: TradeOfferedEvent = {
+          type: 'trade.offered',
+          index: state.eventIndex,
+          proposerId: playerId,
+          give: intent.give,
+          get: intent.get,
+          targets,
+          depth: 0,
+        };
+        return { ok: true, events: [event] };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       // One open offer at a time (M1 simplification, S1.3.2 spec).
       if (state.openTradeOffer) {
         return reject('TRADE_OFFER_ALREADY_OPEN');
@@ -1442,6 +1493,43 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.acceptTrade': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): resolve the named offer, execute the SAME
+        // atomic swap; the other open offers are untouched by this reduce.
+        const parallelOffer = resolveParallelOffer(state, intent.offerProposerId);
+        if (!parallelOffer) {
+          return reject('NO_OPEN_TRADE_OFFER');
+        }
+        if (!parallelOffer.targets.includes(playerId)) {
+          return reject('NOT_A_TRADE_TARGET');
+        }
+        const accepter = findPlayer(state, playerId);
+        if (!accepter || !canAfford(accepter.resources, parallelOffer.get)) {
+          return reject('CANNOT_AFFORD');
+        }
+        // Re-check the proposer at accept time against committed state — an
+        // intervening swap may have spent what they offered to give, so the
+        // stale offer simply fails to execute (never a swap either side can't
+        // pay). S1.3.2 atomicity, unchanged.
+        const parallelProposer = findPlayer(state, parallelOffer.proposerId);
+        if (
+          !parallelProposer ||
+          !canAfford(parallelProposer.resources, parallelOffer.give)
+        ) {
+          return reject('CANNOT_AFFORD');
+        }
+        const event: TradeExecutedEvent = {
+          type: 'trade.executed',
+          index: state.eventIndex,
+          proposerId: parallelOffer.proposerId,
+          accepterId: playerId,
+          give: parallelOffer.give,
+          get: parallelOffer.get,
+        };
+        return { ok: true, events: [event] };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const offer = state.openTradeOffer;
       if (!offer) {
         return reject('NO_OPEN_TRADE_OFFER');
@@ -1474,6 +1562,27 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.rejectTrade': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): reject the named offer only — carry its
+        // `offerProposerId` so `reduce` updates the right list entry.
+        const parallelOffer = resolveParallelOffer(state, intent.offerProposerId);
+        if (!parallelOffer) {
+          return reject('NO_OPEN_TRADE_OFFER');
+        }
+        if (!parallelOffer.targets.includes(playerId)) {
+          return reject('NOT_A_TRADE_TARGET');
+        }
+        const event: TradeRejectedEvent = {
+          type: 'trade.rejected',
+          index: state.eventIndex,
+          playerId,
+          remainingTargets: parallelOffer.targets.filter((id) => id !== playerId),
+          offerProposerId: parallelOffer.proposerId,
+        };
+        return { ok: true, events: [event] };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const offer = state.openTradeOffer;
       if (!offer) {
         return reject('NO_OPEN_TRADE_OFFER');
@@ -1491,6 +1600,40 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.counterTrade': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): counter the named offer — the per-offer
+        // depth bound (0→1) applies independently per offer. The counterer
+        // becomes a NEW proposer (its own list entry), targeting the original.
+        const parallelOffer = resolveParallelOffer(state, intent.offerProposerId);
+        if (!parallelOffer) {
+          return reject('NO_OPEN_TRADE_OFFER');
+        }
+        if (!parallelOffer.targets.includes(playerId)) {
+          return reject('NOT_A_TRADE_TARGET');
+        }
+        if (parallelOffer.depth >= 1) {
+          return reject('TRADE_COUNTER_LIMIT_REACHED');
+        }
+        if (!isValidTradeBundle(intent.give) || !isValidTradeBundle(intent.get)) {
+          return reject('MALFORMED_INTENT');
+        }
+        const counterer = findPlayer(state, playerId);
+        if (!counterer || !canAfford(counterer.resources, intent.give)) {
+          return reject('CANNOT_AFFORD');
+        }
+        const event: TradeOfferedEvent = {
+          type: 'trade.offered',
+          index: state.eventIndex,
+          proposerId: playerId,
+          give: intent.give,
+          get: intent.get,
+          targets: [parallelOffer.proposerId],
+          depth: parallelOffer.depth + 1,
+        };
+        return { ok: true, events: [event] };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const offer = state.openTradeOffer;
       if (!offer) {
         return reject('NO_OPEN_TRADE_OFFER');
@@ -1526,6 +1669,29 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.cancelTrade': {
+      const { parallelTrade } = loadRuleProfile(state.profileId ?? 'classic');
+      if (parallelTrade) {
+        // Parallel phases (S2.1.5): withdraw the canceller's OWN offer. An
+        // absent `offerProposerId` defaults to the player's own entry; the
+        // proposer-match guard still holds (you can only cancel your own).
+        const targetId = intent.offerProposerId ?? playerId;
+        const parallelOffer = (state.openTradeOffers ?? []).find(
+          (candidate) => candidate.proposerId === targetId,
+        );
+        if (!parallelOffer) {
+          return reject('NO_OPEN_TRADE_OFFER');
+        }
+        if (parallelOffer.proposerId !== playerId) {
+          return reject('NOT_TRADE_PROPOSER');
+        }
+        const event: TradeCancelledEvent = {
+          type: 'trade.cancelled',
+          index: state.eventIndex,
+          playerId,
+        };
+        return { ok: true, events: [event] };
+      }
+      // --- single-offer path (M1, byte-frozen VERBATIM) ---
       const offer = state.openTradeOffer;
       if (!offer) {
         return reject('NO_OPEN_TRADE_OFFER');

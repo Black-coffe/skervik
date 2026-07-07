@@ -129,6 +129,20 @@ export interface RuleProfile {
    * FLAG only here — the number-deck draw mechanic is S2.1.2, not this story.
    */
   readonly randomness: 'dice' | 'balanced_deck';
+  /**
+   * Parallel-phases trade knob (S2.1.5). `false` (every shipping preset) is the
+   * M1 single-offer behavior — at most one open `openTradeOffer`, a second
+   * `proposeTrade` while one is open rejected with `TRADE_OFFER_ALREADY_OPEN`.
+   * `true` lets a match hold MULTIPLE concurrent open offers (one per proposer,
+   * in `GameState.openTradeOffers`) so negotiation isn't a one-at-a-time
+   * bottleneck (the anti-"dead time" product goal). Kept OFF on all shipping
+   * presets until the client multi-offer HUD exists (deferred) — a mode that
+   * opens offers the UI can't render would be a broken UX; its liveness is
+   * proven by the internal {@link PARALLEL_TRADE_TEST_PROFILE}. Enabling it on a
+   * real preset (likely Blitz, for pace) is a one-line follow-up once that HUD
+   * lands. Trade is NOT seed-derived, so this touches no RNG/verify surface.
+   */
+  readonly parallelTrade: boolean;
   readonly board: BoardProfile;
   readonly devCards: DevCardProfile;
   readonly setup: SetupProfile;
@@ -156,6 +170,9 @@ export const CLASSIC_PROFILE: RuleProfile = {
   id: 'classic',
   name: 'Classic',
   randomness: 'dice',
+  // Single-offer trade (M1, byte-frozen) — Balanced/Blitz inherit this via
+  // their `...CLASSIC_PROFILE` spread; no shipping preset opens parallel offers.
+  parallelTrade: false,
   board: {
     // 19 tile kinds (4 timber / 3 clay / 4 fleece / 4 barley / 3 iron / 1 desert).
     tileMix: [
@@ -306,11 +323,46 @@ export const BLITZ_PROFILE: RuleProfile = {
   },
 };
 
-/** The profile registry — one entry per {@link RuleProfileId}. */
-const PROFILE_REGISTRY: Readonly<Record<RuleProfileId, RuleProfile>> = {
+/** The shipping profiles — one entry per {@link RuleProfileId} (exhaustive). */
+const SHIPPING_PROFILES: Readonly<Record<RuleProfileId, RuleProfile>> = {
   classic: CLASSIC_PROFILE,
   balanced: BALANCED_PROFILE,
   blitz: BLITZ_PROFILE,
+};
+
+/**
+ * INTERNAL, NON-SHIPPING profile id used ONLY to prove the `parallelTrade`
+ * config path in tests (S2.1.5) — deliberately absent from {@link RuleProfileId}
+ * and the protocol's `profileId` enum (`packages/protocol`), so NO client can
+ * select it. It exists because no shipping preset enables `parallelTrade` yet
+ * (the multi-offer client HUD is deferred), yet the flag's live behavior still
+ * needs coverage — the S2.1.1 precedent of proving a knob via a distinct
+ * profile. Resolved through {@link loadRuleProfile} like any other id (the
+ * registry KEY selects it), so the parallel `validate`/`reduce` branches run
+ * under the same `state.profileId` mechanism they will in production.
+ */
+export const PARALLEL_TRADE_TEST_PROFILE_ID = '__parallel_trade_test__';
+
+/**
+ * Classic in every rule value EXCEPT `parallelTrade: true` — the internal
+ * fixture behind {@link PARALLEL_TRADE_TEST_PROFILE_ID}. Its `.id` stays
+ * `'classic'` (inherited via the spread; {@link RuleProfileId} has no test
+ * member) — the registry key, not `.id`, is what resolves it.
+ */
+export const PARALLEL_TRADE_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  parallelTrade: true,
+};
+
+/**
+ * The profile registry: the shipping presets plus the internal
+ * parallel-trade test profile. Keyed by `string` (not {@link RuleProfileId}) so
+ * the non-shipping test id has a home without widening the public union —
+ * {@link SHIPPING_PROFILES} still guarantees every `RuleProfileId` has an entry.
+ */
+const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
+  ...SHIPPING_PROFILES,
+  [PARALLEL_TRADE_TEST_PROFILE_ID]: PARALLEL_TRADE_TEST_PROFILE,
 };
 
 /**

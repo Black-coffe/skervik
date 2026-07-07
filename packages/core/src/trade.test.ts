@@ -10,6 +10,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { reduce } from './reduce.js';
+import type { RuleProfileId } from './ruleProfile.js';
+import { PARALLEL_TRADE_TEST_PROFILE_ID } from './ruleProfile.js';
 import type { GameEvent, GameState, PlayerState, TradeExecutedEvent } from './types.js';
 import { validate } from './validate.js';
 
@@ -648,5 +650,381 @@ describe('full scripted flow: propose -> counter -> accept, with replay determin
     // this final state byte-for-byte — no re-derivation, no ambient state.
     const replayed = events.reduce(reduce, genesis);
     expect(replayed).toEqual(state);
+  });
+});
+
+// S2.1.5 — parallel phases: concurrent trade offers, gated by the
+// `parallelTrade` profile flag. Driven under the internal, NON-shipping
+// `PARALLEL_TRADE_TEST_PROFILE` (Classic + `parallelTrade: true`) — no shipping
+// preset enables the flag until the client multi-offer HUD lands, so this
+// proves the config path without shipping the mode (the S2.1.1 precedent). The
+// M1 single-offer suites above stay behaviorally UNCHANGED — the byte-freeze
+// proof that the flag-off path is untouched.
+describe('parallel trade — concurrent offers (S2.1.5, parallelTrade:true)', () => {
+  // Cast: `profileId` is typed `RuleProfileId`, which deliberately EXCLUDES this
+  // internal test-only id — the registry key still resolves it via `loadRuleProfile`.
+  const PARALLEL = PARALLEL_TRADE_TEST_PROFILE_ID as RuleProfileId;
+
+  function makeParallelState(overrides: Partial<GameState> = {}): GameState {
+    return makeTradeState({ profileId: PARALLEL, ...overrides });
+  }
+
+  /** Drive validate -> reduce, mutating a local `state` (mirrors the M1 scripted flow). */
+  function makeApply(getState: () => GameState, setState: (s: GameState) => void) {
+    return function apply(
+      playerId: string,
+      intent: Parameters<typeof validate>[1],
+    ): void {
+      const result = validate(getState(), intent, playerId, SEED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(`expected ok result for ${intent.type}`);
+      setState(result.events.reduce(reduce, getState()));
+    };
+  }
+
+  it('proposeTrade populates openTradeOffers (not the singular field), one per proposer', () => {
+    const state = makeParallelState();
+    const result = validate(
+      state,
+      {
+        type: 'intent.proposeTrade',
+        playerId: 'player-1',
+        give: { timber: 1 },
+        get: { ore: 1 },
+      },
+      'player-1',
+      SEED,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    const next = result.events.reduce(reduce, state);
+
+    // The parallel field carries it; the singular (client-read) field stays absent.
+    expect(next.openTradeOffer).toBeUndefined();
+    expect(next.openTradeOffers).toEqual([
+      {
+        proposerId: 'player-1',
+        give: { timber: 1 },
+        get: { ore: 1 },
+        targets: ['player-2', 'player-3'],
+        depth: 0,
+      },
+    ]);
+  });
+
+  it('rejects TRADE_OFFER_ALREADY_OPEN only when the SAME proposer already has an open offer', () => {
+    const state = makeParallelState({
+      openTradeOffers: [
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 1 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+      ],
+    });
+    // player-1 already has one open -> rejected (per-proposer cap).
+    const again = validate(
+      state,
+      {
+        type: 'intent.proposeTrade',
+        playerId: 'player-1',
+        give: { clay: 1 },
+        get: { fleece: 1 },
+      },
+      'player-1',
+      SEED,
+    );
+    expect(again).toEqual({ ok: false, reason: 'TRADE_OFFER_ALREADY_OPEN' });
+  });
+
+  it('holds TWO concurrent offers from different proposers; accepting ONE swaps atomically and leaves the OTHER intact', () => {
+    let state = makeParallelState();
+    const apply = makeApply(
+      () => state,
+      (s) => {
+        state = s;
+      },
+    );
+
+    // player-1 (current) proposes offer A; player-2 counters -> offer B. Two
+    // proposers now hold concurrent open offers (A survives the counter).
+    apply('player-1', {
+      type: 'intent.proposeTrade',
+      playerId: 'player-1',
+      give: { timber: 1 },
+      get: { ore: 1 },
+    });
+    apply('player-2', {
+      type: 'intent.counterTrade',
+      playerId: 'player-2',
+      offerProposerId: 'player-1',
+      give: { ore: 1 },
+      get: { timber: 1 },
+    });
+    expect(state.openTradeOffers?.map((o) => o.proposerId)).toEqual([
+      'player-1',
+      'player-2',
+    ]);
+
+    const before = totalResources(state);
+
+    // player-1 accepts offer B (the counter) -> atomic swap between player-2
+    // (proposer) and player-1 (accepter). Offer A must survive untouched.
+    apply('player-1', {
+      type: 'intent.acceptTrade',
+      playerId: 'player-1',
+      offerProposerId: 'player-2',
+    });
+
+    expect(state.players.find((p) => p.id === 'player-1')?.resources).toEqual({
+      timber: 2,
+      clay: 1,
+      ore: 1,
+    });
+    expect(state.players.find((p) => p.id === 'player-2')?.resources).toEqual({
+      ore: 1,
+      timber: 1,
+    });
+    expect(state.players.find((p) => p.id === 'player-3')?.resources).toEqual({
+      fleece: 1,
+    });
+    // Offer A alone remains, byte-identical to when it opened.
+    expect(state.openTradeOffers).toEqual([
+      {
+        proposerId: 'player-1',
+        give: { timber: 1 },
+        get: { ore: 1 },
+        targets: ['player-2', 'player-3'],
+        depth: 0,
+      },
+    ]);
+    // Conservation across the swap: cards move, none created/destroyed.
+    expect(totalResources(state)).toBe(before);
+  });
+
+  it('applies the per-offer counter-depth bound INDEPENDENTLY per offer', () => {
+    // Two offers: A at depth 0 (still counterable), B at depth 1 (bound reached).
+    const state = makeParallelState({
+      players: [
+        makePlayer('player-1', { timber: 3, clay: 1 }),
+        makePlayer('player-2', { ore: 2 }),
+        makePlayer('player-3', { fleece: 1 }),
+      ],
+      openTradeOffers: [
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 1 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+        {
+          proposerId: 'player-2',
+          give: { ore: 1 },
+          get: { timber: 1 },
+          targets: ['player-1'],
+          depth: 1,
+        },
+      ],
+    });
+
+    // Countering offer A (depth 0) is allowed — player-3 becomes a new proposer.
+    const counterA = validate(
+      state,
+      {
+        type: 'intent.counterTrade',
+        playerId: 'player-3',
+        offerProposerId: 'player-1',
+        give: { fleece: 1 },
+        get: { timber: 1 },
+      },
+      'player-3',
+      SEED,
+    );
+    expect(counterA.ok).toBe(true);
+
+    // Countering offer B (already depth 1) hits the bound — per offer, not global.
+    const counterB = validate(
+      state,
+      {
+        type: 'intent.counterTrade',
+        playerId: 'player-1',
+        offerProposerId: 'player-2',
+        give: { timber: 1 },
+        get: { ore: 1 },
+      },
+      'player-1',
+      SEED,
+    );
+    expect(counterB).toEqual({ ok: false, reason: 'TRADE_COUNTER_LIMIT_REACHED' });
+  });
+
+  it('an offer made unaffordable by an intervening swap fails to execute (no stale swap)', () => {
+    let state = makeParallelState({
+      players: [
+        makePlayer('player-1', { timber: 3, clay: 1 }),
+        makePlayer('player-2', { ore: 2 }),
+        makePlayer('player-3', { fleece: 1 }),
+      ],
+      openTradeOffers: [
+        // A: player-1 wants 2 ore for 1 timber, offered to everyone.
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 2 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+        // B: player-2 will give BOTH their ore (2) for 1 timber.
+        {
+          proposerId: 'player-2',
+          give: { ore: 2 },
+          get: { timber: 1 },
+          targets: ['player-1'],
+          depth: 1,
+        },
+      ],
+    });
+    const apply = makeApply(
+      () => state,
+      (s) => {
+        state = s;
+      },
+    );
+
+    // player-1 accepts B: player-2 spends BOTH ore (-> ore: 0). Offer A, which
+    // needs the ACCEPTER to pay 2 ore, is now unaffordable for player-2.
+    apply('player-1', {
+      type: 'intent.acceptTrade',
+      playerId: 'player-1',
+      offerProposerId: 'player-2',
+    });
+    // `subtractResources` leaves a 0 entry rather than deleting the key (the
+    // debit convention every other event follows) — player-2 now holds no ore.
+    expect(state.players.find((p) => p.id === 'player-2')?.resources).toEqual({
+      ore: 0,
+      timber: 1,
+    });
+
+    const snapshot = totalResources(state);
+    const stale = validate(
+      state,
+      { type: 'intent.acceptTrade', playerId: 'player-2', offerProposerId: 'player-1' },
+      'player-2',
+      SEED,
+    );
+    expect(stale).toEqual({ ok: false, reason: 'CANNOT_AFFORD' });
+    // No swap emitted, so nothing moved — conservation intact, offer A still open.
+    expect(totalResources(state)).toBe(snapshot);
+    expect(state.openTradeOffers?.map((o) => o.proposerId)).toEqual(['player-1']);
+  });
+
+  it('rejectTrade narrows only the named offer; the others are untouched', () => {
+    const state = makeParallelState({
+      openTradeOffers: [
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 1 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+        {
+          proposerId: 'player-2',
+          give: { ore: 1 },
+          get: { timber: 1 },
+          targets: ['player-1', 'player-3'],
+          depth: 0,
+        },
+      ],
+    });
+    const result = validate(
+      state,
+      { type: 'intent.rejectTrade', playerId: 'player-3', offerProposerId: 'player-1' },
+      'player-3',
+      SEED,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    const next = result.events.reduce(reduce, state);
+    // Offer A lost player-3 from its targets; offer B is unchanged.
+    expect(next.openTradeOffers).toEqual([
+      {
+        proposerId: 'player-1',
+        give: { timber: 1 },
+        get: { ore: 1 },
+        targets: ['player-2'],
+        depth: 0,
+      },
+      {
+        proposerId: 'player-2',
+        give: { ore: 1 },
+        get: { timber: 1 },
+        targets: ['player-1', 'player-3'],
+        depth: 0,
+      },
+    ]);
+  });
+
+  it('cancelTrade withdraws only the canceller’s own offer', () => {
+    const state = makeParallelState({
+      openTradeOffers: [
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 1 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+        {
+          proposerId: 'player-2',
+          give: { ore: 1 },
+          get: { timber: 1 },
+          targets: ['player-1'],
+          depth: 1,
+        },
+      ],
+    });
+    const result = validate(
+      state,
+      { type: 'intent.cancelTrade', playerId: 'player-2', offerProposerId: 'player-2' },
+      'player-2',
+      SEED,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected ok result');
+    const next = result.events.reduce(reduce, state);
+    expect(next.openTradeOffers?.map((o) => o.proposerId)).toEqual(['player-1']);
+  });
+
+  it('turn.ended clears ALL open offers (both fields)', () => {
+    const state = makeParallelState({
+      openTradeOffers: [
+        {
+          proposerId: 'player-1',
+          give: { timber: 1 },
+          get: { ore: 1 },
+          targets: ['player-2', 'player-3'],
+          depth: 0,
+        },
+        {
+          proposerId: 'player-2',
+          give: { ore: 1 },
+          get: { timber: 1 },
+          targets: ['player-1'],
+          depth: 1,
+        },
+      ],
+    });
+    const next = reduce(state, {
+      type: 'turn.ended',
+      index: state.eventIndex,
+      playerId: 'player-1',
+      nextPlayerId: 'player-2',
+    });
+    expect(next.openTradeOffers).toBeUndefined();
+    expect(next.openTradeOffer).toBeUndefined();
   });
 });

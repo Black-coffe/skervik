@@ -393,6 +393,45 @@ describe('the 7 / discard-wait FSM (S1.3.1)', () => {
     expect(replayed).toEqual(state);
   });
 
+  it('parallel discard (S2.1.5 confirms): N owers discard in ANY order for the same final state', () => {
+    // Post-7 robber phase with two owers already recorded — discard is ALREADY
+    // parallel (order-independent, each ower touches only their own hand +
+    // leaves the queue), so S2.1.5 adds NO discard flag/behavior; this only
+    // CONFIRMS it: folding the two discards in both orders yields byte-equal state.
+    const base = makeSevenGenesis({
+      phase: 'robber',
+      playersToDiscard: ['player-1', 'player-2'],
+      eventIndex: 5,
+    });
+    type Intent = Parameters<typeof validate>[1];
+    const d1: Intent = {
+      type: 'intent.discard',
+      playerId: 'player-1',
+      resources: { timber: 2, clay: 2 },
+    };
+    const d2: Intent = {
+      type: 'intent.discard',
+      playerId: 'player-2',
+      resources: { iron: 3, barley: 1 },
+    };
+
+    function run(order: readonly Intent[]): GameState {
+      let state: GameState = base;
+      for (const intent of order) {
+        const result = validate(state, intent, intent.playerId, SEED);
+        expect(result.ok).toBe(true);
+        if (!result.ok) throw new Error(`expected ok result for ${intent.playerId}`);
+        state = result.events.reduce(reduce, state);
+      }
+      return state;
+    }
+
+    const forward = run([d1, d2]);
+    const reversed = run([d2, d1]);
+    expect(reversed).toEqual(forward);
+    expect(forward.playersToDiscard).toBeUndefined(); // both cleared, queue dropped
+  });
+
   it('a 7 with nobody over the hand limit still enters the robber phase, with moveRobber immediately legal', () => {
     const genesis = makeSevenGenesis({
       players: [
