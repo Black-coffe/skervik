@@ -13,6 +13,7 @@ import type {
   ResourceType,
   TradeOffer,
 } from './types.js';
+import { NEUTRAL_OWNER_ID } from './types.js';
 
 /**
  * Parallel-mode (S2.1.5) open-offer list update: store `offers`, or DROP the
@@ -133,6 +134,24 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           tileTokens: event.tileTokens,
           portContents: event.portContents,
           robberTileId: event.robberTileId,
+        },
+        eventIndex: event.index + 1,
+      };
+    }
+    case 'neutral.placed': {
+      // A NEUTRAL/phantom blocking settlement (S2.1.6) — a static genesis fact,
+      // NOT a snake-draft turn: it lands a settlement owned by NEUTRAL_OWNER_ID
+      // in `buildings` (creating `buildings` if this is the first placement) and
+      // touches nothing else — no `payout`, no `pendingRoadVertexId`, no player
+      // hand. The existing distance rule then blocks real players on/adjacent to
+      // it (`validate.ts`), and every per-player tally excludes it by owner id.
+      const buildings = state.buildings ?? { settlements: {}, roads: {} };
+      return {
+        ...state,
+        buildings: {
+          settlements: { ...buildings.settlements, [event.vertexId]: NEUTRAL_OWNER_ID },
+          roads: buildings.roads,
+          ...(buildings.cities ? { cities: buildings.cities } : {}),
         },
         eventIndex: event.index + 1,
       };

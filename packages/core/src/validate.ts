@@ -64,6 +64,7 @@ import type {
   TurnEndedEvent,
   YearOfPlentyPlayedEvent,
 } from './types.js';
+import { NEUTRAL_OWNER_ID } from './types.js';
 
 /**
  * Result of {@link validate}: either the intent is legal and is translated
@@ -773,6 +774,12 @@ function computeProduction(state: GameState, total: number): ProductionResult {
         const cityOwner = buildings.cities?.[vertexId];
         const owner = cityOwner ?? buildings.settlements[vertexId];
         if (owner === undefined) continue;
+        // A NEUTRAL/phantom settlement (S2.1.6, 2-player mode) earns NO
+        // production — it is a static blocker, not a player. Skipping it here
+        // is the one explicit neutral exclusion the payout loop needs (turns /
+        // robber / trade / VP already exclude a non-`state.players` owner); it
+        // also keeps the bank from being debited for resources nobody holds.
+        if (owner === NEUTRAL_OWNER_ID) continue;
         const amount = cityOwner !== undefined ? 2 : 1; // S1.2.2: a city pays double
         owed[kind] ??= {};
         owed[kind][owner] = (owed[kind][owner] ?? 0) + amount;

@@ -81,6 +81,7 @@ const VALID_EVENTS: GameEvent[] = [
     portContents: [{ kind: 'generic', rate: 3 }],
     robberTileId: '0,0',
   },
+  { type: 'neutral.placed', index: 2, vertexId: 'v0' },
   { type: 'dice.rolled', index: 2, playerId: 'p1', dieA: 5, dieB: 3, total: 8 },
   {
     type: 'resources.produced',
@@ -323,8 +324,8 @@ describe('GameEventSchema (outbound payload)', () => {
     }
   });
 
-  it('covers all 25 event discriminants', () => {
-    expect(new Set(VALID_EVENTS.map((e) => e.type)).size).toBe(25);
+  it('covers all 26 event discriminants', () => {
+    expect(new Set(VALID_EVENTS.map((e) => e.type)).size).toBe(26);
   });
 
   it('rejects an unknown event type', () => {
