@@ -438,6 +438,9 @@ const BankTradedEventSchema = z.object({
   count: z.number(),
   get: z.string(),
   bank: CountMapSchema,
+  // S2.2.2: present ONLY when this trade used the discounted `robinHood`
+  // poverty-token rate — absent (every shipping preset) is a normal trade.
+  povertyDiscount: z.literal(true).optional(),
 });
 const LongestRoadAwardedEventSchema = z.object({
   type: z.literal('award.longestRoad'),
@@ -456,6 +459,14 @@ const GameEndedEventSchema = z.object({
   index: z.number(),
   winnerId: z.string(),
   finalStandings: CountMapSchema,
+});
+// S2.2.2: system-emitted `robinHood` poverty-token grant, right after a non-7
+// `resources.produced` — NEVER emitted under `robinHood:false` (every
+// shipping preset today).
+const PovertyTokensGrantedEventSchema = z.object({
+  type: z.literal('poverty.tokensGranted'),
+  index: z.number(),
+  grants: CountMapSchema,
 });
 
 /**
@@ -489,6 +500,7 @@ export const GameEventSchema = z.discriminatedUnion('type', [
   BankTradedEventSchema,
   LongestRoadAwardedEventSchema,
   LargestArmyAwardedEventSchema,
+  PovertyTokensGrantedEventSchema,
   GameEndedEventSchema,
 ]);
 

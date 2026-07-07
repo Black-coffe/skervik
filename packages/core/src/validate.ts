@@ -24,6 +24,7 @@ import {
   type BuildProfile,
   CLASSIC_PROFILE,
   loadRuleProfile,
+  type RobberProfile,
   type SetupProfile,
   type VictoryProfile,
 } from './ruleProfile.js';
@@ -46,6 +47,7 @@ import type {
   PlayerIntent,
   PlayerState,
   PortContent,
+  PovertyTokensGrantedEvent,
   RejectReason,
   ResourcesDiscardedEvent,
   ResourcesProducedEvent,
@@ -390,21 +392,14 @@ function computeLargestArmy(state: GameState): LargestArmyResult {
  * can't be pushed over the line by, someone else's hidden card).
  */
 function computeVictoryPoints(state: GameState, playerId: PlayerId): number {
-  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
-  const buildings = state.buildings;
-  let vp = 0;
-  if (buildings) {
-    vp += Object.values(buildings.settlements).filter(
-      (owner) => owner === playerId,
-    ).length;
-    vp +=
-      Object.values(buildings.cities ?? {}).filter((owner) => owner === playerId).length *
-      2;
-  }
-  if (state.longestRoadHolder === playerId) vp += victory.longestRoadVP;
-  if (state.largestArmyHolder === playerId) vp += victory.largestArmyVP;
-  vp += state.devCards?.[playerId]?.held.victoryPoint ?? 0;
-  return vp;
+  // Single-sourced (S2.2.2 dedup): the FULL tally is the PUBLIC standing plus
+  // the player's HIDDEN VP dev cards. Splitting it this way kills the
+  // copy-pasted body {@link computePublicVictoryPoints} used to duplicate — the
+  // win check simply adds back the hidden component the public helper omits.
+  return (
+    computePublicVictoryPoints(state, playerId) +
+    (state.devCards?.[playerId]?.held.victoryPoint ?? 0)
+  );
 }
 
 /**
@@ -432,6 +427,80 @@ export function computePublicVictoryPoints(state: GameState, playerId: PlayerId)
   if (state.longestRoadHolder === playerId) vp += victory.longestRoadVP;
   if (state.largestArmyHolder === playerId) vp += victory.largestArmyVP;
   return vp;
+}
+
+/**
+ * Steal-eligibility predicate (S2.2.1, extracted S2.2.2): true unless the
+ * `friendlyRobber` catch-up gate protects `playerId` — a player at/below
+ * `friendlyRobberVpCeiling` PUBLIC VP can't be robbed. Extracted so the SAME
+ * rule is expressed ONCE and shared by both validate steal sites
+ * ({@link resolveRobberMove}) and the server's forced-robber resolver
+ * (`forcedAction.ts`) — a STRUCTURAL equivalence, not three copy-pasted
+ * predicates. When `friendlyRobber:false` (every shipping preset) it is always
+ * `true`, so nothing changes for a Classic match. Uses PUBLIC VP only — never
+ * true VP — so "you can't rob X" can't leak that X holds a hidden VP card.
+ */
+export function isStealable(
+  state: GameState,
+  playerId: PlayerId,
+  robber: RobberProfile,
+): boolean {
+  if (!robber.friendlyRobber) return true;
+  return computePublicVictoryPoints(state, playerId) > robber.friendlyRobberVpCeiling;
+}
+
+/**
+ * The current leader's PUBLIC VP standing (S2.2.2) — the max public VP across
+ * all real players, the baseline the `robinHood` trailing gate measures against.
+ * Public-VP only (never true VP), so the catch-up rule can't read hidden state.
+ */
+function leaderPublicVp(state: GameState): number {
+  return state.players.reduce(
+    (max, player) => Math.max(max, computePublicVictoryPoints(state, player.id)),
+    0,
+  );
+}
+
+/**
+ * True if `playerId` is TRAILING for `robinHood` (S2.2.2): their PUBLIC VP is at
+ * least `robinHoodVpGap` below the leader's public VP. Uses
+ * {@link computePublicVictoryPoints} — a trailing player holding a hidden VP
+ * card is STILL trailing (no leak), the same discipline as {@link isStealable}.
+ */
+function isTrailing(state: GameState, playerId: PlayerId): boolean {
+  const { catchUp } = loadRuleProfile(state.profileId ?? 'classic');
+  return (
+    computePublicVictoryPoints(state, playerId) <=
+    leaderPublicVp(state) - catchUp.robinHoodVpGap
+  );
+}
+
+/**
+ * The per-player poverty-token grants for one non-7 roll (S2.2.2): +1 for each
+ * TRAILING player who received ZERO resources from this roll's `production`
+ * grants, skipped once they already hold `robinHoodTokenCap` tokens (accrual
+ * stops at the cap — anti-farming). Pure function of `state` + the already-drawn
+ * production; the caller emits a {@link PovertyTokensGrantedEvent} only when the
+ * result is non-empty. Absent from a player's `grants` means they got nothing
+ * (`computeProduction` only ever records positive amounts).
+ */
+function computePovertyGrants(
+  state: GameState,
+  productionGrants: Readonly<Record<PlayerId, Record<ResourceType, number>>>,
+): Record<PlayerId, number> {
+  const { catchUp } = loadRuleProfile(state.profileId ?? 'classic');
+  const grants: Record<PlayerId, number> = {};
+  for (const player of state.players) {
+    if (!isTrailing(state, player.id)) continue;
+    const got = productionGrants[player.id];
+    const receivedSomething =
+      got !== undefined && Object.values(got).some((amount) => amount > 0);
+    if (receivedSomething) continue;
+    const current = state.povertyTokens?.[player.id] ?? 0;
+    if (current >= catchUp.robinHoodTokenCap) continue;
+    grants[player.id] = 1;
+  }
+  return grants;
 }
 
 /**
@@ -732,8 +801,8 @@ function resolveRobberMove(
   // the function runs byte-identically to before this story.
   const { robber } = loadRuleProfile(state.profileId ?? 'classic');
   if (robber.friendlyRobber) {
-    const stealableOwners = eligibleWithCards.filter(
-      (id) => computePublicVictoryPoints(state, id) > robber.friendlyRobberVpCeiling,
+    const stealableOwners = eligibleWithCards.filter((id) =>
+      isStealable(state, id, robber),
     );
     if (stealableOwners.length === 0) {
       // Every adjacent card-holder is protected — same documented no-op as
@@ -746,10 +815,7 @@ function resolveRobberMove(
   if (victimId === undefined || !eligibleOwners.includes(victimId)) {
     return { ok: false, reason: 'NO_SUCH_VICTIM' };
   }
-  if (
-    robber.friendlyRobber &&
-    computePublicVictoryPoints(state, victimId) <= robber.friendlyRobberVpCeiling
-  ) {
+  if (!isStealable(state, victimId, robber)) {
     return { ok: false, reason: 'VICTIM_PROTECTED' };
   }
   const hand = expandHand(findPlayer(state, victimId)?.resources ?? {});
@@ -1023,7 +1089,23 @@ export function validate(
         grants: production.grants,
         bank: production.bank,
       };
-      return { ok: true, events: [diceEvent, producedEvent] };
+      const rollEvents: GameEvent[] = [diceEvent, producedEvent];
+      // Robin Hood poverty tokens (S2.2.2): ONLY when the catch-up flag is on
+      // does a trailing player who got zero from this roll earn a token. When
+      // off (every shipping preset) `computePovertyGrants` isn't even called, so
+      // the roll's events stay byte-identical to M1.
+      if (profile.catchUp.robinHood) {
+        const grants = computePovertyGrants(state, production.grants);
+        if (Object.keys(grants).length > 0) {
+          const povertyEvent: PovertyTokensGrantedEvent = {
+            type: 'poverty.tokensGranted',
+            index: state.eventIndex + 2,
+            grants,
+          };
+          rollEvents.push(povertyEvent);
+        }
+      }
+      return { ok: true, events: rollEvents };
     }
     case 'intent.endTurn': {
       // Rotation reads the explicit seat order (S1.2.4), not `state.players`'
@@ -1774,8 +1856,24 @@ export function validate(
       // wrong `count` earns the specific WRONG_RATE_COUNT reason rather
       // than a misleading CANNOT_AFFORD if it happens to also be too much.
       const rate = bestBankRate(state, playerId, intent.give);
+      let povertyDiscount = false;
       if (intent.count !== rate) {
-        return reject('WRONG_RATE_COUNT');
+        // Robin Hood discounted trade (S2.2.2): a TRAILING player holding ≥1
+        // poverty token may trade at `robinHoodExchangeRate` instead of their
+        // normal 2:1/3:1/4:1 rate; executing it consumes one token (below, via
+        // the event's `povertyDiscount` flag). Any other `count` mismatch is the
+        // normal WRONG_RATE_COUNT. `robinHood:false` (every shipping preset)
+        // short-circuits this → the reject is byte-identical to M1.
+        if (
+          profile.catchUp.robinHood &&
+          intent.count === profile.catchUp.robinHoodExchangeRate &&
+          (state.povertyTokens?.[playerId] ?? 0) >= 1 &&
+          isTrailing(state, playerId)
+        ) {
+          povertyDiscount = true;
+        } else {
+          return reject('WRONG_RATE_COUNT');
+        }
       }
       const player = findPlayer(state, playerId);
       if (!player || !canAfford(player.resources, { [intent.give]: intent.count })) {
@@ -1803,6 +1901,9 @@ export function validate(
         count: intent.count,
         get: intent.get,
         bank: nextBank,
+        // Both-or-neither with the discounted `count` — `reduce` reads it to
+        // spend one poverty token (S2.2.2). Absent on a normal-rate trade.
+        ...(povertyDiscount ? { povertyDiscount: true } : {}),
       };
       return { ok: true, events: [tradeEvent] };
     }

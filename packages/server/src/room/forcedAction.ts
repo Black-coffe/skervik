@@ -23,8 +23,8 @@
 // seed draw, precisely so verify stays untouched.
 import {
   buildTopology,
-  computePublicVictoryPoints,
   type GameState,
+  isStealable,
   loadRuleProfile,
   type PlayerId,
   type PlayerIntent,
@@ -234,8 +234,11 @@ function resolveMoveRobber(state: GameState): ForcedAction | null {
       (id) =>
         eligibleOwners.includes(id) &&
         handSize(state.players.find((p) => p.id === id)?.resources ?? {}) > 0 &&
-        (!robber.friendlyRobber ||
-          computePublicVictoryPoints(state, id) > robber.friendlyRobberVpCeiling),
+        // Shared steal-eligibility predicate (S2.2.2 dedup) — STRUCTURALLY the
+        // same friendly-robber gate `validate` uses, so a forced move never
+        // names a protected victim `validate` would reject (which would hang
+        // the turn, [[turn-timer-forced-action-hang-risk]]).
+        isStealable(state, id, robber),
     );
 
   const intent: PlayerIntent =

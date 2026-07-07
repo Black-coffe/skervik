@@ -88,6 +88,25 @@ function decrementHeld(
 }
 
 /**
+ * Spends one poverty token (S2.2.2) from `playerId` on a discounted bank trade.
+ * Drop-key-if-zero (a spent-to-zero player leaves no `0`), and the whole
+ * `povertyTokens` key is dropped when nobody holds a token — the same "absent
+ * key = nothing pending" shape the grant path creates, so a never-granted match
+ * and a fully-spent one share one state shape. Pure — never mutates `state`.
+ */
+function spendPovertyToken(state: GameState, playerId: PlayerId): GameState {
+  const { povertyTokens: _prev, ...rest } = state;
+  const tokens = { ...(state.povertyTokens ?? {}) };
+  const next = (tokens[playerId] ?? 0) - 1;
+  if (next > 0) {
+    tokens[playerId] = next;
+  } else {
+    delete tokens[playerId];
+  }
+  return Object.keys(tokens).length > 0 ? { ...rest, povertyTokens: tokens } : rest;
+}
+
+/**
  * Applies one {@link GameEvent} to {@link GameState}, returning a *new*
  * state. Pure and deterministic (ADR-0003): no `Date.now`/`Math.random`/I/O,
  * and `state` is never mutated — every branch returns a fresh object built
@@ -655,7 +674,22 @@ export function reduce(state: GameState, event: GameEvent): GameState {
             }
           : player,
       );
-      return { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
+      const traded = { ...state, players, bank: event.bank, eventIndex: event.index + 1 };
+      // A poverty-discounted trade (S2.2.2) consumes one of the actor's tokens;
+      // absent `povertyDiscount` (every shipping preset, `robinHood:false`)
+      // leaves `traded` byte-identical to M1 — the field is never even present.
+      return event.povertyDiscount ? spendPovertyToken(traded, event.playerId) : traded;
+    }
+    case 'poverty.tokensGranted': {
+      // Apply the explicit per-player token grant (S2.2.2) — `validate` already
+      // gated it on the trailing check + `robinHoodTokenCap`, so `reduce` only
+      // adds the fact (never recomputes who is trailing, ADR-0003). Only emitted
+      // under `robinHood:true`, so this key never appears when the flag is off.
+      const tokens = { ...(state.povertyTokens ?? {}) };
+      for (const [id, amount] of Object.entries(event.grants)) {
+        tokens[id] = (tokens[id] ?? 0) + amount;
+      }
+      return { ...state, povertyTokens: tokens, eventIndex: event.index + 1 };
     }
     case 'award.longestRoad': {
       // The award moved (S1.3.4). A present `playerId` is the new holder; an
