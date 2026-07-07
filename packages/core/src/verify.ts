@@ -38,11 +38,13 @@
 // `expandHand` (not a second copy), so the recompute can never silently drift
 // from the real draw (the plan's #1 cross-cutting risk).
 
+import { drawBalancedRoll } from './balancedDeck.js';
 import { type BoardTopology, buildTopology } from './board.js';
 import { generateBoard } from './boardgen.js';
-import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
+import { shuffledDevDeck } from './devcards.js';
 import { reduce } from './reduce.js';
 import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
+import { loadRuleProfile } from './ruleProfile.js';
 import type { GameEvent, GameState } from './types.js';
 import { expandHand, GAMEPLAY_SLOT } from './validate.js';
 
@@ -111,11 +113,16 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * silent verification hole):
  * - `board.generated` — `generateBoard(seed, topology)` deep-equals the layout
  *   (`tileKinds` / `tileTokens` / `portContents` / `robberTileId`).
- * - `dice.rolled` — `rollDie(seed, gameplayStreamIndex(expectedIndex,
- *   DICE_A|DICE_B))` equals `dieA` / `dieB`, and logged `total === dieA + dieB`.
- * - `devCard.bought` — `shuffledDevDeck(seed)[drawIndex]` equals `card`, with
- *   `drawIndex` derived from a verifier-owned deck counter (NOT the log's
- *   `deckRemaining`, which is itself checked for tampering).
+ * - `dice.rolled` — branches on the folded profile's randomness (S2.1.2):
+ *   `'dice'` recomputes `rollDie(seed, gameplayStreamIndex(expectedIndex,
+ *   DICE_A|DICE_B))`; `'balanced_deck'` recomputes `drawBalancedRoll(seed,
+ *   balancedRollsSeen)` (a verifier-owned roll counter, NOT
+ *   `state.balancedRollsDrawn`). Both compare `dieA`/`dieB`, and logged
+ *   `total === dieA + dieB`.
+ * - `devCard.bought` — `shuffledDevDeck(seed, deck)[drawIndex]` equals `card`,
+ *   with `deck` resolved from the match profile and `drawIndex` derived from a
+ *   verifier-owned deck counter (NOT the log's `deckRemaining`, which is itself
+ *   checked for tampering).
  * - `robber.moved` (only when a card was stolen) —
  *   `expandHand(victimResources)[floor(deriveValue(seed, gameplayStreamIndex(
  *   expectedIndex, STEAL)) * handSize)]` equals `stolenResource`; the victim's
@@ -142,10 +149,20 @@ export function verifyMatchRandomness(
   let expectedIndex = 0;
   // The dev deck's remaining count BEFORE the next draw — a verifier-owned
   // counter (starts full), NOT the log's `event.deckRemaining` (which is itself
-  // checked against this). `validate` draws `shuffledDevDeck(seed)[deckSize -
-  // remainingBefore]`; we reconstruct `remainingBefore` here independently.
-  const deckSize = CLASSIC_DEV_CARD_PROFILE.deck.length;
+  // checked against this). `validate` draws `shuffledDevDeck(seed, deck)[deckSize
+  // - remainingBefore]`; we reconstruct `remainingBefore` here independently.
+  // Deck resolves from the match's profile (S2.1.2 carry-forward discharge);
+  // Balanced shares Classic's dev deck today so this is byte-identical, but the
+  // hardcode is gone — the source of truth is now `loadRuleProfile`.
+  const deckSize = loadRuleProfile(state.profileId ?? 'classic').devCards.deck.length;
   let devRemainingBefore = deckSize;
+  // The verifier's OWN count of `dice.rolled` events folded so far — the draw
+  // position the `balanced_deck` recompute keys off (S2.1.2). NEVER
+  // `state.balancedRollsDrawn` or any log-supplied field: trusting a
+  // self-reported position lets a dishonest server grind it to forge a
+  // favorable draw that still verifies (the S1.7.3 positional-binding threat,
+  // [[commit-reveal-verify-positional-binding]]). Incremented per `dice.rolled`.
+  let balancedRollsSeen = 0;
 
   const flag = (
     index: number,
@@ -205,14 +222,24 @@ export function verifyMatchRandomness(
       }
       case 'dice.rolled': {
         checked += 1;
-        const dieA = rollDie(
-          seed,
-          gameplayStreamIndex(expectedIndex, GAMEPLAY_SLOT.DICE_A),
-        );
-        const dieB = rollDie(
-          seed,
-          gameplayStreamIndex(expectedIndex, GAMEPLAY_SLOT.DICE_B),
-        );
+        // Recompute the roll from the folded profile's randomness source
+        // (S2.1.2). The profile was fixed by `match.started` (index 0, folded
+        // before any roll), so `state.profileId` is already set here.
+        const { randomness } = loadRuleProfile(state.profileId ?? 'classic');
+        let dieA: number;
+        let dieB: number;
+        if (randomness === 'balanced_deck') {
+          // Balanced: recompute the without-replacement draw from the seed and
+          // the verifier's OWN roll counter — NEVER `state.balancedRollsDrawn`
+          // (positional binding, above). For an honest log this counter equals
+          // the count `validate` drew at; a forged position can't steer it.
+          ({ dieA, dieB } = drawBalancedRoll(seed, balancedRollsSeen));
+        } else {
+          // Classic 2d6, keyed to the true folded position (byte-frozen path).
+          dieA = rollDie(seed, gameplayStreamIndex(expectedIndex, GAMEPLAY_SLOT.DICE_A));
+          dieB = rollDie(seed, gameplayStreamIndex(expectedIndex, GAMEPLAY_SLOT.DICE_B));
+        }
+        balancedRollsSeen += 1;
         if (dieA !== event.dieA)
           flag(expectedIndex, event.type, 'dieA', dieA, event.dieA);
         if (dieB !== event.dieB)
@@ -231,9 +258,13 @@ export function verifyMatchRandomness(
         // BEFORE this draw), NOT `event.deckRemaining` — a log author who forged
         // `deckRemaining` to point at a `victoryPoint`/`knight` card would still
         // be checked against the true deck position. `validate` draws
-        // `shuffledDevDeck(seed)[deckSize - remainingBefore]`.
+        // `shuffledDevDeck(seed, deck)[deckSize - remainingBefore]` — same
+        // profile-resolved deck (S2.1.2 carry-forward discharge).
         const drawIndex = deckSize - devRemainingBefore;
-        const expected = shuffledDevDeck(seed)[drawIndex];
+        const expected = shuffledDevDeck(
+          seed,
+          loadRuleProfile(state.profileId ?? 'classic').devCards.deck,
+        )[drawIndex];
         if (expected !== event.card) {
           flag(expectedIndex, event.type, 'card', expected, event.card);
         }

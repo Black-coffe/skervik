@@ -241,6 +241,18 @@ export interface GameState {
    */
   readonly devDeckRemaining?: number;
   /**
+   * Cumulative count of balanced-deck rolls drawn so far (S2.1.2) — the draw
+   * position `drawBalancedRoll(seed, n)` keys off. Present/incremented ONLY
+   * under `randomness: 'balanced_deck'` (Balanced profile); Classic never
+   * touches it, so its `dice.rolled` reduce path and golden fixtures stay
+   * byte-identical (absent resolves to 0, the first draw). Only the COUNT
+   * travels on state, never the shuffled deck order — `balancedDeck.ts`
+   * re-derives the Nth draw from `(seed, n)`, the same commit-reveal
+   * discipline that keeps the shuffled dev-deck order (and the raw `seed`)
+   * out of `GameState` (`docs/wiki/fair-rng-commit-reveal.md`).
+   */
+  readonly balancedRollsDrawn?: number;
+  /**
    * Per-player development-card holdings (S1.2.3), keyed by `PlayerId` —
    * absent until the first `devCard.bought` lands, same "fact of an event
    * having landed" optionality as {@link GameState.buildings}. Each

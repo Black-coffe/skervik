@@ -2,6 +2,7 @@
 // §4.1). ADR-0003: deterministic, side-effect free, never mutates its input
 // — always returns a new GameState built from `event` data.
 
+import { loadRuleProfile } from './ruleProfile.js';
 import type {
   DevCardHoldings,
   DevCardKind,
@@ -132,6 +133,16 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       // same "absent key = nothing pending" convention as
       // `pendingRoadVertexId`), so `moveRobber` is immediately legal for a 7
       // that happened to catch nobody over the hand limit.
+      // Under `randomness: 'balanced_deck'` (Balanced profile, S2.1.2) a roll
+      // is a without-replacement draw whose position keys off this cumulative
+      // count — advance it by one per `dice.rolled`. Classic (`'dice'`) never
+      // populates the key, so its reduced state (and every golden fixture)
+      // stays byte-identical (absent resolves to `'classic'`).
+      const randomness = loadRuleProfile(state.profileId ?? 'classic').randomness;
+      const balancedAdvance =
+        randomness === 'balanced_deck'
+          ? { balancedRollsDrawn: (state.balancedRollsDrawn ?? 0) + 1 }
+          : {};
       if (event.total === 7) {
         return {
           ...state,
@@ -139,10 +150,16 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           ...(event.playersToDiscard && event.playersToDiscard.length > 0
             ? { playersToDiscard: event.playersToDiscard }
             : {}),
+          ...balancedAdvance,
           eventIndex: event.index + 1,
         };
       }
-      return { ...state, phase: 'main', eventIndex: event.index + 1 };
+      return {
+        ...state,
+        phase: 'main',
+        ...balancedAdvance,
+        eventIndex: event.index + 1,
+      };
     }
     case 'resources.produced': {
       const players = state.players.map((player) => {

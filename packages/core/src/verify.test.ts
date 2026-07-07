@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { drawBalancedRoll } from './balancedDeck.js';
 import { buildTopology } from './board.js';
 import { generateBoard } from './boardgen.js';
 import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
@@ -292,5 +293,125 @@ describe('verifyMatchRandomness — provably-fair recompute-and-compare (S1.7.3)
     expect(result.ok).toBe(true);
     // board + dice + dev-card only — the move drew nothing.
     expect(result.checked).toBe(3);
+  });
+});
+
+// --- S2.1.2: the verifier is profile-aware for the randomness SOURCE ---
+// A Balanced match's rolls are without-replacement draws, not 2d6. The verifier
+// must recompute them from `drawBalancedRoll(seed, balancedRollsSeen)` — where
+// `balancedRollsSeen` is its OWN counter — and reject any forged pair, exactly
+// the S1.7.3 positional-binding discipline applied to the new draw source.
+
+/** A faithful Balanced log: N honest without-replacement rolls off `drawBalancedRoll`. */
+function faithfulBalancedLog(rolls = 5): GameEvent[] {
+  const matchStarted: MatchStartedEvent = {
+    type: 'match.started',
+    index: 0,
+    matchId: 'balanced-verify',
+    seedHash: 'opaque-here',
+    playerIds: ['a', 'b'],
+    profileId: 'balanced',
+  };
+
+  const layout = generateBoard(SEED, TOPO);
+  const boardGenerated: BoardGeneratedEvent = {
+    type: 'board.generated',
+    index: 1,
+    tileKinds: layout.tileKinds,
+    tileTokens: layout.tileTokens,
+    portContents: layout.portContents,
+    robberTileId: layout.robberTileId,
+  };
+
+  const events: GameEvent[] = [matchStarted, boardGenerated];
+  for (let k = 0; k < rolls; k++) {
+    const { dieA, dieB, total } = drawBalancedRoll(SEED, k);
+    const dice: DiceRolledEvent = {
+      type: 'dice.rolled',
+      index: k + 2,
+      playerId: 'a',
+      dieA,
+      dieB,
+      total,
+      ...(total === 7 ? { playersToDiscard: [] } : {}),
+    };
+    events.push(dice);
+  }
+  return events;
+}
+
+describe('verifyMatchRandomness — Balanced (balanced_deck) randomness source (S2.1.2)', () => {
+  it('accepts a faithful Balanced log and checks every without-replacement roll', () => {
+    const events = faithfulBalancedLog(5);
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(true);
+    expect(result.mismatches).toEqual([]);
+    // board + 5 balanced rolls = 6 seed-derived draws.
+    expect(result.checked).toBe(6);
+  });
+
+  it('rejects a forged Balanced roll (naming dice.rolled/dieA)', () => {
+    const events = faithfulBalancedLog(5);
+    const idx = 4; // the 3rd balanced roll (event index 4)
+    const dice = events[idx] as DiceRolledEvent;
+    // Flip to a self-consistent but WRONG pair for this position.
+    const forgedA = (dice.dieA % 6) + 1;
+    events[idx] = { ...dice, dieA: forgedA, total: forgedA + dice.dieB };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some((m) => m.type === 'dice.rolled' && m.field === 'dieA'),
+    ).toBe(true);
+  });
+
+  it('anti-grind: a favorable pair borrowed from a DIFFERENT draw position is rejected', () => {
+    // The positional-binding attack for balanced_deck: swap an honest roll for a
+    // pair that is a genuine draw at some OTHER position (so it "looks drawn"),
+    // hoping the verifier keys off a log-supplied position. It must not — the
+    // verifier recomputes at its OWN counter, so the borrowed pair mismatches.
+    const events = faithfulBalancedLog(5);
+    const trueThird = drawBalancedRoll(SEED, 2); // honest 3rd roll (event index 4)
+    // Find a later draw position whose pair differs from the true 3rd roll.
+    let borrowFrom = -1;
+    for (let n = 5; n < 500; n++) {
+      const cand = drawBalancedRoll(SEED, n);
+      if (cand.dieA !== trueThird.dieA || cand.dieB !== trueThird.dieB) {
+        borrowFrom = n;
+        break;
+      }
+    }
+    expect(borrowFrom).toBeGreaterThan(0);
+    const borrowed = drawBalancedRoll(SEED, borrowFrom);
+    const dice = events[4] as DiceRolledEvent;
+    // A perfectly self-consistent (dieA,dieB,total) — just drawn at the WRONG
+    // position. A verifier trusting any log-supplied position would accept it.
+    events[4] = {
+      ...dice,
+      dieA: borrowed.dieA,
+      dieB: borrowed.dieB,
+      total: borrowed.total,
+    };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some(
+        (m) => m.type === 'dice.rolled' && (m.field === 'dieA' || m.field === 'dieB'),
+      ),
+    ).toBe(true);
+  });
+
+  it('reshuffle boundary: rolls past 36 verify against the next-round permutation', () => {
+    // 38 rolls crosses the 36-card cycle boundary (round 0 → round 1). An honest
+    // log must still verify, proving the verifier's counter drives round=floor(n/36).
+    const events = faithfulBalancedLog(38);
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(true);
+    expect(result.checked).toBe(39); // board + 38 rolls
   });
 });
