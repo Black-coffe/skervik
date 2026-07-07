@@ -153,8 +153,13 @@ export const CLASSIC_VICTORY_PROFILE = {
  * is this scheme's owner (parallel to `boardgen.ts` owning
  * `BOARD_GEN_STREAM`); `gameplayStreamIndex` (`rng.ts`) only knows the
  * stride `K`, not what each slot means.
+ *
+ * Exported (S1.7.3) so the fair-RNG verifier (`verify.ts`'s
+ * `verifyMatchRandomness`) recomputes each draw from the SAME slot definition
+ * the draw sites below use — ONE source of truth, so an auditor's
+ * recomputation can never silently drift from the real draws.
  */
-const GAMEPLAY_SLOT = {
+export const GAMEPLAY_SLOT = {
   DICE_A: 0,
   DICE_B: 1,
   /**
@@ -644,8 +649,14 @@ function computePlayersOwingDiscard(state: GameState): PlayerId[] {
  * "the Nth one" is arbitrary (cards of the same kind are fungible); only a
  * FIXED order matters, so the same `(seed, streamIndex)` always names the
  * same resource kind.
+ *
+ * Exported (S1.7.3) so the fair-RNG verifier (`verify.ts`) reconstructs the
+ * victim's sorted hand for a `robber.moved` steal-pick with the EXACT ordering
+ * the draw used — reuse, never re-derive (a second sort could silently drift).
  */
-function expandHand(resources: Readonly<Record<ResourceType, number>>): ResourceType[] {
+export function expandHand(
+  resources: Readonly<Record<ResourceType, number>>,
+): ResourceType[] {
   const hand: ResourceType[] = [];
   for (const resource of Object.keys(resources).sort()) {
     const count = resources[resource] ?? 0;

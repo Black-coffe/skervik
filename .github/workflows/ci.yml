@@ -66,6 +66,15 @@ jobs:
       - name: E2E full-match gate — cross-process match + replay-equality
         run: pnpm --filter @skervik/server exec vitest run src/e2e/fullMatch.e2e.test.ts
 
+      # M1-gate closer (S1.7.3, A2 discipline): the provably-fair «Честный жребий»
+      # proof. `verifyMatchRandomness` recomputes every seed-derived draw (dice,
+      # steal, dev-card, board) from the revealed seed and the endpoint ties that
+      # to the SHA-256 commitment. Named as its own step so tampering with the
+      # fairness math, the reveal, or a persisted draw fails EXACTLY this gate.
+      # The full `pnpm test` step re-runs it; the duplication is intentional.
+      - name: Fairness verify gate — recompute rolls vs revealed seed + commitment
+        run: pnpm --filter @skervik/core exec vitest run src/verify.test.ts && pnpm --filter @skervik/server exec vitest run src/routes/matchVerify.test.ts
+
       - name: Test
         run: pnpm test
 

@@ -26,9 +26,11 @@ import { matchMaker, Server } from 'colyseus';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { type GuestStore, InMemoryGuestStore } from './auth/guestStore.js';
+import { FsMatchMetadataStore, NoopMatchMetadataStore } from './matchMetadata.js';
 import { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
 import { registerGuestAuthRoute } from './routes/guestAuth.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerMatchVerifyRoute } from './routes/matchVerify.js';
 
 /** Default port — matches the S1.6.5 client's `ws://localhost:2567` default. */
 export const DEFAULT_PORT = 2567;
@@ -85,6 +87,18 @@ export async function createHttpServer(
   await fastify.register(cors, { origin: options.corsOrigin ?? true });
   registerHealthRoute(fastify);
   registerGuestAuthRoute(fastify, guestStore);
+  // The provably-fair verify endpoint (S1.7.3) reads the revealed seed sidecar
+  // for ANY finished match through one stateless store keyed by `matchesDir` —
+  // the SAME dir the rooms write their reveal + log to. With durability off, a
+  // no-op store keeps every id a clean 404 (the route 404s on absent matchesDir
+  // first, so the store is never read then).
+  registerMatchVerifyRoute(fastify, {
+    ...(options.matchesDir !== undefined ? { matchesDir: options.matchesDir } : {}),
+    metadataStore:
+      options.matchesDir !== undefined
+        ? new FsMatchMetadataStore({ matchesDir: options.matchesDir })
+        : new NoopMatchMetadataStore(),
+  });
 
   // Colyseus WS transport with NO http server of its own (`noServer`) — it is
   // attached to Fastify's server below, so the two never fight over the port.

@@ -32,7 +32,11 @@ import {
 } from '@skervik/protocol';
 import { type Client, Room, ServerError } from 'colyseus';
 
-import { InMemoryMatchMetadataStore, type MatchMetadataStore } from '../matchMetadata.js';
+import {
+  FsMatchMetadataStore,
+  InMemoryMatchMetadataStore,
+  type MatchMetadataStore,
+} from '../matchMetadata.js';
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
 import { generateSeed, sha256Hex } from '../seed.js';
 import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
@@ -161,7 +165,15 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       (options?.matchesDir !== undefined
         ? new FsEventSink({ matchId: this.roomId, matchesDir: options.matchesDir })
         : new InMemoryEventSink());
-    this.matchMetadataStore = options?.metadataStore ?? new InMemoryMatchMetadataStore();
+    // Reveal wiring (S1.7.3), mirroring the sink above: an explicit store wins;
+    // otherwise `matchesDir` selects the durable sidecar writer (same dir/id as
+    // the log, so one `:id` addresses both); with neither, in-memory keeps
+    // dev/test off the filesystem.
+    this.matchMetadataStore =
+      options?.metadataStore ??
+      (options?.matchesDir !== undefined
+        ? new FsMatchMetadataStore({ matchesDir: options.matchesDir })
+        : new InMemoryMatchMetadataStore());
 
     // Fixed injected seed (S1.7.2 E2E: reproducible board + rolls) or a fresh
     // CSPRNG seed (production). Either way it stays a server secret — only its
