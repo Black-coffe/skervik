@@ -13,11 +13,13 @@ import {
   type GameEvent,
   type GameState,
   generateBoard,
+  loadRuleProfile,
   type MatchStartedEvent,
   type PlayerId,
   type PlayerIntent,
   reduce,
   type Seed,
+  type TimerProfile,
   validate,
 } from '@skervik/core';
 import {
@@ -40,9 +42,31 @@ import {
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
 import { generateSeed, sha256Hex } from '../seed.js';
 import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
+import { resolveForcedAction } from './forcedAction.js';
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
 const DEFAULT_MAX_SEATS = 4;
+
+/**
+ * A cancellable one-shot timer — the minimal surface the room needs from a
+ * scheduler. In production this is a Colyseus `this.clock` `Delayed` (the room
+ * clock is lifecycle-bound and auto-cleared on dispose); a test can inject a
+ * manual {@link TurnTimerScheduler} whose timers it fires deterministically,
+ * since `@colyseus/testing` exposes no tickable clock.
+ */
+export interface RoomTimer {
+  clear(): void;
+}
+
+/**
+ * Schedules the turn-timer callback (S2.1.4). Production uses `this.clock`
+ * exclusively (see {@link GameRoom.onCreate}); tests inject a controllable
+ * implementation so `arm → expire → forced action` is exercised without a real
+ * wall-clock wait.
+ */
+export interface TurnTimerScheduler {
+  setTimeout(callback: () => void, ms: number): RoomTimer;
+}
 
 /**
  * The transport-level `ServerError.code` for a protocol-version rejection
@@ -85,6 +109,14 @@ export interface GameRoomOptions {
    * (commit-reveal, ADR-0009 Fork 3); only its `sha256Hex` becomes public.
    */
   readonly seed?: Seed;
+  /**
+   * A turn-timer scheduler (S2.1.4 test seam). Production omits it: {@link
+   * GameRoom.onCreate} falls back to a scheduler backed by `this.clock` (the
+   * ONLY wall-clock the room uses). A test injects a manual scheduler so it can
+   * fire the hard timeout deterministically without waiting real time — Colyseus
+   * `@colyseus/testing` has no tickable clock.
+   */
+  readonly turnTimerScheduler?: TurnTimerScheduler;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -154,6 +186,39 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   #matchStarted = false;
 
+  /**
+   * The turn-timer scheduler (S2.1.4). Production: a thin wrapper over
+   * `this.clock` — the room's ONLY wall-clock, lifecycle-bound + auto-cleared on
+   * dispose (never `Date.now()`/`setTimeout` scattered elsewhere; the
+   * deterministic core never sees a clock at all). Tests inject a manual one.
+   */
+  #scheduler!: TurnTimerScheduler;
+
+  /**
+   * The currently-armed HARD turn timer (S2.1.4), or `undefined` when none is
+   * armed (lobby/finished/setup). Cleared + replaced on every re-arm.
+   */
+  #hardTimer: RoomTimer | undefined = undefined;
+
+  /**
+   * A monotonically-increasing arm generation (S2.1.4). Every arm/disarm bumps
+   * it; a fired timeout captures the generation it was armed with and no-ops if
+   * it no longer matches — i.e. any committed action since (which always re-arms)
+   * has superseded it. This is how "a real action taken just before cancels the
+   * forced one" is realized even in the rare case the old timer already fired and
+   * queued before a real intent's commit re-armed a fresh one ([[server-intent-pipeline-serialization]]).
+   */
+  #turnTimerGeneration = 0;
+
+  /**
+   * Per-player consecutive force-completed turns (anti-AFK, S2.1.4) — incremented
+   * when the server force-completes a player's decision on a hard timeout, reset
+   * to 0 on any real committed intent from that player. Lives in ROOM memory (a
+   * seat projection mirrors it), NOT `GameState`/the log: it is session/liveness
+   * metadata S2.3.3 will act on, never a game rule.
+   */
+  #consecutiveTimeouts = new Map<PlayerId, number>();
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
@@ -196,6 +261,14 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       phase: this.gameState.phase,
       currentPlayerId: this.gameState.currentPlayerId,
     });
+
+    // Turn-timer wiring (S2.1.4): production schedules through `this.clock` — the
+    // room's ONLY wall-clock (lifecycle-bound, auto-cleared on dispose). A test
+    // injects a manual scheduler to fire timeouts deterministically. Either way
+    // NO wall-clock ever reaches `@skervik/core`.
+    this.#scheduler = options?.turnTimerScheduler ?? {
+      setTimeout: (callback, ms) => this.clock.setTimeout(callback, ms),
+    };
 
     // The authoritative intent pipeline (S1.4.2), SERIALIZED per room (see
     // `#queue` doc): each intent is chained onto the room's queue rather than
@@ -297,6 +370,12 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         payload: events,
       };
       this.broadcast(batch.type, batch);
+
+      // Arm the turn timer for the freshly-started match (S2.1.4). The genesis
+      // batch lands the game in `setup`, so this arms only the soft-warning
+      // presentational field — setup auto-placement is DEFERRED (no hard forced
+      // action), the first hard timer arms once real setup placements reach `roll`.
+      this.#armTurnTimer();
     } catch (error) {
       // Append failed: state was NOT advanced, nothing broadcast. Log with the
       // public seedHash only (never the raw seed) and swallow — nothing escapes
@@ -349,6 +428,8 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       playerId: client.sessionId as PlayerId,
       seatIndex: this.state.seats.length,
       connected: true,
+      consecutiveMisses: 0,
+      idle: false,
     });
     this.state.seats.push(seat);
 
@@ -386,7 +467,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   }
 
   override onDispose(): void {
-    // Nothing to release yet — no persistence, no timers (M1 shell only).
+    // Cancel any armed turn timer (S2.1.4). `this.clock` is auto-cleared on
+    // dispose by Colyseus too, but clearing the tracked handle is explicit and
+    // also releases an injected test scheduler's timer.
+    this.#hardTimer?.clear();
+    this.#hardTimer = undefined;
   }
 
   /**
@@ -428,6 +513,35 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     }
     const playerId = seat.playerId as PlayerId;
 
+    // Hand off to the SHARED authoritative tail (S2.1.4 refactor) — the identical
+    // `validate → fold → persist → commit → broadcast → reveal → re-arm` path a
+    // forced timeout action also runs. `client` is passed so a rejection/error
+    // replies privately to this sender.
+    await this.#applyAuthoritativeIntent(playerId, intent, client);
+  }
+
+  /**
+   * The ONE authoritative state-advancing path (S2.1.4 refactor of the S1.4.4b
+   * tail): `validate → fold → persist(await append) → commit → update projection
+   * → broadcast → commit-reveal → re-arm turn timer`. Both a real client intent
+   * (`#handleIntent`, `client` set) and a forced timeout action
+   * (`#forceTimedOutAction`, `client` undefined) call it, so the persist-before-
+   * commit ordering + the double-persist race fix live in exactly ONE place and
+   * can never drift between the two callers.
+   *
+   * `client === undefined` means a FORCED (server-injected) action: a validate
+   * rejection there is a no-op (the state moved; the forced action is moot — see
+   * the generation guard in `#forceTimedOutAction`) rather than a private reply.
+   * Never throws: every failure path is caught and, for a real client, answered
+   * privately, so nothing escapes as an unhandled rejection / node crash.
+   */
+  async #applyAuthoritativeIntent(
+    playerId: PlayerId,
+    intent: PlayerIntent,
+    client?: Client,
+  ): Promise<void> {
+    const forced = client === undefined;
+
     // `validate` never throws for an EXPECTED rejection, but its exhaustiveness
     // guard DOES throw on a structurally-unknown intent type. Narrow the catch
     // (NIT-2): ONLY that known "unhandled intent type" throw maps to
@@ -441,18 +555,22 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       result = validate(this.gameState, intent, playerId, this.#seed);
     } catch (error) {
       if (isUnknownIntentError(error)) {
-        this.#sendReject(client, 'MALFORMED_INTENT');
+        if (client) this.#sendReject(client, 'MALFORMED_INTENT');
+        else
+          this.#logInternalError('forced action produced an unknown intent type', error);
         return;
       }
       this.#logInternalError('validate threw unexpectedly', error);
-      this.#sendInternalError(client);
+      if (client) this.#sendInternalError(client);
       return;
     }
 
     if (!result.ok) {
       // Private reply to ONLY the sender — a rejection is not a state change,
-      // so it is never broadcast, and it never mutates `gameState`.
-      this.#sendReject(client, result.reason);
+      // so it is never broadcast, and it never mutates `gameState`. A forced
+      // action that no longer validates (state already advanced) is simply a
+      // no-op: the current timer keeps counting for the real decision.
+      if (client) this.#sendReject(client, result.reason);
       return;
     }
 
@@ -484,7 +602,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
 
       // 5. Broadcast the EXACT validated events to every client (sender
       //    included); each folds them through its own bundled `@skervik/core`
-      //    reduce (Fork 1). Events are public — the seed never appears here.
+      //    reduce (Fork 1). Events are public — the seed never appears here. A
+      //    forced action's events are indistinguishable from a human's here (a
+      //    normal `turn.ended`/`dice.rolled`/`resources.discarded`/`robber.moved`
+      //    — no timestamp, no timeout marker), which is what keeps the log
+      //    byte-replayable.
       const batch: EventBatchMessage = {
         v: 1,
         type: 'event.batch',
@@ -508,6 +630,12 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
           this.#seed,
         );
       }
+
+      // 7. Anti-AFK bookkeeping (S2.1.4): a real committed intent clears the
+      //    acting player's timeout streak; a FORCED one increments it (and may
+      //    flag the seat idle). Then re-arm the turn timer from the NEW state.
+      this.#recordActivity(playerId, forced);
+      this.#armTurnTimer();
     } catch (error) {
       // A durable-sink rejection (or any unexpected throw) fails the batch:
       // state was NOT advanced (assignment happens only after `append` resolved
@@ -519,7 +647,160 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         'failed to persist a validated batch; state left uncommitted',
         error,
       );
-      this.#sendInternalError(client);
+      if (client) this.#sendInternalError(client);
+    }
+  }
+
+  /**
+   * (Re-)arms the turn timer from the CURRENT committed state (S2.1.4). Cancels
+   * any prior hard timer and bumps the arm generation (so a timeout already fired
+   * for the previous decision recognizes itself as stale). For a phase with a
+   * hard-enforced decision (`roll`/`main`/`robber`) it arms a `this.clock` timeout
+   * sized by `loadRuleProfile(profileId).timers` and projects the presentational
+   * deadline onto the schema; for `setup` it surfaces only a soft-warning nudge
+   * (auto-placement deferred → no hard forced action); for `lobby`/`finished` it
+   * clears the presentational deadline entirely. The wall-clock lives ONLY here —
+   * the core + event log never see it.
+   */
+  #armTurnTimer(): void {
+    // Disarm any prior timer and invalidate its (possibly already-fired) callback.
+    this.#hardTimer?.clear();
+    this.#hardTimer = undefined;
+    const generation = ++this.#turnTimerGeneration;
+
+    const timers = loadRuleProfile(this.gameState.profileId ?? 'classic').timers;
+    const hardMs = this.#hardDeadlineMsForPhase(timers);
+
+    if (hardMs === null) {
+      // No hard-enforced decision. `setup` still surfaces a soft-warning nudge
+      // (presentational only — auto-placement is DEFERRED to a later story, so
+      // there is no forced action); `lobby`/`finished` clear it outright.
+      if (this.gameState.phase === 'setup') {
+        this.state.turnDeadline = 0;
+        this.state.turnSoftWarnAt = Date.now() + timers.softWarningMs;
+      } else {
+        this.state.turnDeadline = 0;
+        this.state.turnSoftWarnAt = 0;
+      }
+      return;
+    }
+
+    // Project the wall-clock deadline (epoch ms) onto the PUBLIC schema only —
+    // never `GameState`/an event/the log. `Date.now()` is the presentational
+    // wall-clock the client compares against; the enforcement itself runs on
+    // `this.clock` via the scheduler.
+    const now = Date.now();
+    const deadline = now + hardMs;
+    this.state.turnDeadline = deadline;
+    this.state.turnSoftWarnAt = Math.max(now, deadline - timers.softWarningMs);
+
+    this.#hardTimer = this.#scheduler.setTimeout(() => {
+      this.#onHardTimeout(generation);
+    }, hardMs);
+  }
+
+  /**
+   * The hard-deadline duration for the current decision phase, or `null` when no
+   * hard timer applies (`setup` — deferred; `lobby`/`finished` — no turn). A
+   * `robber` phase splits on whether post-7 discards are still owed.
+   */
+  #hardDeadlineMsForPhase(timers: TimerProfile): number | null {
+    switch (this.gameState.phase) {
+      case 'roll':
+        return timers.rollMs;
+      case 'main':
+        return timers.mainMs;
+      case 'robber':
+        return (this.gameState.playersToDiscard?.length ?? 0) > 0
+          ? timers.discardMs
+          : timers.robberMs;
+      case 'setup':
+      case 'lobby':
+      case 'finished':
+        return null;
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Hard-timeout handler (S2.1.4): the forced action MUST enter the SAME per-room
+   * `#queue` as every intent — never a floating callback that mutates state and
+   * TOCTOU-races a live intent ([[server-intent-pipeline-serialization]]). We
+   * enqueue a link that resolves + applies the forced action at EXECUTION time.
+   */
+  #onHardTimeout(generation: number): void {
+    this.#queue = this.#queue
+      .then(() => this.#forceTimedOutAction(generation))
+      .catch((error: unknown) => {
+        this.#logInternalError('forced-action queue link threw unexpectedly', error);
+      });
+  }
+
+  /**
+   * Resolves + applies the forced default action for the state as it stands AT
+   * EXECUTION TIME (S2.1.4). Runs inside the `#queue`, so it is serialized with
+   * every real intent. Two guards make it race-safe and correct:
+   *
+   * - **Stale generation** → no-op: any committed action since this timer was
+   *   armed bumped the generation (and re-armed a fresh timer), so this fired
+   *   timeout is moot — the real action already advanced the turn. This is how
+   *   "a real action taken just before cancels the forced one" holds even when
+   *   the old timer had already fired and queued.
+   * - **`resolveForcedAction` → `null`** → no-op (nothing to force: setup, or a
+   *   phase with no decision).
+   *
+   * The multi-ower discard step is the ONE case a single hard timeout
+   * force-completes several players at once: after the first ower's forced
+   * discard commits, it keeps forcing each remaining owing discarder in turn
+   * (each through the shared authoritative tail), until the robber may move.
+   */
+  async #forceTimedOutAction(generation: number): Promise<void> {
+    if (generation !== this.#turnTimerGeneration) return;
+
+    let forced = resolveForcedAction(this.gameState);
+    if (!forced) return;
+
+    const wasDiscardStep =
+      this.gameState.phase === 'robber' &&
+      (this.gameState.playersToDiscard?.length ?? 0) > 0;
+
+    await this.#applyAuthoritativeIntent(forced.playerId, forced.intent);
+
+    if (wasDiscardStep) {
+      // Force every remaining owing discarder in this same timeout, in turn —
+      // they collectively ran out of time on the shared discard deadline.
+      while (
+        this.gameState.phase === 'robber' &&
+        (this.gameState.playersToDiscard?.length ?? 0) > 0
+      ) {
+        forced = resolveForcedAction(this.gameState);
+        if (!forced) break;
+        await this.#applyAuthoritativeIntent(forced.playerId, forced.intent);
+      }
+    }
+  }
+
+  /**
+   * Anti-AFK bookkeeping (S2.1.4): update a player's consecutive-timeout streak
+   * and the seat's `idle` flag after a committed action. A FORCED action
+   * increments the streak; a REAL one resets it to 0. Purely session/liveness
+   * metadata in room memory + the seat projection — never `GameState`/the log
+   * (the deterministic core stays independent of liveness). No bot replacement,
+   * no removal (no karmic ban) — the seat is only flagged.
+   */
+  #recordActivity(playerId: PlayerId, forced: boolean): void {
+    const previous = this.#consecutiveTimeouts.get(playerId) ?? 0;
+    const next = forced ? previous + 1 : 0;
+    if (next === 0) this.#consecutiveTimeouts.delete(playerId);
+    else this.#consecutiveTimeouts.set(playerId, next);
+
+    const seat = this.state.seats.find((s) => s.playerId === playerId);
+    if (seat) {
+      const threshold = loadRuleProfile(this.gameState.profileId ?? 'classic').timers
+        .afkThreshold;
+      seat.consecutiveMisses = next;
+      seat.idle = next >= threshold;
     }
   }
 

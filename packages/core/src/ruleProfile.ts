@@ -72,6 +72,39 @@ export interface RobberProfile {
   readonly halfDivisor: number;
 }
 
+/**
+ * Server-enforced turn-timer durations (S2.1.4), in wall-clock milliseconds,
+ * per decision phase. **SERVER-CONSUMED ONLY**: the Colyseus `GameRoom` resolves
+ * `loadRuleProfile(state.profileId).timers` to arm its `this.clock`; the pure
+ * engine (`reduce`/`validate`) NEVER reads this — durations are wall-clock
+ * policy, not game logic, so keeping them out of the core preserves the
+ * deterministic-isomorphic invariant (no clock in the core, no golden/serialized
+ * state change: `GameState` still carries only `profileId`). Values are v1,
+ * documented as tunable — calibrate against telemetry in M3.
+ */
+export interface TimerProfile {
+  /**
+   * How long BEFORE the hard deadline the client should start visibly warning
+   * (the room projects `turnSoftWarnAt = turnDeadline − softWarningMs`). Must be
+   * less than every hard deadline below.
+   */
+  readonly softWarningMs: number;
+  /** `'roll'` phase hard deadline (the turn's mandatory first step). */
+  readonly rollMs: number;
+  /** `'main'` phase hard deadline (build/buy/trade/play/endTurn). */
+  readonly mainMs: number;
+  /** `'robber'` + a non-empty `playersToDiscard` hard deadline (post-7 discards). */
+  readonly discardMs: number;
+  /** `'robber'` move (+ steal) hard deadline, once discards have cleared. */
+  readonly robberMs: number;
+  /**
+   * Consecutive force-completed turns before a seat is flagged `idle` (anti-AFK,
+   * S2.1.4) — a resilience/matchmaking hint S2.3.3 bot-fill will later consume,
+   * NOT a game rule and NOT a karmic ban (the seat is only flagged, never removed).
+   */
+  readonly afkThreshold: number;
+}
+
 /** Victory threshold + award minimums/values — `validate.ts`. */
 export interface VictoryProfile {
   readonly vpToWin: number;
@@ -104,6 +137,11 @@ export interface RuleProfile {
   readonly bankTrade: BankTradeProfile;
   readonly robber: RobberProfile;
   readonly victory: VictoryProfile;
+  /**
+   * Server-enforced turn-timer durations (S2.1.4) — read ONLY by the Colyseus
+   * room to arm `this.clock`, never by `reduce`/`validate` (grep-confirmed).
+   */
+  readonly timers: TimerProfile;
 }
 
 /**
@@ -217,6 +255,17 @@ export const CLASSIC_PROFILE: RuleProfile = {
     longestRoadVP: 2,
     largestArmyVP: 2,
   },
+  // v1 turn timers (S2.1.4) — server-only, tunable against M3 telemetry. Soft
+  // warning fires in the final 15s; hard deadlines are generous for a thoughtful
+  // Classic game (2 min main, 1 min roll, 45s for a post-7 discard/robber move).
+  timers: {
+    softWarningMs: 15_000,
+    rollMs: 60_000,
+    mainMs: 120_000,
+    discardMs: 45_000,
+    robberMs: 45_000,
+    afkThreshold: 2,
+  },
 };
 
 /**
@@ -236,7 +285,8 @@ export const BALANCED_PROFILE: RuleProfile = {
  * Blitz — Classic with a lower victory threshold (`vpToWin: 8`) for a shorter
  * game. `vpToWin` is a knob the engine ALREADY consumes, so this is live
  * config: a Blitz match ends earlier. (Later knobs activated by their own
- * stories: tighter turn timers — S2.1.4; adaptive board/duration — S2.1.3.)
+ * stories: adaptive board/duration — S2.1.3.) Blitz also runs TIGHTER turn
+ * timers (S2.1.4): roughly half Classic's windows for a faster game.
  */
 export const BLITZ_PROFILE: RuleProfile = {
   ...CLASSIC_PROFILE,
@@ -245,6 +295,14 @@ export const BLITZ_PROFILE: RuleProfile = {
   victory: {
     ...CLASSIC_PROFILE.victory,
     vpToWin: 8,
+  },
+  timers: {
+    softWarningMs: 10_000,
+    rollMs: 30_000,
+    mainMs: 60_000,
+    discardMs: 30_000,
+    robberMs: 30_000,
+    afkThreshold: 2,
   },
 };
 
