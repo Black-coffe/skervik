@@ -56,6 +56,7 @@ export type {
   BankTradeProfile,
   BoardProfile,
   BuildProfile,
+  CatchUpProfile,
   DevCardProfile,
   ProductionProfile,
   RobberProfile,
@@ -83,6 +84,7 @@ export {
   CLASSIC_SETUP_PROFILE,
   CLASSIC_VICTORY_PROFILE,
   computePublicVictoryPoints,
+  isStealable,
   validate,
 } from './validate.js';
 export type { RandomnessMismatch, VerifyRandomnessResult } from './verify.js';

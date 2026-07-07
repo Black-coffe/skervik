@@ -351,6 +351,19 @@ export interface GameState {
    * field and {@link GameState.playersToDiscard}).
    */
   readonly openTradeOffers?: readonly TradeOffer[];
+  /**
+   * Per-player poverty-token counts (S2.2.2 `robinHood` catch-up), keyed by
+   * {@link PlayerId} — a trailing player earns +1 token on a non-7 roll that
+   * gives them zero resources (capped at `catchUp.robinHoodTokenCap`), and a
+   * token unlocks one discounted bank trade (`catchUp.robinHoodExchangeRate`)
+   * that consumes it. Present ONLY once a `poverty.tokensGranted` event has
+   * landed — so under `robinHood:false` (every shipping preset) the field is
+   * NEVER written and serialized state stays byte-IDENTICAL to today (Classic
+   * golden/replay/verify frozen). Drop-key-if-zero on spend, and the whole key
+   * is dropped when no player holds a token — same "absent key = nothing
+   * pending" convention as {@link GameState.playersToDiscard}.
+   */
+  readonly povertyTokens?: Readonly<Record<PlayerId, number>>;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -735,6 +748,15 @@ export interface BankTradedEvent extends BaseGameEvent {
   readonly count: number;
   readonly get: ResourceType;
   readonly bank: Readonly<Record<ResourceType, number>>;
+  /**
+   * Present (`true`) ONLY when this trade used the discounted
+   * `catchUp.robinHoodExchangeRate` unlocked by a poverty token (S2.2.2) — a
+   * fact `reduce` reads to decrement one of the actor's `povertyTokens`.
+   * Absent (the every-shipping-preset case, `robinHood:false`) means a normal
+   * bank trade at the resolved 2:1/3:1/4:1 rate — byte-identical to M1, no
+   * token touched. Both-or-neither with the discounted `count`.
+   */
+  readonly povertyDiscount?: true;
 }
 
 /**
@@ -788,6 +810,20 @@ export interface GameEndedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted (system, no player intent) right after a non-7 `resources.produced`
+ * when `catchUp.robinHood` is on and ≥1 TRAILING player got zero resources from
+ * that roll (S2.2.2). `grants` is the explicit per-player +N token increment
+ * `validate` already computed against the trailing gate + `robinHoodTokenCap`
+ * (a fact, not a recipe — `reduce` only adds it to {@link
+ * GameState.povertyTokens}, never recomputes who is trailing, ADR-0003). NEVER
+ * emitted under `robinHood:false`, so existing roll events stay byte-identical.
+ */
+export interface PovertyTokensGrantedEvent extends BaseGameEvent {
+  readonly type: 'poverty.tokensGranted';
+  readonly grants: Readonly<Record<PlayerId, number>>;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
@@ -820,6 +856,7 @@ export type GameEvent =
   | BankTradedEvent
   | LongestRoadAwardedEvent
   | LargestArmyAwardedEvent
+  | PovertyTokensGrantedEvent
   | GameEndedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */

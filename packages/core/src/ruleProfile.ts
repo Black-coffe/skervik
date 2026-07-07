@@ -110,6 +110,30 @@ export interface TimerProfile {
   readonly afkThreshold: number;
 }
 
+/**
+ * Deterministic catch-up knobs (roadmap principle 3 — *catch-up over
+ * runaway-leader*). The tech-spec §180 `RuleProfile.catchUp` sub-profile; S2.2.2
+ * introduces it with the first member, `robinHood` (poverty tokens for trailing
+ * players). Every knob is a pure-from-state balance dial — NO seed, NO PRNG, so
+ * `verify.ts` stays randomness-only. `friendlyRobber` (S2.2.1) pragmatically
+ * stays in {@link RobberProfile}; S2.2.3/S2.2.4 catch-up flags will join here.
+ */
+export interface CatchUpProfile {
+  /**
+   * When `true`, a TRAILING player (PUBLIC VP ≤ leader's public VP −
+   * {@link CatchUpProfile.robinHoodVpGap}) earns +1 poverty token on a non-7
+   * dice roll that produces ZERO resources for them (self-compensation for
+   * empty rolls, S2.2.2). Off on every shipping preset.
+   */
+  readonly robinHood: boolean;
+  /** Trailing threshold: a player is trailing when public VP ≤ leader's public VP − this. */
+  readonly robinHoodVpGap: number;
+  /** Max poverty tokens a player may hold — accrual stops at this cap (anti-farming). */
+  readonly robinHoodTokenCap: number;
+  /** Discounted bank ratio (N:1) a held poverty token unlocks; spending it consumes one token. */
+  readonly robinHoodExchangeRate: number;
+}
+
 /** Victory threshold + award minimums/values — `validate.ts`. */
 export interface VictoryProfile {
   readonly vpToWin: number;
@@ -155,6 +179,12 @@ export interface RuleProfile {
   readonly build: BuildProfile;
   readonly bankTrade: BankTradeProfile;
   readonly robber: RobberProfile;
+  /**
+   * Deterministic catch-up knobs (S2.2.2) — `robinHood` poverty tokens for
+   * trailing players. Off on every shipping preset; resolved via
+   * `state.profileId` inside the engine like every other knob.
+   */
+  readonly catchUp: CatchUpProfile;
   readonly victory: VictoryProfile;
   /**
    * Server-enforced turn-timer durations (S2.1.4) — read ONLY by the Colyseus
@@ -286,6 +316,17 @@ export const CLASSIC_PROFILE: RuleProfile = {
     // FRIENDLY_ROBBER_TEST_PROFILE below, the S2.1.5 precedent.
     friendlyRobber: false,
     friendlyRobberVpCeiling: 2,
+  },
+  // Byte-frozen off (S2.2.2) — Balanced/Blitz/twoPlayer inherit `robinHood:false`
+  // via their `...CLASSIC_PROFILE` spread; liveness proven by the internal
+  // ROBIN_HOOD_TEST_PROFILE below, the S2.1.5/S2.2.1 precedent. The params are
+  // provisional balance knobs (dead while `robinHood:false` → change no shipping
+  // behavior), tuned by the M2 balance-sim workstream.
+  catchUp: {
+    robinHood: false,
+    robinHoodVpGap: 2,
+    robinHoodTokenCap: 3,
+    robinHoodExchangeRate: 2,
   },
   victory: {
     vpToWin: 10,
@@ -426,6 +467,31 @@ export const FRIENDLY_ROBBER_TEST_PROFILE: RuleProfile = {
 };
 
 /**
+ * INTERNAL, NON-SHIPPING profile id used ONLY to prove the `robinHood`
+ * poverty-token catch-up path in tests (S2.2.2) — deliberately absent from
+ * {@link RuleProfileId} (and the protocol's `profileId` enum), so no client can
+ * select it. No shipping preset enables `robinHood` yet (assigning catch-up
+ * flags to specific presets is a batched product decision once E2.2 exists),
+ * yet the flag's live behavior still needs coverage — the S2.1.5/S2.2.1
+ * precedent of proving a knob via a distinct profile.
+ */
+export const ROBIN_HOOD_TEST_PROFILE_ID = '__robin_hood_test__';
+
+/**
+ * Classic in every rule value EXCEPT `catchUp.robinHood: true` — the internal
+ * fixture behind {@link ROBIN_HOOD_TEST_PROFILE_ID}. Its `.id` stays `'classic'`
+ * (inherited via the spread; {@link RuleProfileId} has no test member) — the
+ * registry key, not `.id`, is what resolves it.
+ */
+export const ROBIN_HOOD_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    robinHood: true,
+  },
+};
+
+/**
  * The profile registry: the shipping presets plus the internal
  * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
  * {@link RuleProfileId}) so the non-shipping test ids have a home without
@@ -436,6 +502,7 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   ...SHIPPING_PROFILES,
   [PARALLEL_TRADE_TEST_PROFILE_ID]: PARALLEL_TRADE_TEST_PROFILE,
   [FRIENDLY_ROBBER_TEST_PROFILE_ID]: FRIENDLY_ROBBER_TEST_PROFILE,
+  [ROBIN_HOOD_TEST_PROFILE_ID]: ROBIN_HOOD_TEST_PROFILE,
 };
 
 /**

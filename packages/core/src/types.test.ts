@@ -34,6 +34,7 @@ import type {
   PlayMonopolyIntent,
   PlayRoadBuildingIntent,
   PlayYearOfPlentyIntent,
+  PovertyTokensGrantedEvent,
   ProposeTradeIntent,
   RejectReason,
   RejectTradeIntent,
@@ -227,9 +228,10 @@ describe('GameEvent', () => {
     },
     { type: 'award.longestRoad', index: 22, playerId: 'player-1', length: 5 },
     { type: 'award.largestArmy', index: 23, playerId: 'player-1', knights: 3 },
+    { type: 'poverty.tokensGranted', index: 24, grants: { 'player-1': 1 } },
     {
       type: 'game.ended',
-      index: 24,
+      index: 25,
       winnerId: 'player-1',
       finalStandings: { 'player-1': 10, 'player-2': 4 },
     },
@@ -361,6 +363,11 @@ describe('GameEvent', () => {
         case 'award.largestArmy': {
           const e: LargestArmyAwardedEvent = event;
           expect(e.knights).toBe(3);
+          break;
+        }
+        case 'poverty.tokensGranted': {
+          const e: PovertyTokensGrantedEvent = event;
+          expect(e.grants).toEqual({ 'player-1': 1 });
           break;
         }
         case 'game.ended': {
