@@ -11,6 +11,8 @@ import {
   buildTopology,
   type EdgeId,
   type GameState,
+  generateBoard,
+  type MatchStartedEvent,
   parseGameEventLog,
   type PlayerId,
   type PlayerIntent,
@@ -864,6 +866,128 @@ describe('GameRoom', () => {
 
     await c1.leave();
     await c2.leave();
+  });
+
+  // --- S1.7.2 Phase A: match-start orchestration --------------------------
+  // Seating the room to its full cap must fire the `match.started` +
+  // `board.generated` genesis batch exactly once, through the SAME
+  // `#queue`/append/commit/broadcast pipeline as any intent, deterministically
+  // for a fixed injected seed (the E2E's determinism + replay gates rest on it).
+
+  /** A fixed injected seed — reproducible board across rooms/runs (never a real match secret). */
+  const MATCH_START_SEED = 'skervik-s1.7.2-phase-a-seed';
+
+  /** Seats `count` fresh clients into a room wired with an in-memory sink + the fixed seed. */
+  async function seatFullRoom(
+    count: number,
+  ): Promise<{ room: GameRoom; sink: InMemoryEventSink; seatIds: string[] }> {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: count,
+      seed: MATCH_START_SEED,
+      sink,
+    });
+    const seatIds: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const client = await testServer.connectTo(room, CONNECT_OPTS);
+      seatIds.push(client.sessionId);
+    }
+    await nextTick();
+    return { room, sink, seatIds };
+  }
+
+  it('does NOT start the match while seats are still open (below the cap)', async () => {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 3,
+      seed: MATCH_START_SEED,
+      sink,
+    });
+    await testServer.connectTo(room, CONNECT_OPTS);
+    await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    expect(room.gameState.phase).toBe('lobby');
+    expect(sink.events).toHaveLength(0);
+  });
+
+  it('seating the full cap fires match.started + board.generated once, through the pipeline', async () => {
+    const { room, sink, seatIds } = await seatFullRoom(3);
+
+    // Authoritative state transitioned lobby -> setup via the folded batch.
+    expect(room.gameState.phase).toBe('setup');
+    expect(room.gameState.turn).toBe(1);
+    expect(room.gameState.players.map((p) => p.id)).toEqual(seatIds);
+    expect(room.gameState.playerOrder).toEqual(seatIds);
+    expect(room.gameState.currentPlayerId).toBe(seatIds[0]);
+    expect(room.gameState.board).toBeDefined();
+    // match.started (index 0) + board.generated (index 1) -> eventIndex 2.
+    expect(room.gameState.eventIndex).toBe(2);
+
+    // The public projection was refreshed from the committed state.
+    expect(room.state.phase).toBe('setup');
+    expect(room.state.currentPlayerId).toBe(seatIds[0]);
+
+    // The sink recorded exactly the two genesis events, in order, once.
+    expect(sink.events.map((e) => e.type)).toEqual(['match.started', 'board.generated']);
+    const started = sink.events[0] as MatchStartedEvent;
+    expect(started.playerIds).toEqual(seatIds);
+    expect(started.seedHash).toBe(room.gameState.seedHash);
+  });
+
+  it('the match-start board is deterministic for a fixed seed', async () => {
+    const a = await seatFullRoom(3);
+    const b = await seatFullRoom(3);
+
+    const boardA = a.sink.events.find((e) => e.type === 'board.generated');
+    const boardB = b.sink.events.find((e) => e.type === 'board.generated');
+    expect(boardA).toBeDefined();
+    expect(boardA).toEqual(boardB);
+
+    // And it equals the SAME core generator output S1.6.1's dev fixture uses.
+    const layout = generateBoard(MATCH_START_SEED, buildTopology());
+    expect(boardA).toMatchObject({
+      type: 'board.generated',
+      tileKinds: layout.tileKinds,
+      tileTokens: layout.tileTokens,
+      portContents: layout.portContents,
+      robberTileId: layout.robberTileId,
+    });
+  });
+
+  it('every seated client receives the match-start batch (broadcast to all)', async () => {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 3,
+      seed: MATCH_START_SEED,
+      sink,
+    });
+    const early = [
+      await testServer.connectTo(room, CONNECT_OPTS),
+      await testServer.connectTo(room, CONNECT_OPTS),
+    ];
+    const batches: EventBatchMessage[][] = [[], []];
+    early.forEach((client, i) => {
+      client.onMessage('event.batch', (m: EventBatchMessage) => batches[i]?.push(m));
+    });
+    // The 3rd seat fills the room and triggers the start.
+    await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    for (const received of batches) {
+      expect(received).toHaveLength(1);
+      expect(received[0]?.payload.map((e) => e.type)).toEqual([
+        'match.started',
+        'board.generated',
+      ]);
+    }
+  });
+
+  it('the raw seed never appears in the persisted match-start log — only its hash', async () => {
+    const { sink } = await seatFullRoom(3);
+    const serialized = JSON.stringify(sink.events);
+    expect(serialized).toContain(sha256Hex(MATCH_START_SEED));
+    expect(serialized).not.toContain(MATCH_START_SEED);
   });
 });
 

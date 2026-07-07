@@ -20,6 +20,7 @@
 // `GameRoom` authoritative logic is untouched — this is bootstrap wiring only.
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import cors, { type FastifyCorsOptions } from '@fastify/cors';
+import type { Seed } from '@skervik/core';
 import { GAME_ROOM_NAME } from '@skervik/protocol';
 import { matchMaker, Server } from 'colyseus';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -39,6 +40,13 @@ export interface CreateHttpServerOptions {
   readonly matchesDir?: string;
   /** Seat cap per room (default 4, Classic M1). */
   readonly maxSeats?: number;
+  /**
+   * A fixed secret PRNG seed for every room (S1.7.2 E2E seam) — reproducible
+   * board + rolls so a scripted match runs identically twice. Production omits
+   * it (each room mints a fresh CSPRNG seed). Stays a server secret; never
+   * serialized or broadcast.
+   */
+  readonly seed?: Seed;
   /** Inject a guest store (tests); defaults to the in-memory M1 impl. */
   readonly guestStore?: GuestStore;
   /**
@@ -89,6 +97,7 @@ export async function createHttpServer(
   const roomOptions: GameRoomOptions = {
     ...(options.matchesDir !== undefined ? { matchesDir: options.matchesDir } : {}),
     ...(options.maxSeats !== undefined ? { maxSeats: options.maxSeats } : {}),
+    ...(options.seed !== undefined ? { seed: options.seed } : {}),
   };
   gameServer.define(
     GAME_ROOM_NAME,
