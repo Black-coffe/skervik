@@ -56,6 +56,16 @@ jobs:
       - name: Core determinism gate — golden replay → byte-identical state
         run: pnpm --filter @skervik/core exec vitest run src/replay.test.ts
 
+      # M1 headline gate (S1.7.2, A2 discipline): boot the real server, drive a
+      # full Classic match cross-process over N real @colyseus/sdk clients, and
+      # assert determinism + event-log replay-equality + seed secrecy. Named as
+      # its own step so breaking match flow or log fidelity fails EXACTLY this
+      # gate (e.g. a corrupted persisted event breaks the replay-equality assert)
+      # rather than reading as a nameless failure in the general test run. The
+      # full `pnpm test` step still re-runs it; the duplication is intentional.
+      - name: E2E full-match gate — cross-process match + replay-equality
+        run: pnpm --filter @skervik/server exec vitest run src/e2e/fullMatch.e2e.test.ts
+
       - name: Test
         run: pnpm test
 
