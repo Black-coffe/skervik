@@ -15,9 +15,17 @@ import {
   type VertexId,
   type VertexTopology,
 } from './board.js';
-import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
+import { shuffledDevDeck } from './devcards.js';
 import { reduce } from './reduce.js';
 import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
+import {
+  type BankTradeProfile,
+  type BuildProfile,
+  CLASSIC_PROFILE,
+  loadRuleProfile,
+  type SetupProfile,
+  type VictoryProfile,
+} from './ruleProfile.js';
 import type {
   BankTradedEvent,
   BuildingsState,
@@ -69,82 +77,19 @@ function reject(reason: RejectReason): ValidateResult {
 }
 
 /**
- * Classic setup-phase constants (rule-profile discipline, plan §1): the one
- * count legality logic actually consumes. The fixed forward-then-reverse
- * snake shape (see {@link snakeOrder}) is Classic-specific by construction
- * and isn't parameterized here — it only ever means 2 rounds.
+ * Back-compat aliases for the Classic sub-profiles this module used to define
+ * as eight standalone `CLASSIC_*_PROFILE` constants. The single source of truth
+ * now lives on {@link CLASSIC_PROFILE} (`ruleProfile.ts`, S2.1.1); these
+ * re-derive the still-exported ones so existing importers (tests,
+ * `@skervik/core` re-exports) keep working with byte-identical values. The
+ * engine no longer READS these globals for its rule knobs — every legality
+ * check below reads from `loadRuleProfile(state.profileId ?? 'classic')`, so a
+ * match's rules follow its profile, not a module constant.
  */
-export const CLASSIC_SETUP_PROFILE = {
-  settlementsPerPlayer: 2,
-} as const;
-
-/**
- * Classic production constants (rule-profile discipline, plan §1): the
- * finite bank pool per resource type. Physical-Catan parity (19 cards of
- * each of the 5 resources) — a swappable profile object, not a magic number
- * scattered through {@link computeProduction}.
- */
-const CLASSIC_PRODUCTION_PROFILE = {
-  bankPerResource: 19,
-} as const;
-
-/**
- * Classic build costs + per-player piece-supply limits (rule-profile
- * discipline, plan §1, S1.2.2 spec): the price list and caps live here as a
- * single swappable object, never scattered magic numbers through the build
- * branches below.
- */
-export const CLASSIC_BUILD_PROFILE = {
-  costs: {
-    road: { timber: 1, clay: 1 },
-    settlement: { timber: 1, clay: 1, fleece: 1, barley: 1 },
-    city: { iron: 3, barley: 2 },
-  },
-  supply: {
-    roads: 15,
-    settlements: 5,
-    cities: 4,
-  },
-} as const;
-
-/**
- * Classic bank-trade rate (rule-profile discipline, plan §1, S1.3.3 spec):
- * the rate always available with no port at all. Port rates (3:1 generic,
- * 2:1 resource-specific) live on {@link PortContent} itself (S1.1.2,
- * `boardgen.ts`'s `CLASSIC_BOARD_PROFILE.ports`) — this is the ONE rate
- * that isn't board-generated data, so it gets its own small profile object
- * rather than a magic `4` inside {@link bestBankRate}.
- */
-export const CLASSIC_BANK_TRADE_PROFILE = {
-  baseRate: 4,
-} as const;
-
-/**
- * Classic post-7 discard constants (rule-profile discipline, plan §1, S1.3.1
- * spec — folded into a named object here per S1.3.4's cleanup of the inline
- * magic numbers a lead-review nit flagged): a player holding MORE than
- * `handLimit` cards discards `floor(handSize / halfDivisor)`. Physical-Catan
- * parity (discard half your hand, rounded down, when holding 8+).
- */
-const CLASSIC_ROBBER_PROFILE = {
-  handLimit: 7,
-  halfDivisor: 2,
-} as const;
-
-/**
- * Classic victory + award constants (rule-profile discipline, plan §1,
- * S1.3.4 spec): the win threshold, the two award minimums, and the VP each
- * award is worth — a single swappable object, never magic numbers scattered
- * through the award/victory helpers below. `vpToWin` 10, longest road ≥5,
- * largest army ≥3, each award +2 VP (Classic).
- */
-export const CLASSIC_VICTORY_PROFILE = {
-  vpToWin: 10,
-  longestRoadMin: 5,
-  largestArmyMin: 3,
-  longestRoadVP: 2,
-  largestArmyVP: 2,
-} as const;
+export const CLASSIC_SETUP_PROFILE: SetupProfile = CLASSIC_PROFILE.setup;
+export const CLASSIC_BUILD_PROFILE: BuildProfile = CLASSIC_PROFILE.build;
+export const CLASSIC_BANK_TRADE_PROFILE: BankTradeProfile = CLASSIC_PROFILE.bankTrade;
+export const CLASSIC_VICTORY_PROFILE: VictoryProfile = CLASSIC_PROFILE.victory;
 
 /**
  * The gameplay RNG stream's per-event slot map (S1.2.1, fixed here,
@@ -359,13 +304,14 @@ interface AwardResult {
  * (deterministic).
  */
 function computeLongestRoad(state: GameState): AwardResult {
+  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
   const incumbent = state.longestRoadHolder;
   const lengths = state.players.map((player) => ({
     id: player.id,
     length: longestRoadLength(state, player.id),
   }));
   const maxLength = lengths.reduce((max, entry) => Math.max(max, entry.length), 0);
-  if (maxLength < CLASSIC_VICTORY_PROFILE.longestRoadMin) {
+  if (maxLength < victory.longestRoadMin) {
     return { length: maxLength }; // nobody qualifies → vacated
   }
   const leaders = lengths.filter((entry) => entry.length === maxLength).map((e) => e.id);
@@ -395,6 +341,7 @@ interface LargestArmyResult {
  * players in fixed array order (deterministic).
  */
 function computeLargestArmy(state: GameState): LargestArmyResult {
+  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
   const incumbent = state.largestArmyHolder;
   const counts = state.knightsPlayed ?? {};
   let maxKnights = 0;
@@ -408,7 +355,7 @@ function computeLargestArmy(state: GameState): LargestArmyResult {
       leaders.push(player.id);
     }
   }
-  if (maxKnights < CLASSIC_VICTORY_PROFILE.largestArmyMin) {
+  if (maxKnights < victory.largestArmyMin) {
     // Threshold not reached — no holder yet (and none to keep).
     return {
       ...(incumbent !== undefined ? { holder: incumbent } : {}),
@@ -440,6 +387,7 @@ function computeLargestArmy(state: GameState): LargestArmyResult {
  * can't be pushed over the line by, someone else's hidden card).
  */
 function computeVictoryPoints(state: GameState, playerId: PlayerId): number {
+  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
   const buildings = state.buildings;
   let vp = 0;
   if (buildings) {
@@ -450,8 +398,8 @@ function computeVictoryPoints(state: GameState, playerId: PlayerId): number {
       Object.values(buildings.cities ?? {}).filter((owner) => owner === playerId).length *
       2;
   }
-  if (state.longestRoadHolder === playerId) vp += CLASSIC_VICTORY_PROFILE.longestRoadVP;
-  if (state.largestArmyHolder === playerId) vp += CLASSIC_VICTORY_PROFILE.largestArmyVP;
+  if (state.longestRoadHolder === playerId) vp += victory.longestRoadVP;
+  if (state.largestArmyHolder === playerId) vp += victory.largestArmyVP;
   vp += state.devCards?.[playerId]?.held.victoryPoint ?? 0;
   return vp;
 }
@@ -474,6 +422,7 @@ function appendAwardsAndVictory(
   primaryEvents: readonly GameEvent[],
   actingPlayerId: PlayerId,
 ): GameEvent[] {
+  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
   let cursor = primaryEvents.reduce(reduce, state);
   const extra: GameEvent[] = [];
 
@@ -507,7 +456,7 @@ function appendAwardsAndVictory(
   // Victory is checked ONLY for the acting player, on their own turn (S1.3.4)
   // — so a hidden VP card can complete a win, and an opponent pushed to the
   // threshold by this action does NOT win.
-  if (computeVictoryPoints(cursor, actingPlayerId) >= CLASSIC_VICTORY_PROFILE.vpToWin) {
+  if (computeVictoryPoints(cursor, actingPlayerId) >= victory.vpToWin) {
     const finalStandings: Record<PlayerId, number> = {};
     for (const player of cursor.players) {
       finalStandings[player.id] = computeVictoryPoints(cursor, player.id);
@@ -594,7 +543,7 @@ function bestBankRate(
   if (owned.some((content) => content.kind === 'generic')) {
     return 3;
   }
-  return CLASSIC_BANK_TRADE_PROFILE.baseRate;
+  return loadRuleProfile(state.profileId ?? 'classic').bankTrade.baseRate;
 }
 
 /** True if `resources` covers every line of `cost` (S1.2.2 affordability check). */
@@ -637,8 +586,9 @@ function handSize(resources: Readonly<Record<ResourceType, number>>): number {
  * deterministic, like every other derivation in this module.
  */
 function computePlayersOwingDiscard(state: GameState): PlayerId[] {
+  const { robber } = loadRuleProfile(state.profileId ?? 'classic');
   return state.players
-    .filter((player) => handSize(player.resources) > CLASSIC_ROBBER_PROFILE.handLimit)
+    .filter((player) => handSize(player.resources) > robber.handLimit)
     .map((player) => player.id);
 }
 
@@ -784,6 +734,7 @@ interface ProductionResult {
  * before cities existed).
  */
 function computeProduction(state: GameState, total: number): ProductionResult {
+  const { production } = loadRuleProfile(state.profileId ?? 'classic');
   const board = state.board;
   const buildings = state.buildings;
 
@@ -813,7 +764,7 @@ function computeProduction(state: GameState, total: number): ProductionResult {
 
   for (const [resource, byPlayer] of Object.entries(owed)) {
     const totalOwed = Object.values(byPlayer).reduce((sum, amount) => sum + amount, 0);
-    const available = bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+    const available = bank[resource] ?? production.bankPerResource;
     if (totalOwed > available) continue; // all-or-nothing: bank can't cover it, nobody gets it
 
     bank[resource] = available - totalOwed;
@@ -852,6 +803,11 @@ export function validate(
   playerId: PlayerId,
   seed: Seed,
 ): ValidateResult {
+  // The match's rule profile (S2.1.1) — resolved once here and read for every
+  // rule knob below (costs, supply, deck, discard, bank pool), so a match's
+  // legality follows its `profileId`, not a module constant. Absent (pre-S2.1.1
+  // fixtures) resolves to Classic.
+  const profile = loadRuleProfile(state.profileId ?? 'classic');
   if (intent.playerId !== playerId) {
     return reject('MALFORMED_INTENT');
   }
@@ -1028,7 +984,7 @@ export function validate(
         (owner) => owner === playerId,
       ).length;
       const isSecondSettlement =
-        priorSettlements === CLASSIC_SETUP_PROFILE.settlementsPerPlayer - 1;
+        priorSettlements === profile.setup.settlementsPerPlayer - 1;
       const payout = isSecondSettlement ? settlementPayout(vertex, state.board) : {};
 
       const event: SettlementPlacedEvent = {
@@ -1096,11 +1052,11 @@ export function validate(
       if (!touchesOwnNetwork(edge, playerId, buildings)) {
         return reject('NOT_CONNECTED');
       }
-      if (countOwned(buildings.roads, playerId) >= CLASSIC_BUILD_PROFILE.supply.roads) {
+      if (countOwned(buildings.roads, playerId) >= profile.build.supply.roads) {
         return reject('SUPPLY_EXHAUSTED');
       }
 
-      const cost = CLASSIC_BUILD_PROFILE.costs.road;
+      const cost = profile.build.costs.road;
       const player = findPlayer(state, playerId);
       if (!player || !canAfford(player.resources, cost)) {
         return reject('CANNOT_AFFORD');
@@ -1138,13 +1094,12 @@ export function validate(
         return reject('NOT_CONNECTED');
       }
       if (
-        countOwned(buildings.settlements, playerId) >=
-        CLASSIC_BUILD_PROFILE.supply.settlements
+        countOwned(buildings.settlements, playerId) >= profile.build.supply.settlements
       ) {
         return reject('SUPPLY_EXHAUSTED');
       }
 
-      const cost = CLASSIC_BUILD_PROFILE.costs.settlement;
+      const cost = profile.build.costs.settlement;
       const player = findPlayer(state, playerId);
       if (!player || !canAfford(player.resources, cost)) {
         return reject('CANNOT_AFFORD');
@@ -1175,11 +1130,11 @@ export function validate(
       if (buildings.settlements[intent.vertexId] !== playerId) {
         return reject('NOT_OWN_SETTLEMENT');
       }
-      if (countOwned(buildings.cities, playerId) >= CLASSIC_BUILD_PROFILE.supply.cities) {
+      if (countOwned(buildings.cities, playerId) >= profile.build.supply.cities) {
         return reject('SUPPLY_EXHAUSTED');
       }
 
-      const cost = CLASSIC_BUILD_PROFILE.costs.city;
+      const cost = profile.build.costs.city;
       const player = findPlayer(state, playerId);
       if (!player || !canAfford(player.resources, cost)) {
         return reject('CANNOT_AFFORD');
@@ -1196,13 +1151,13 @@ export function validate(
       return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buyDevCard': {
-      const cost = CLASSIC_DEV_CARD_PROFILE.buyCost;
+      const cost = profile.devCards.buyCost;
       const player = findPlayer(state, playerId);
       if (!player || !canAfford(player.resources, cost)) {
         return reject('CANNOT_AFFORD');
       }
 
-      const deckSize = CLASSIC_DEV_CARD_PROFILE.deck.length;
+      const deckSize = profile.devCards.deck.length;
       const remainingBefore = state.devDeckRemaining ?? deckSize;
       if (remainingBefore <= 0) {
         return reject('DECK_EMPTY');
@@ -1212,7 +1167,7 @@ export function validate(
       // dice rolls (`devcards.ts` docstring) — the draw index is simply how
       // many cards have already left the deck.
       const drawIndex = deckSize - remainingBefore;
-      const card = shuffledDevDeck(seed)[drawIndex] as DevCardKind;
+      const card = shuffledDevDeck(seed, profile.devCards.deck)[drawIndex] as DevCardKind;
 
       const event: DevCardBoughtEvent = {
         type: 'devCard.bought',
@@ -1306,7 +1261,7 @@ export function validate(
               return reject('MALFORMED_INTENT');
             }
             if (workingRoads[edgeId] !== undefined) continue; // occupied — place fewer
-            if (ownedRoads >= CLASSIC_BUILD_PROFILE.supply.roads) break; // supply exhausted
+            if (ownedRoads >= profile.build.supply.roads) break; // supply exhausted
             if (
               !touchesOwnNetwork(edge, playerId, {
                 settlements: buildings.settlements,
@@ -1337,15 +1292,14 @@ export function validate(
             requested[resource] = (requested[resource] ?? 0) + 1;
           }
           for (const [resource, amount] of Object.entries(requested)) {
-            const available =
-              bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+            const available = bank[resource] ?? profile.production.bankPerResource;
             if (available < amount) {
               return reject('BANK_EXHAUSTED');
             }
           }
           for (const [resource, amount] of Object.entries(requested)) {
             bank[resource] =
-              (bank[resource] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource) - amount;
+              (bank[resource] ?? profile.production.bankPerResource) - amount;
           }
 
           const event: YearOfPlentyPlayedEvent = {
@@ -1396,7 +1350,7 @@ export function validate(
         return reject('UNKNOWN_PLAYER'); // unreachable: membership already checked above
       }
       const required = Math.floor(
-        handSize(player.resources) / CLASSIC_ROBBER_PROFILE.halfDivisor,
+        handSize(player.resources) / profile.robber.halfDivisor,
       );
       const requestedTotal = handSize(intent.resources);
       if (requestedTotal !== required) {
@@ -1596,7 +1550,7 @@ export function validate(
       }
 
       const bank = { ...(state.bank ?? {}) };
-      const availableGet = bank[intent.get] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource;
+      const availableGet = bank[intent.get] ?? profile.production.bankPerResource;
       if (availableGet < 1) {
         return reject('BANK_EXHAUSTED');
       }
@@ -1606,8 +1560,7 @@ export function validate(
       const nextBank = { ...bank };
       nextBank[intent.get] = availableGet - 1;
       nextBank[intent.give] =
-        (nextBank[intent.give] ?? CLASSIC_PRODUCTION_PROFILE.bankPerResource) +
-        intent.count;
+        (nextBank[intent.give] ?? profile.production.bankPerResource) + intent.count;
 
       const tradeEvent: BankTradedEvent = {
         type: 'bank.trade',

@@ -12,44 +12,18 @@
 // state (`GameState.devDeckRemaining`).
 
 import { type Seed, shuffle } from './rng.js';
-import type { DevCardHoldings, DevCardKind, ResourceType } from './types.js';
+import { CLASSIC_PROFILE, type DevCardProfile } from './ruleProfile.js';
+import type { DevCardHoldings, DevCardKind } from './types.js';
 
 /**
- * Classic dev-card profile (rule-profile discipline, plan §1): deck
- * composition + buy cost as a single swappable object, not scattered magic
- * numbers/lists through `validate.ts`. 25 cards: 14 knight, 2 road-building,
- * 2 year-of-plenty, 2 monopoly, 5 victory-point (Classic spec).
+ * Back-compat alias for the Classic dev-card sub-profile — the single source of
+ * truth now lives on {@link CLASSIC_PROFILE} (`ruleProfile.ts`, S2.1.1); this
+ * re-derives it so existing importers (`devcards.test.ts`, `verify.ts`,
+ * `validate.ts`, `@skervik/core` re-export) keep working with byte-identical
+ * values. 25 cards: 14 knight, 2 road-building, 2 year-of-plenty, 2 monopoly,
+ * 5 victory-point (Classic spec).
  */
-export const CLASSIC_DEV_CARD_PROFILE = {
-  deck: [
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'knight',
-    'roadBuilding',
-    'roadBuilding',
-    'yearOfPlenty',
-    'yearOfPlenty',
-    'monopoly',
-    'monopoly',
-    'victoryPoint',
-    'victoryPoint',
-    'victoryPoint',
-    'victoryPoint',
-    'victoryPoint',
-  ] as readonly DevCardKind[],
-  buyCost: { fleece: 1, barley: 1, iron: 1 } as Readonly<Record<ResourceType, number>>,
-} as const;
+export const CLASSIC_DEV_CARD_PROFILE: DevCardProfile = CLASSIC_PROFILE.devCards;
 
 /**
  * Reserved RNG stream-index band for the dev-card deck shuffle (S1.2.3,
@@ -65,15 +39,20 @@ export const DEV_DECK_STREAM = {
 } as const;
 
 /**
- * The deterministic shuffle order of the Classic dev-card deck for `seed` —
- * pure, callable any number of times. `validate.ts`'s buy branch calls it
- * once per buy and indexes into the result; the 25-item Fisher-Yates is
- * cheap enough that re-deriving it per call is simpler and safer than
- * caching a mutable module-level shuffle (ADR-0003: no ambient mutable
- * state).
+ * The deterministic shuffle order of a dev-card deck for `seed` — pure,
+ * callable any number of times. `validate.ts`'s buy branch calls it once per
+ * buy and indexes into the result; the 25-item Fisher-Yates is cheap enough
+ * that re-deriving it per call is simpler and safer than caching a mutable
+ * module-level shuffle (ADR-0003: no ambient mutable state). `deck` is the
+ * deck to shuffle; it defaults to Classic (`CLASSIC_PROFILE.devCards.deck`) so
+ * every existing caller stays byte-identical, and the engine passes the
+ * resolved profile's deck for other modes (S2.1.1).
  */
-export function shuffledDevDeck(seed: Seed): readonly DevCardKind[] {
-  return shuffle(CLASSIC_DEV_CARD_PROFILE.deck, seed, DEV_DECK_STREAM.SHUFFLE);
+export function shuffledDevDeck(
+  seed: Seed,
+  deck: readonly DevCardKind[] = CLASSIC_PROFILE.devCards.deck,
+): readonly DevCardKind[] {
+  return shuffle(deck, seed, DEV_DECK_STREAM.SHUFFLE);
 }
 
 /**

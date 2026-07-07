@@ -277,6 +277,9 @@ const MatchStartedEventSchema = z.object({
   matchId: z.string(),
   seedHash: z.string(),
   playerIds: z.array(z.string()),
+  // S2.1.1: the match's rule profile. Optional + append-compatible — a
+  // pre-S2.1.1 emit without it still validates and folds to Classic.
+  profileId: z.enum(['classic', 'balanced', 'blitz']).optional(),
 });
 const BoardGeneratedEventSchema = z.object({
   type: z.literal('board.generated'),
