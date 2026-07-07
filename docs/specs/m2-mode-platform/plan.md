@@ -190,9 +190,10 @@ already writes; S2.6.3 moves it off local FS). GDPR self-service delete/export.
 | S2.1.2 Balanced Deck | T3 | ✅ done | `43fa167` |
 | S2.1.3 adaptive-duration | T2 | ✅ done | `f0738b6` |
 | S2.1.4 turn timers + anti-AFK | T3 | ✅ done | `4d149e0` |
-| S2.1.5 parallel phases | T3 | ⏳ next in E2.1 | — |
-| S2.1.6 2-player mode | T3 | ⏳ (owns verify board-leg + setup forced-placement) | — |
-| E2.2 catch-up (×4) | T1–T2 | ▫ not started | — |
+| S2.1.5 parallel trade | T3 | ✅ done | `06e080d` |
+| S2.1.6 2-player mode (phantom, standard board) | T3 | ✅ done — **E2.1 COMPLETE** | `f0d69b7` |
+| S2.2.1 friendly robber | T2 | 📄 materialized, dispatch-ready (first E2.2) | — |
+| E2.2 catch-up (×4) | T1–T2 | ⏳ S2.2.1 ready; S2.2.2–.4 not started | — |
 | E2.3 reconnect & bot-fill (×3) | T2–T3 | ▫ not started | — |
 | E2.4 bots (×3) | T2–T3 | ▫ not started | — |
 | E2.5 lobby/matchmaking/presence (×4) | T2–T3 | ▫ not started (S2.5.4 resolves override seam) | — |
