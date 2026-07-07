@@ -90,7 +90,7 @@ players leaving, reconnecting, and being matched.
 | 3 | **E2.3 Resilience: reconnect & bot-fill** | S2.3.1 reconnect tokens + grace ≥120s [T2] · S2.3.2 full state resync [T2] · S2.3.3 bot-fill + safe leave/rejoin [T3] | after E2.4 harness | consumes S2.1.4 anti-AFK flags; coordinates with turn timers |
 | 4 | **E2.4 Bots (AI)** | S2.4.1 bot worker harness [T2] · S2.4.2 heuristic bot v1 ×3 difficulty [T3] · S2.4.3 single-player + bot-fill integration [T2] | mid-M2 | separate process consuming `@skervik/core`; seed = S1.7.2 `decideAction` |
 | 5 | **E2.5 Lobby, matchmaking, presence** | S2.5.1 Redis presence/queues/pubsub/sticky [T3] · S2.5.2 matchmaking by mode + preview [T2] · S2.5.3 private rooms by code/link [T2] · S2.5.4 Lobby UI: settings+map preview+ready-up [T2] | late-M2 | S2.5.4 resolves the profile-override delivery seam |
-| 6 | **E2.6 Persistence & accounts** | S2.6.1 Postgres schema+migrations [T2] · S2.6.2 OAuth+guest-upgrade+JWT [T3] · S2.6.3 match metadata + event-log→S3 [T2] · S2.6.4 GDPR delete/export [T2] | late-M2 | first DB + first external-auth surface |
+| 6 | **E2.6 Persistence & accounts** | S2.6.1 Postgres schema+migrations [T2] · S2.6.2 OAuth+guest-upgrade+JWT [T3] · S2.6.3 match metadata + event-log→S3 [T2] · S2.6.4 GDPR delete/export [T2] · S2.6.5 solo save/resume [T2, non-gating] | late-M2 | first DB + first external-auth surface |
 
 **Dependency spine:** E2.1 (config backbone) → E2.4 harness (bots need the engine) → E2.3
 (bot-fill needs bots) ‖ E2.2 (catch-up, independent, profile-gated) → E2.5 (lobby ties mode
@@ -139,7 +139,10 @@ core (`validate`/`reduce`) — it holds NO authority; it emits intents like a cl
 `decideAction` heuristic from S1.7.2 `scriptedDriver` (expansion-first, [[e2e-scripted-driver-expansion]])
 is the seed of heuristic-bot-v1; ×3 difficulties = depth/greed knobs. Single-player = a room
 filled with bots. Bots must be deterministic-enough for tests but may use their own RNG (they're
-not the authority — only the server's seed is fair-audited).
+not the authority — only the server's seed is fair-audited). **Design-for-reuse (added 2026-07-07):**
+expose the heuristic's board/action *evaluation* as a reusable module inside `@skervik/bots` —
+the M4 E4.8 assist-mode advisor ("profitable spots" hints) consumes the same evaluation; bot and
+advisor share one brain, so don't bury scoring inside the decision loop.
 
 **E2.5 — Lobby, matchmaking, presence.** Redis first (S2.5.1): presence, matchmaking queues,
 pub/sub, **sticky room routing** (a match lives on one node — periphery is stateless, per the
@@ -158,6 +161,12 @@ warranted); (c) render the S2.1.4 `turnDeadline` countdown + LOCALIZE the adapti
 + JWT/refresh (first external-auth surface — `/security-review` before merge). Match metadata +
 event-log to S3-compatible storage (`matches/{id}/events.ndjson` — the durable sink the room
 already writes; S2.6.3 moves it off local FS). GDPR self-service delete/export.
+**S2.6.5 solo save/resume (added 2026-07-07, research-gap closure):** reconstruct a LIVE room
+from the persisted event log — the same `replay(events)` path crash recovery uses, so the cost
+is a room-bootstrap seam + a "my games / continue" list (REST + client), not new engine work.
+Depends on S2.4.3 (solo mode exists) + S2.6.3 (log is durable). **Non-gating for M2** — the M2
+gate is unchanged; ship it when E2.6 lands or let it slip without blocking the milestone. Async
+E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 
 ## 4. Open seams / carry-forward ledger (assign each to its owning story)
 
@@ -197,7 +206,7 @@ already writes; S2.6.3 moves it off local FS). GDPR self-service delete/export.
 | E2.3 reconnect & bot-fill (×3) | T2–T3 | ▫ not started | — |
 | E2.4 bots (×3) | T2–T3 | ▫ not started | — |
 | E2.5 lobby/matchmaking/presence (×4) | T2–T3 | ▫ not started (S2.5.4 resolves override seam) | — |
-| E2.6 persistence & accounts (×4) | T2–T3 | ▫ not started | — |
+| E2.6 persistence & accounts (×5; S2.6.5 non-gating) | T2–T3 | ▫ not started | — |
 
 **M2 GATE (all must hold):** Classic/Balanced/Blitz all playable + seed-verifiable; 2–6 players;
 single + multiplayer; adaptive duration keeps matches ≤60 min; catch-up mechanics live &

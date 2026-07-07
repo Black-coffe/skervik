@@ -76,7 +76,7 @@ These are **hard invariants** — see `docs/wiki/` and `docs/adr/`:
 | **M1** | Vertical slice | 3–4 players finish a full **Classic** match online, deterministic, seed-verifiable, working trade UI | weeks 4–12 |
 | **M2** | Mode platform & resilience | Multi-mode (Classic/Balanced/Blitz), adaptive duration, catch-up, reconnect+bot-fill, matchmaking/lobby, bots, accounts; 2–6 players | weeks 12–22 |
 | **M3** | Competitive & social | Ranked (Glicko-2)/seasons/leagues, friends/guilds/chat/anti-toxicity, spectator/replay/analytics, 7–10p + team | weeks 22–32 |
-| **M4** | Polish, a11y, content → **1.0** | Async, Deep profile, premium art/skins, colorblind+i18n, perf ≤NFR, PWA/stores, ops+legal+launch | weeks 32–44 |
+| **M4** | Polish, a11y, content → **1.0** | Async, Deep profile, tutorial/onboarding, premium art/skins, colorblind+i18n, perf ≤NFR, PWA/stores, ops+legal+launch | weeks 32–44 |
 | M5 | Scale (post-launch) | Horizontal shard, managed PG/Redis, k8s, autoscale — *only on CCU demand* | as needed |
 
 > Windows are indicative effort ordering for a small core team (tech spec est.
@@ -232,6 +232,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 - `S2.6.2` [T3] OAuth (Google/Discord) + guest upgrade; JWT + refresh.
 - `S2.6.3` [T2] Match metadata persist + event-log to S3-compatible storage.
 - `S2.6.4` [T2] Self-service account delete/export (GDPR).
+- `S2.6.5` [T2] **Solo save/resume**: reconstruct a live room from the persisted event log (same replay path as crash recovery) + "my games / continue" list UI. *(→ S2.4.3, S2.6.3; non-gating — M2 gate unchanged. Closes the research §5.1 solo-play gap: async E4.1 is multiplayer play-by-turn and does NOT cover this.)*
 
 **M2 GATE:** multi-mode platform, 2–6 players, single + multiplayer, robust reconnect/bot-fill, matchmaking + accounts.
 
@@ -241,7 +242,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 
 **E3.1 — Ranked & matchmaking quality**
 - `S3.1.1` [T2] Glicko-2 rating + `player_ratings` storage.
-- `S3.1.2` [T2] Seasons + leagues + leaderboards (`GET /leaderboard/{mode}`).
+- `S3.1.2` [T2] Seasons + leagues + leaderboards (`GET /leaderboard/{mode}`) — incl. the **global world ranking (top-1/10/100)** per mode, not only per-league tables.
 - `S3.1.3` [T3] Skill-based matchmaking + anti-smurf signals.
 
 **E3.2 — Social**
@@ -278,6 +279,7 @@ A checklist that distinguishes "real product" from MVP/beta. All must be true:
 **E4.5 — Performance & hardening** — `S4.5.1` progressive asset loading + bundle budget · `S4.5.2` load test to NFR + p95 tuning · `S4.5.3` chaos/reconnect soak.
 **E4.6 — PWA & platform** — `S4.6.1` installable PWA + portrait mobile · `S4.6.2` store wrappers (optional).
 **E4.7 — Launch readiness** — `S4.7.1` observability (Prom/Grafana/Loki/OTel) + alerts · `S4.7.2` backups + restore runbook + IaC one-command deploy · `S4.7.3` **legal/IP review** + ToS/Privacy · `S4.7.4` donations live + transparency page · `S4.7.5` docs site + Discord + good-first-issues · `S4.7.6` `/security-review` + final DoD audit · `S4.7.7` landing page + launch comms.
+**E4.8 — Onboarding: tutorial & advisor** *(closes the research §2.3/§5.1 promise "complexity is absorbed by onboarding, not by cutting features" — until 2026-07-07 it had no engineering story)* — `S4.8.1` [T3] interactive tutorial campaign: scripted teaching scenarios over the deterministic core (event-sourced scripts, RU/UA/EN from day one) · `S4.8.2` [T2] assist-mode advisor: contextual hints + "profitable spots" highlighting — extends the `S1.6.2` *legal*-spot toggle to *value* hints; **reuses the E2.4 bot heuristic evaluation** (bot and advisor share one brain), client-side toggle, off by default in ranked.
 
 **1.0 GATE = the Definition of Done (§4).** When green → public launch, begin onboarding.
 
