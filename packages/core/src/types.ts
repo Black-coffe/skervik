@@ -364,6 +364,21 @@ export interface GameState {
    * pending" convention as {@link GameState.playersToDiscard}.
    */
   readonly povertyTokens?: Readonly<Record<PlayerId, number>>;
+  /**
+   * The Splendor-style final round (S2.2.3 `catchUp.finalRound`), present ONLY
+   * once a {@link GameFinalRoundStartedEvent} has landed — i.e. once a player
+   * first reached `victory.vpToWin`. Records WHO triggered it and on which
+   * turn; the game ends (highest FULL VP wins) when the turn would return to
+   * `triggeredBy` (every other player has had exactly one more turn). Absent
+   * under `finalRound:false` (every shipping preset) — the trigger event is
+   * never emitted, so serialized state stays byte-IDENTICAL to today (Classic
+   * golden/replay/verify frozen). Same "absent key = fact never happened"
+   * convention as {@link GameState.povertyTokens}/{@link GameState.devCards}.
+   */
+  readonly finalRound?: {
+    readonly triggeredBy: PlayerId;
+    readonly triggeredOnTurn: number;
+  };
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
@@ -824,6 +839,21 @@ export interface PovertyTokensGrantedEvent extends BaseGameEvent {
 }
 
 /**
+ * Emitted (system, no player intent) the moment a player first reaches
+ * `victory.vpToWin` while `catchUp.finalRound` is on (S2.2.3) — instead of
+ * `game.ended`. Starts the Splendor-style final round: `reduce` records
+ * {@link GameState.finalRound} = `{ triggeredBy, triggeredOnTurn }`, play
+ * continues, and the game ends (via the SAME `game.ended` event) when the turn
+ * would return to `triggeredBy`. NEVER emitted under `finalRound:false` (every
+ * shipping preset), so the win/end path stays byte-identical to M1.
+ */
+export interface GameFinalRoundStartedEvent extends BaseGameEvent {
+  readonly type: 'game.finalRoundStarted';
+  readonly triggeredBy: PlayerId;
+  readonly triggeredOnTurn: number;
+}
+
+/**
  * A fact that mutates {@link GameState} via `reduce`. Discriminated by
  * `type`. Only events change state — intents never do directly
  * (ADR-0003). M1 Classic rules keep extending this set (build lands here,
@@ -857,6 +887,7 @@ export type GameEvent =
   | LongestRoadAwardedEvent
   | LargestArmyAwardedEvent
   | PovertyTokensGrantedEvent
+  | GameFinalRoundStartedEvent
   | GameEndedEvent;
 
 /** Fields shared by every {@link PlayerIntent} variant. */

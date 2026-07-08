@@ -132,6 +132,21 @@ export interface CatchUpProfile {
   readonly robinHoodTokenCap: number;
   /** Discounted bank ratio (N:1) a held poverty token unlocks; spending it consumes one token. */
   readonly robinHoodExchangeRate: number;
+  /**
+   * When `true`, reaching `victory.vpToWin` does NOT end the game instantly
+   * (S2.2.3) — it starts a Splendor-style FINAL ROUND: every OTHER player gets
+   * exactly one more turn, then the game ends and the highest FULL VP wins
+   * (deterministic tie-break). Removes the "won because my turn came first"
+   * asymmetry. Off on every shipping preset.
+   */
+  readonly finalRound: boolean;
+  /**
+   * When `true`, held VP dev cards are EXCLUDED from the win/trigger threshold
+   * (S2.2.3) — the threshold reads PUBLIC VP only, so a stockpiled hidden VP
+   * card can't spring a surprise win. Hidden VP is still revealed and counted
+   * in the final standings. Off on every shipping preset.
+   */
+  readonly hiddenVp: boolean;
 }
 
 /** Victory threshold + award minimums/values — `validate.ts`. */
@@ -327,6 +342,12 @@ export const CLASSIC_PROFILE: RuleProfile = {
     robinHoodVpGap: 2,
     robinHoodTokenCap: 3,
     robinHoodExchangeRate: 2,
+    // Byte-frozen off (S2.2.3) — Balanced/Blitz/twoPlayer inherit both via their
+    // `...CLASSIC_PROFILE` spread; liveness proven by the internal
+    // FINAL_ROUND/HIDDEN_VP test profiles below. Off → the win/end path stays
+    // byte-identical to M1 (instant `game.ended` on the acting player's full VP).
+    finalRound: false,
+    hiddenVp: false,
   },
   victory: {
     vpToWin: 10,
@@ -492,6 +513,61 @@ export const ROBIN_HOOD_TEST_PROFILE: RuleProfile = {
 };
 
 /**
+ * INTERNAL, NON-SHIPPING profile ids used ONLY to prove the S2.2.3 `finalRound`
+ * / `hiddenVp` catch-up paths in tests — deliberately absent from
+ * {@link RuleProfileId} (and the protocol's `profileId` enum), so no client can
+ * select them. No shipping preset enables either flag yet (assigning catch-up
+ * flags to specific presets is a batched product decision once E2.2 exists),
+ * yet the flags' live behavior still needs coverage — the S2.1.5/S2.2.1/S2.2.2
+ * precedent of proving a knob via a distinct profile.
+ */
+export const FINAL_ROUND_TEST_PROFILE_ID = '__final_round_test__';
+export const HIDDEN_VP_TEST_PROFILE_ID = '__hidden_vp_test__';
+export const FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID = '__final_round_hidden_vp_test__';
+
+/**
+ * Classic in every rule value EXCEPT `catchUp.finalRound: true` — the internal
+ * fixture behind {@link FINAL_ROUND_TEST_PROFILE_ID}. Its `.id` stays
+ * `'classic'` (inherited via the spread; {@link RuleProfileId} has no test
+ * member) — the registry key, not `.id`, is what resolves it.
+ */
+export const FINAL_ROUND_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    finalRound: true,
+  },
+};
+
+/**
+ * Classic in every rule value EXCEPT `catchUp.hiddenVp: true` — the internal
+ * fixture behind {@link HIDDEN_VP_TEST_PROFILE_ID}.
+ */
+export const HIDDEN_VP_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    hiddenVp: true,
+  },
+};
+
+/**
+ * Classic in every rule value EXCEPT BOTH `catchUp.finalRound: true` and
+ * `catchUp.hiddenVp: true` — the internal fixture behind
+ * {@link FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID}, proving the combined semantics
+ * (public threshold starts the final round; hidden VP revealed decides the
+ * winner after it completes).
+ */
+export const FINAL_ROUND_HIDDEN_VP_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    finalRound: true,
+    hiddenVp: true,
+  },
+};
+
+/**
  * The profile registry: the shipping presets plus the internal
  * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
  * {@link RuleProfileId}) so the non-shipping test ids have a home without
@@ -503,6 +579,9 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   [PARALLEL_TRADE_TEST_PROFILE_ID]: PARALLEL_TRADE_TEST_PROFILE,
   [FRIENDLY_ROBBER_TEST_PROFILE_ID]: FRIENDLY_ROBBER_TEST_PROFILE,
   [ROBIN_HOOD_TEST_PROFILE_ID]: ROBIN_HOOD_TEST_PROFILE,
+  [FINAL_ROUND_TEST_PROFILE_ID]: FINAL_ROUND_TEST_PROFILE,
+  [HIDDEN_VP_TEST_PROFILE_ID]: HIDDEN_VP_TEST_PROFILE,
+  [FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID]: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE,
 };
 
 /**

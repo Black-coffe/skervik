@@ -37,6 +37,7 @@ import type {
   DiceRolledEvent,
   GameEndedEvent,
   GameEvent,
+  GameFinalRoundStartedEvent,
   GamePhase,
   GameState,
   KnightPlayedEvent,
@@ -504,6 +505,66 @@ function computePovertyGrants(
 }
 
 /**
+ * The VP measure that counts toward reaching `victory.vpToWin` (S2.2.3): under
+ * `catchUp.hiddenVp` the win/trigger threshold reads PUBLIC VP only (held VP
+ * dev cards excluded — a stockpiled hidden card can't spring a surprise win),
+ * otherwise the full tally (today's behavior). The SAME no-hidden-leak
+ * discipline the robber/robin-hood gates use — reuses the existing helpers, so
+ * hidden VP is revealed ONLY at the final standings. Under `hiddenVp:false`
+ * (every shipping preset) this is exactly {@link computeVictoryPoints}, so the
+ * win check stays byte-identical to M1.
+ */
+function thresholdVp(state: GameState, playerId: PlayerId): number {
+  const { catchUp } = loadRuleProfile(state.profileId ?? 'classic');
+  return catchUp.hiddenVp
+    ? computePublicVictoryPoints(state, playerId)
+    : computeVictoryPoints(state, playerId);
+}
+
+/** Total buildings a player has placed (settlements + cities) — the finalRound tie-break key. */
+function totalBuildings(state: GameState, playerId: PlayerId): number {
+  const buildings = state.buildings;
+  if (!buildings) return 0;
+  const settlements = Object.values(buildings.settlements).filter(
+    (owner) => owner === playerId,
+  ).length;
+  const cities = Object.values(buildings.cities ?? {}).filter(
+    (owner) => owner === playerId,
+  ).length;
+  return settlements + cities;
+}
+
+/**
+ * The final-round winner (S2.2.3): the player with the highest FULL VP
+ * ({@link computeVictoryPoints} — hidden VP revealed at the end), ties broken by
+ * FEWEST total buildings ("more efficient wins"), then EARLIEST seat in the
+ * canonical {@link seatOrder} (the final deterministic fallback). Pure function
+ * of `state` + profile — no seed. Iterating in seat order with strict compares
+ * makes "earliest seat" the natural fallback (an equal-VP, equal-buildings tie
+ * keeps whoever was seen first). The VP/tie-break numbers are provisional
+ * balance knobs (the flag is off on every preset → they change no shipping
+ * behavior); tune in the M2 balance-sim workstream.
+ */
+function computeFinalWinner(state: GameState): PlayerId {
+  const order = seatOrder(state);
+  let best: PlayerId | undefined;
+  let bestVp = -Infinity;
+  let bestBuildings = Infinity;
+  for (const id of order) {
+    const vp = computeVictoryPoints(state, id);
+    const buildings = totalBuildings(state, id);
+    if (vp > bestVp || (vp === bestVp && buildings < bestBuildings)) {
+      best = id;
+      bestVp = vp;
+      bestBuildings = buildings;
+    }
+  }
+  // Defensive: `order` is non-empty for any started match (seatOrder falls back
+  // to `state.players`); the `?? order[0]` guards a degenerate empty state.
+  return best ?? (order[0] as PlayerId);
+}
+
+/**
  * Appends the award-change and victory events S1.3.4 derives AFTER a
  * VP/award-affecting action (build road/settlement/city, road-building card,
  * knight play, dev-card buy). `primaryEvents` are the action's own events;
@@ -521,7 +582,7 @@ function appendAwardsAndVictory(
   primaryEvents: readonly GameEvent[],
   actingPlayerId: PlayerId,
 ): GameEvent[] {
-  const { victory } = loadRuleProfile(state.profileId ?? 'classic');
+  const { victory, catchUp } = loadRuleProfile(state.profileId ?? 'classic');
   let cursor = primaryEvents.reduce(reduce, state);
   const extra: GameEvent[] = [];
 
@@ -554,19 +615,37 @@ function appendAwardsAndVictory(
 
   // Victory is checked ONLY for the acting player, on their own turn (S1.3.4)
   // — so a hidden VP card can complete a win, and an opponent pushed to the
-  // threshold by this action does NOT win.
-  if (computeVictoryPoints(cursor, actingPlayerId) >= victory.vpToWin) {
-    const finalStandings: Record<PlayerId, number> = {};
-    for (const player of cursor.players) {
-      finalStandings[player.id] = computeVictoryPoints(cursor, player.id);
+  // threshold by this action does NOT win. The measure is `thresholdVp`
+  // (S2.2.3): under `hiddenVp` it excludes hidden VP cards, else the full tally
+  // — with both catch-up flags off (every shipping preset) it IS
+  // `computeVictoryPoints`, so this branch is byte-identical to M1.
+  if (thresholdVp(cursor, actingPlayerId) >= victory.vpToWin) {
+    if (!catchUp.finalRound) {
+      // Instant win (today's behavior): freeze the match now, reveal full VP.
+      const finalStandings: Record<PlayerId, number> = {};
+      for (const player of cursor.players) {
+        finalStandings[player.id] = computeVictoryPoints(cursor, player.id);
+      }
+      const event: GameEndedEvent = {
+        type: 'game.ended',
+        index: cursor.eventIndex,
+        winnerId: actingPlayerId,
+        finalStandings,
+      };
+      extra.push(event);
+    } else if (cursor.finalRound === undefined) {
+      // Splendor-style trigger (S2.2.3): the first crossing starts a final
+      // round instead of ending — every OTHER player gets one more turn. Do NOT
+      // emit `game.ended` here; the turn-end path ends it when the round
+      // completes. A later crossing (finalRound already set) emits nothing.
+      const event: GameFinalRoundStartedEvent = {
+        type: 'game.finalRoundStarted',
+        index: cursor.eventIndex,
+        triggeredBy: actingPlayerId,
+        triggeredOnTurn: cursor.turn,
+      };
+      extra.push(event);
     }
-    const event: GameEndedEvent = {
-      type: 'game.ended',
-      index: cursor.eventIndex,
-      winnerId: actingPlayerId,
-      finalStandings,
-    };
-    extra.push(event);
   }
 
   return [...primaryEvents, ...extra];
@@ -1126,6 +1205,29 @@ export function validate(
         playerId,
         nextPlayerId,
       };
+      // Splendor-style final-round completion (S2.2.3): when a final round is
+      // running and the turn would return to the trigger player, every OTHER
+      // player has taken exactly one more turn — the game ends now (highest
+      // FULL VP + deterministic tie-break, hidden VP revealed). When
+      // `state.finalRound` is unset (every shipping preset), this is byte-
+      // IDENTICAL to M1: just the `turn.ended` event.
+      if (
+        state.finalRound !== undefined &&
+        nextPlayerId === state.finalRound.triggeredBy
+      ) {
+        const afterTurn = reduce(state, event);
+        const finalStandings: Record<PlayerId, number> = {};
+        for (const player of afterTurn.players) {
+          finalStandings[player.id] = computeVictoryPoints(afterTurn, player.id);
+        }
+        const ended: GameEndedEvent = {
+          type: 'game.ended',
+          index: afterTurn.eventIndex,
+          winnerId: computeFinalWinner(afterTurn),
+          finalStandings,
+        };
+        return { ok: true, events: [event, ended] };
+      }
       return { ok: true, events: [event] };
     }
     case 'intent.placeSettlement': {

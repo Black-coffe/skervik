@@ -18,6 +18,7 @@ import type {
   EndTurnIntent,
   GameEndedEvent,
   GameEvent,
+  GameFinalRoundStartedEvent,
   GameState,
   KnightPlayedEvent,
   LargestArmyAwardedEvent,
@@ -230,8 +231,14 @@ describe('GameEvent', () => {
     { type: 'award.largestArmy', index: 23, playerId: 'player-1', knights: 3 },
     { type: 'poverty.tokensGranted', index: 24, grants: { 'player-1': 1 } },
     {
-      type: 'game.ended',
+      type: 'game.finalRoundStarted',
       index: 25,
+      triggeredBy: 'player-1',
+      triggeredOnTurn: 20,
+    },
+    {
+      type: 'game.ended',
+      index: 26,
       winnerId: 'player-1',
       finalStandings: { 'player-1': 10, 'player-2': 4 },
     },
@@ -368,6 +375,11 @@ describe('GameEvent', () => {
         case 'poverty.tokensGranted': {
           const e: PovertyTokensGrantedEvent = event;
           expect(e.grants).toEqual({ 'player-1': 1 });
+          break;
+        }
+        case 'game.finalRoundStarted': {
+          const e: GameFinalRoundStartedEvent = event;
+          expect(e.triggeredBy).toBe('player-1');
           break;
         }
         case 'game.ended': {
