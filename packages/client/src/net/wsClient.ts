@@ -27,7 +27,14 @@ import {
 
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { parseJoinError, statusForLeaveCode } from './connection.js';
-import { clearReconnectionToken, persistReconnectionToken } from './reconnectToken.js';
+import {
+  clearCurrentRoomId,
+  clearReconnectionToken,
+  persistCurrentRoomId,
+  persistReconnectionToken,
+  readCurrentRoomId,
+  readReconnectionToken,
+} from './reconnectToken.js';
 
 export interface WsClientCallbacks {
   /** A joining/late-join `state.snapshot` — seed `gameState` and the real seat id. */
@@ -90,8 +97,15 @@ export interface ReconnectCapability {
   readonly backoffMs?: readonly number[];
 }
 
-const DEFAULT_RECONNECT_MAX_ATTEMPTS = 3;
-const DEFAULT_RECONNECT_BACKOFF_MS: readonly number[] = [250, 750];
+// Widened for a typical outage, not just a sub-second blip (S2.3.2a nit #2):
+// 8 attempts with a capped exponential backoff totals ~31.5s — a useful
+// fraction of the server's 120s grace, still well-bounded and non-blocking
+// (the loop always terminates to 'disconnected' on exhaustion). Exported so
+// the widened budget itself is test-visible, not just its effect.
+export const DEFAULT_RECONNECT_MAX_ATTEMPTS = 8;
+export const DEFAULT_RECONNECT_BACKOFF_MS: readonly number[] = [
+  500, 1000, 2000, 4000, 8000, 8000, 8000,
+];
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -124,8 +138,10 @@ export function attachRoom(
     // Persist BEFORE the drop can happen (it's async) — covers both the
     // initial join and every successful reconnect (the SDK mints a fresh
     // token on each). Keeping it here (rather than only in `connect`) means
-    // this also runs for the reconnected room, DRY.
+    // this also runs for the reconnected room, DRY. The current-room pointer
+    // (S2.3.2a) rides along so a COLD load can later locate this token.
     persistReconnectionToken(r.roomId, r.reconnectionToken);
+    persistCurrentRoomId(r.roomId);
 
     r.onMessage('state.snapshot', (message) => {
       const parsed = StateSnapshotEnvelopeSchema.safeParse(message);
@@ -167,8 +183,11 @@ export function attachRoom(
       const status = statusForLeaveCode(code);
       if (status === 'disconnected') {
         // A consented leave (ours via `disconnect()`, or the server's) —
-        // never reconnect, forget the token (Key decision 3).
+        // never reconnect, forget the token (Key decision 3) and the
+        // current-room pointer (S2.3.2a), so a later reload never tries to
+        // resume a finished seat.
         clearReconnectionToken(r.roomId);
+        clearCurrentRoomId();
         callbacks.onConnectionChange(status);
         return;
       }
@@ -233,12 +252,21 @@ export interface GuestJoinFields {
 }
 
 /**
- * Connect to the authoritative room: announce `connecting`, `joinOrCreate` with
- * the protocol-version handshake (plus optional guest {@link GuestJoinFields}),
- * and on success {@link attachRoom} + announce `connected`. A rejected join is
- * interpreted by {@link parseJoinError} into a `version-mismatch` (with
- * versions) or a generic `error`, and returns `null` so the caller keeps its
- * fallback (dev-fixture) view. Never throws.
+ * Connect to the authoritative room. On a COLD load (a page reload, not the
+ * in-tab drop S2.3.2 handles) this first tries to RESUME a held seat: if the
+ * current-room pointer + a matching token were persisted by a prior join
+ * (S2.3.2a), it attempts a single `client.reconnect(token)` — the token is
+ * self-contained (Key decision 3), so no `roomId` is needed. On success the
+ * resumed room is wired through the SAME {@link attachRoom} path as a fresh
+ * join (sync handlers + `ReconnectCapability` apply identically), and the
+ * server's existing reclaim/resync unicast (S2.3.2) delivers a fresh
+ * `state.snapshot` that folds the board back to consistent — no server change.
+ * On failure (expired token / grace ran out) the pointer+token are cleared
+ * and this falls through to a fresh `joinOrCreate` with the protocol-version
+ * handshake (plus optional guest {@link GuestJoinFields}). A rejected
+ * `joinOrCreate` is interpreted by {@link parseJoinError} into a
+ * `version-mismatch` (with versions) or a generic `error`, and returns `null`
+ * so the caller keeps its fallback (dev-fixture) view. Never throws.
  */
 export async function connect(
   url: string,
@@ -247,18 +275,44 @@ export async function connect(
 ): Promise<WsClientHandle | null> {
   callbacks.onConnectionChange('connecting');
   const client = new Client(url);
+  // S2.3.2: `client.reconnect` (the real `@colyseus/sdk` `Client`) is the
+  // reconnect capability `attachRoom` calls on an unexpected drop — kept
+  // here, not in `attachRoom`, so that module never imports the SDK. Shared
+  // by both the resume-first branch below and a fresh join (S2.3.2a), so
+  // an in-tab drop after either path recovers the same way.
+  const reconnectCapability: ReconnectCapability = {
+    reconnect: async (token) => (await client.reconnect(token)) as unknown as RoomLike,
+  };
+
+  const savedRoomId = readCurrentRoomId();
+  if (savedRoomId) {
+    const savedToken = readReconnectionToken(savedRoomId);
+    if (savedToken) {
+      try {
+        const room = await client.reconnect(savedToken);
+        const handle = attachRoom(
+          room as unknown as RoomLike,
+          callbacks,
+          reconnectCapability,
+        );
+        callbacks.onConnectionChange('connected');
+        return handle;
+      } catch {
+        // Token expired / grace ran out — forget it and fall through to a
+        // fresh join below (Key decision: a single resume attempt on cold
+        // load, no retry loop here — that's the in-tab `attemptReconnect` path).
+        clearCurrentRoomId();
+        clearReconnectionToken(savedRoomId);
+      }
+    }
+  }
+
   try {
     const room = await client.joinOrCreate(GAME_ROOM_NAME, {
       protocolVersion: PROTOCOL_VERSION,
       ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
       ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
     });
-    // S2.3.2: `client.reconnect` (the real `@colyseus/sdk` `Client`) is the
-    // reconnect capability `attachRoom` calls on an unexpected drop — kept
-    // here, not in `attachRoom`, so that module never imports the SDK.
-    const reconnectCapability: ReconnectCapability = {
-      reconnect: async (token) => (await client.reconnect(token)) as unknown as RoomLike,
-    };
     const handle = attachRoom(
       room as unknown as RoomLike,
       callbacks,
