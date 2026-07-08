@@ -62,6 +62,32 @@ function subtractResources(
 }
 
 /**
+ * Credits resources BACK to the finite bank (S2.4.2a). When a cost leaves a
+ * player's hand for the bank — a build, a dev-card buy, or a discard-on-7 — the
+ * resources return to the pool, exactly as returning cards to the box does in
+ * physical Catan (`ruleProfile.ts` "Physical-Catan parity: 19"). Without this
+ * the bank strictly drained and long matches froze the all-or-nothing
+ * production gate (`validate.ts`). Mirrors that gate's `?? bankPerResource`
+ * fallback (`validate.ts`'s `bank[resource] ?? production.bankPerResource`) so
+ * `validate` and `reduce` agree on an absent-key resource's remaining pool, and
+ * preserves the `bank?` optional shape (an absent bank becomes a fresh object
+ * seeded from the profile default). `bankPerResource` comes from the resolved
+ * profile — never hardcoded — so a non-Classic pool size stays honoured. Pure —
+ * returns a new bank record, never mutates `state.bank`.
+ */
+function creditBank(
+  state: GameState,
+  amounts: Readonly<Record<string, number>>,
+): Readonly<Record<ResourceType, number>> {
+  const { bankPerResource } = loadRuleProfile(state.profileId ?? 'classic').production;
+  const bank: Record<ResourceType, number> = { ...(state.bank ?? {}) };
+  for (const [resource, amount] of Object.entries(amounts)) {
+    bank[resource] = (bank[resource] ?? bankPerResource) + amount;
+  }
+  return bank;
+}
+
+/**
  * Consumes one held dev card of `kind` from `playerId`'s holdings (S1.2.3
  * play branches) — decrements `held` only, never `boughtThisTurn`: `validate`
  * already guaranteed `held - boughtThisTurn >= 1` before allowing the play,
@@ -327,6 +353,9 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           roads: { ...buildings.roads, [event.edgeId]: event.playerId },
           ...(buildings.cities ? { cities: buildings.cities } : {}),
         },
+        // The cost returns to the finite bank (S2.4.2a) — the inverse of the
+        // `subtractResources` debit above, keeping `bank + Σ(hands)` conserved.
+        bank: creditBank(state, event.cost),
         eventIndex: event.index + 1,
       };
     }
@@ -349,6 +378,8 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           roads: buildings.roads,
           ...(buildings.cities ? { cities: buildings.cities } : {}),
         },
+        // The cost returns to the finite bank (S2.4.2a).
+        bank: creditBank(state, event.cost),
         eventIndex: event.index + 1,
       };
     }
@@ -377,6 +408,8 @@ export function reduce(state: GameState, event: GameEvent): GameState {
           roads: buildings.roads,
           cities: { ...buildings.cities, [event.vertexId]: event.playerId },
         },
+        // The cost returns to the finite bank (S2.4.2a).
+        bank: creditBank(state, event.cost),
         eventIndex: event.index + 1,
       };
     }
@@ -408,6 +441,9 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         players,
         devCards,
         devDeckRemaining: event.deckRemaining,
+        // The buy cost returns to the finite bank (S2.4.2a) — dev cards are
+        // paid for in resources, which rejoin the pool like any other build.
+        bank: creditBank(state, event.cost),
         eventIndex: event.index + 1,
       };
     }
@@ -486,6 +522,9 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       return {
         ...rest,
         players,
+        // Discarded cards return to the finite bank (S2.4.2a) — a discard-on-7
+        // hands them back to the box, it does not destroy them.
+        bank: creditBank(state, event.resources),
         ...(event.remainingToDiscard.length > 0
           ? { playersToDiscard: event.remainingToDiscard }
           : {}),
