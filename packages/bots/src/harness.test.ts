@@ -3,10 +3,11 @@
 // loudly rather than hanging. Mirrors the S1.7.2 E2E `scriptedDriver.test.ts`
 // gate, package-internal.
 import type { PlayerId, Seed } from '@skervik/core';
-import { replay } from '@skervik/core';
+import { deriveValue, replay } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
-import { createHeuristicBot } from './bot.js';
+import { type Bot, createHeuristicBot } from './bot.js';
+import type { Difficulty } from './eval/evaluate.js';
 import { simulateMatch } from './harness.js';
 
 /**
@@ -93,4 +94,60 @@ describe('simulateMatch — full Classic match (S2.4.1 in-process harness)', () 
       }),
     ).toThrow(/did not reach game\.ended within 1 turns/);
   });
+});
+
+/**
+ * S2.4.2 — the seed-robustness guarantee (fixes the v0 stall, [[v0-seed-
+ * fragility-carryforward]]): v1 must ALWAYS reach `game.ended` within the
+ * harness cap, on a broad spread of seeds, at every difficulty. A stall is a
+ * BLOCKING bug — the harness (S2.4.1) throws loudly on the cap, so a stuck seed
+ * is a FAILING test here, never a silent skip. Passes since the S2.4.2a core
+ * bank-conservation fix (spent resources rejoin the finite bank → production no
+ * longer freezes) + v1's board-independent dev-card VP path (breaks a
+ * building-supply / board lock at ≤9 VP).
+ */
+describe('simulateMatch — v1 seed-sweep (no stall at any difficulty)', () => {
+  const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard'];
+
+  /** 24 diverse seeds: a few hand-picked strings + `deriveValue`-spread ones (not one lucky string). */
+  const SWEEP_SEEDS: readonly Seed[] = [
+    SEED,
+    'skervik',
+    'archipelago',
+    'the-mist',
+    'a',
+    '0',
+    'zzzzzz',
+    ...Array.from(
+      { length: 17 },
+      (_, i) => `sweep-${i}-${deriveValue(`sweep-salt`, i).toFixed(9)}`,
+    ),
+  ];
+
+  function fieldOf(difficulty: Difficulty, seed: Seed): Record<PlayerId, Bot> {
+    const bots: Record<PlayerId, Bot> = {};
+    for (const id of PLAYER_IDS) {
+      bots[id] = createHeuristicBot({ difficulty, seed: `${difficulty}-${seed}-${id}` });
+    }
+    return bots;
+  }
+
+  for (const difficulty of DIFFICULTIES) {
+    it(`reaches game.ended for all ${SWEEP_SEEDS.length} seeds at difficulty=${difficulty}`, () => {
+      for (const seed of SWEEP_SEEDS) {
+        const { finalState, winnerId } = simulateMatch({
+          seed,
+          playerIds: PLAYER_IDS,
+          bots: fieldOf(difficulty, seed),
+        });
+        expect(finalState.phase, `stalled seed=${seed} difficulty=${difficulty}`).toBe(
+          'finished',
+        );
+        expect(
+          winnerId,
+          `no winner seed=${seed} difficulty=${difficulty}`,
+        ).not.toBeNull();
+      }
+    });
+  }
 });
