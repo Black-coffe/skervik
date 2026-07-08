@@ -51,9 +51,9 @@
 ## M2 Progress (Mode platform & resilience)
 - **E2.1 (Rule Profiles engine)** ✅ CLOSED — 6 stories merged 2026-07-07: `RuleProfile`+`loadRuleProfile`+presets, Balanced Deck, adaptive-duration, turn timers, parallel trade, 2-player mode.
 - **E2.2 (Catch-up mechanics)** ✅ CLOSED 4/4 — 2026-07-08 S2.2.4 merged `0aeeb4f`: friendly-robber (S2.2.1), robin-hood poverty tokens (S2.2.2), final-round+hidden-VP (S2.2.3), event-tiles (S2.2.4). All flags off on shipping presets, Classic byte-frozen.
-- **E2.3 (Reconnect & grace) 1/3 IN PROGRESS** — S2.3.1 `e8d3172` reconnect-grace (native Colyseus 0.17 `allowReconnection` + `onDrop`/`onLeave` split, seat-identity hold 120s, turn-timer-not-paused, transport-only/no-forfeit). Next: S2.3.2 client resync (2026-07-08+).
+- **E2.3 (Reconnect & grace) 2/4 DONE** — S2.3.1 `e8d3172` reconnect-grace (native Colyseus 0.17 `allowReconnection` + `onDrop`/`onLeave` split, seat-identity hold 120s, turn-timer-not-paused, transport-only/no-forfeit) + S2.3.2 `a9d42fd` full-state resync on reconnect (server `#sendSnapshot` extraction + reclaim-branch unicast to LIVE client via sessionId lookup, client stable-handle across reconnect + reconnectToken.ts sessionStorage persistence WRITE-ONLY pending S2.3.2a page-reload). Next: S2.3.2a page-reload token recovery (deferred), S2.3.3 bot-fill on grace-expiry.
 - **E2.4 (Bots)** ✅ CLOSED 3/3 — S2.4.1 `57efc8c` harness, S2.4.2 `62400ca` v1 ×3 difficulty + S2.4.2a `8129962` core bank-fix, S2.4.3 `1da5022` single-player + bot-fill in-process seam live; all merged 2026-07-08; see memory/map/bots.md and memory/map/server.md.
-- **Next:** **E2.3 (2/3 pending) ‖ E2.5 ‖ E2.6** (client resync + bot-fill on grace-expiry, lobby/Redis presence, accounts).
+- **Next:** **E2.3 (S2.3.2a page-reload + S2.3.3 bot-fill) ‖ E2.5 lobby ‖ E2.6 accounts**.
 - **Deferred nit:** `eventTilesInterval>0` guard (preset validation) → batched into preset-assignment story (plan §4).
 
 ## Learnings
