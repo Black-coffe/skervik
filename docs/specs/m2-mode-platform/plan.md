@@ -86,7 +86,7 @@ players leaving, reconnecting, and being matched.
 | # | Epic | Stories (tier) | Target | Notes |
 |---|---|---|---|---|
 | 1 | **E2.1 Rule Profiles engine** | S2.1.1 profile engine ✅ · S2.1.2 Balanced Deck ✅ · S2.1.3 adaptive-duration ✅ · S2.1.4 turn timers ✅ · **S2.1.5 parallel phases [T3]** · **S2.1.6 2-player mode [T2→T3]** | mostly DONE | S2.1.6 unblocks the verify board-leg |
-| 2 | **E2.2 Catch-up (profile-gated)** | S2.2.1 friendly robber ✅ · S2.2.2 robin-hood/poverty ✅ · S2.2.3 final round + hidden VP [T2] · S2.2.4 catch-up event tiles [T2] | after E2.1 | each = a profile flag added with its behavior. S2.2.1 hardened the S2.1.4 forced-robber path (CI-guarded). S2.2.2 opened the `catchUp` sub-profile (tech-spec §180) — S2.2.3/S2.2.4 flags join it; added persistent `povertyTokens` GameState field (additive/absent when off); discharged the robber-eligibility dedup |
+| 2 | **E2.2 Catch-up (profile-gated)** | S2.2.1 friendly robber ✅ · S2.2.2 robin-hood/poverty ✅ · S2.2.3 final round + hidden VP ✅ · S2.2.4 catch-up event tiles [T2] | 3/4 DONE | each = a profile flag added with its behavior. S2.2.1 hardened the S2.1.4 forced-robber path (CI-guarded). S2.2.2 opened the `catchUp` sub-profile (tech-spec §180) — S2.2.3/S2.2.4 flags join it; added persistent `povertyTokens` GameState field. S2.2.3 added `finalRound`+`hiddenVp` booleans + `finalRound?` GameState field (additive/absent when off); win-check now uses `thresholdVp` (public-VP under `hiddenVp`); turn-end can end the game (Splendor round); forced-action hang risk CLOSED for the robber+finalRound legs |
 | 3 | **E2.3 Resilience: reconnect & bot-fill** | S2.3.1 reconnect tokens + grace ≥120s [T2] · S2.3.2 full state resync [T2] · S2.3.3 bot-fill + safe leave/rejoin [T3] | after E2.4 harness | consumes S2.1.4 anti-AFK flags; coordinates with turn timers |
 | 4 | **E2.4 Bots (AI)** | S2.4.1 bot worker harness [T2] · S2.4.2 heuristic bot v1 ×3 difficulty [T3] · S2.4.3 single-player + bot-fill integration [T2] | mid-M2 | separate process consuming `@skervik/core`; seed = S1.7.2 `decideAction` |
 | 5 | **E2.5 Lobby, matchmaking, presence** | S2.5.1 Redis presence/queues/pubsub/sticky [T3] · S2.5.2 matchmaking by mode + preview [T2] · S2.5.3 private rooms by code/link [T2] · S2.5.4 Lobby UI: settings+map preview+ready-up [T2] | late-M2 | S2.5.4 resolves the profile-override delivery seam |
@@ -174,7 +174,7 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 |---|---|---|
 | verify **board-leg** (verifier still Classic-board-hardcoded) | a future **trimmed-board / variable-radius** story (S2.1.6 chose phantom on the STANDARD board → board does NOT diverge, so it does NOT discharge this) | [[verify-profile-blindness-carryforward]] |
 | **profile-override delivery** (adjusted non-preset profile → live match; state carries only `profileId`) | **E2.5 / S2.5.4** (lobby-apply; record in `match.started`) | [[adaptive-profile-override-delivery-seam]] |
-| turn-timer **forced-action hang** (no re-arm watchdog if a forced intent fails validate) + multi-ower busy-spin + per-kind test | **E2.2** story that changes discard/robber legality, or **S2.1.6** setup forced-placement | [[turn-timer-forced-action-hang-risk]] |
+| turn-timer **forced-action hang** — ROBBER leg discharged by S2.2.1; **finalRound leg CLOSED by S2.2.3** (`08cc776`: turn-end game-end changes NO per-action legality — forced `endTurn` stays legal all round; server re-arm reads `phase:'finished'` → arms no timer, `GameRoom.ts:764`). Still applies to **S2.2.4** event tiles if they change discard/robber legality, and **S2.1.6** setup forced-placement | [[turn-timer-forced-action-hang-risk]] |
 | **setup-phase timeout auto-placement** (S2.1.4 returns `null` for setup) | **S2.1.6** (needs board topology helpers) | (in S2.1.4 spec) |
 | adaptive calculator's **timer/board/parallel levers** (only VP is live) | added WITH each lever's delivery (post-S2.5.4 override) | S2.1.3 spec Key-decision 4 |
 | **signed / hash-chained event log** (M1 residual: can't detect seamless event OMISSION in verify) | pre-ranked (M3) — optional in M2, revisit before competitive integrity matters | M1 close note |
@@ -205,7 +205,8 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | S2.1.6 2-player mode (phantom, standard board) | T3 | ✅ done — **E2.1 COMPLETE** | `f0d69b7` |
 | S2.2.1 friendly robber | T2 | ✅ done — first E2.2 mechanic; lead-review MERGE | `cd4b876` |
 | S2.2.2 robin-hood / poverty tokens | T3 | ✅ done — Option A (self-comp); discharged dedup; lead-review MERGE | `c759090` |
-| E2.2 catch-up (×4) | T1–T3 | ⏳ S2.2.1+S2.2.2 done; S2.2.3–.4 not started | — |
+| S2.2.3 final round + hidden VP | T3 | ✅ done — Splendor round-to-circle + public-VP threshold; forced-action no-hang CLOSED; lead-review MERGE | `08cc776` |
+| E2.2 catch-up (×4) | T1–T3 | ⏳ S2.2.1+S2.2.2+S2.2.3 done; S2.2.4 (event tiles) not started | — |
 | E2.3 reconnect & bot-fill (×3) | T2–T3 | ▫ not started | — |
 | E2.4 bots (×3) | T2–T3 | ▫ not started | — |
 | E2.5 lobby/matchmaking/presence (×4) | T2–T3 | ▫ not started (S2.5.4 resolves override seam) | — |
