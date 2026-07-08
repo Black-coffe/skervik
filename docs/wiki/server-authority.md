@@ -43,3 +43,11 @@ authority; `Bot.decide(state, playerId)` is seed-blind (no seed param, no predic
 Bot-generated intents flow through the same `validate` gate as human intents, producing ordinary
 logged events (no bot-specific markers) → replay is byte-identical to human play. Bots are
 driven in-process via the `#queue` serialization seam (no separate process — M5 decision).
+
+**Reconnection (E2.3 S2.3.1):** Reconnect-grace via native Colyseus 0.17 `allowReconnection` is a
+**transport concern only** — it touches only `seat.connected` and client lifecycle, never `gameState`
+or the event log. An absent player's seat identity is held for a configurable grace window (default
+120s); on reconnect (same `sessionId`) the seat restores `connected=true` without replaying any
+events (determinism intact). After grace expiry, the seat remains unpause but not forfeited — bot-fill
+(E2.3.3) may later replace it. Turn timers are not paused during grace; forced-action defaults keep
+the match advancing. This is the "no karmic bans" law: network failure ≠ game-over.
