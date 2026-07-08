@@ -37,3 +37,9 @@ Invariants:
 State lives in one node per room (**sticky-by-room**); periphery is stateless. See
 [[deterministic-core]] for how event-sourced state stays in sync across server authority
 and client prediction.
+
+**Bots (M2 S2.4.3):** Bots are **server-internal decision engines**, not clients. They hold no
+authority; `Bot.decide(state, playerId)` is seed-blind (no seed param, no predictive advantage).
+Bot-generated intents flow through the same `validate` gate as human intents, producing ordinary
+logged events (no bot-specific markers) → replay is byte-identical to human play. Bots are
+driven in-process via the `#queue` serialization seam (no separate process — M5 decision).

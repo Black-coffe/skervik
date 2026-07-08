@@ -1,5 +1,5 @@
 # Map: packages/bots (@skervik/bots)
-last-verified: 2026-07-08 (S2.4.2 + S2.4.2a merged `62400ca`, `8129962`)
+last-verified: 2026-07-08 (S2.4.2 + S2.4.2a + S2.4.3 merged `62400ca`, `8129962`, `1da5022`; in-process delivery confirmed)
 
 ## Purpose
 AI bots: decision engine seam + in-process match simulator. Bots consume @skervik/core only; no authority (seed-blind). In-process delivery model for M2; separate bot process deferred to M5 scale.
