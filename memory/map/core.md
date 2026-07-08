@@ -1,5 +1,5 @@
 # Map: packages/core (@skervik/core)
-last-verified: 2026-07-08 (S2.2.4 merged, main HEAD 0aeeb4f)
+last-verified: 2026-07-08 (S2.4.2a merged `8129962`, main HEAD 62400ca)
 
 ## Purpose
 Pure, deterministic, isomorphic rule engine for Skervik — zero runtime deps.
@@ -10,7 +10,7 @@ and server (authority).
 ## Entry points & files
 - index.ts: re-export barrel (CORE_VERSION, types, reduce/replay, validate, RNG, board/boardgen); exports computePublicVictoryPoints (S2.2.1)
 - types.ts: GameState, GameEvent (28 variants), PlayerIntent (18 variants), RejectReason (append-only union, incl. 'VICTIM_PROTECTED' S2.2.1), resource/board shapes; new GameState.finalRound? (S2.2.3), new GameFinalRoundStartedEvent (S2.2.3); types.test.ts exhaustiveness switch covers all 28 GameEvent variants
-- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[]); case 'game.finalRoundStarted' (S2.2.3) sets state.finalRound fact; 'game.ended' case unchanged (reused by final round); 'dice.rolled' case with total=7 (S2.2.4) increments sevensRolled when catchUp.eventTiles true, else stays absent
+- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[]); pure creditBank(state, amounts)→bank (S2.4.2a) credits finite resources back on road/settlement/city.built, devCard.bought, resources.discarded (event.cost/event.resources) → bank+hands conserve 95 across build/buy/discard; case 'game.finalRoundStarted' (S2.2.3) sets state.finalRound fact; 'game.ended' case unchanged (reused by final round); 'dice.rolled' case with total=7 (S2.2.4) increments sevensRolled when catchUp.eventTiles true, else stays absent
 - validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action; computePublicVictoryPoints(state, playerId) excludes hidden-VP-devcard (S2.2.1 friendly robber, S2.2.3 hiddenVp threshold); module-private thresholdVp helper = hiddenVp ? computePublicVictoryPoints : computeVictoryPoints (S2.2.3); computeFinalWinner = highest full VP → fewest buildings → earliest seat (S2.2.3 tie-break); appendAwardsAndVictory win-check: branches on catchUp.finalRound — off → emit game.ended; on & not-triggered → emit game.finalRoundStarted; on & already-triggered → emit nothing; turn-end path (intent.endTurn): when state.finalRound set AND next current === triggeredBy, append game.ended with computeFinalWinner winner; rollDice 7-branch (S2.2.4): if catchUp.eventTiles, after discard/robber setup, checks eventStorm = ((sevensRolled+1) % eventTilesInterval === 0), then REUSES computePovertyGrants() to emit poverty.tokensGranted (same event, same pool, same trailing-player mechanics as S2.2.2)
 - rng.ts: rollDie(seed, index), deriveValue(seed, index) [1..6 and [0,1)]; mulberry32-counter mode (no mutable generator state); Seed type (opaque string)
 - board.ts: buildTopology() → BoardTopology (19 tiles, 54 vertices, 72 edges); AxialCoord, TileId, VertexId, EdgeId, PortSlot (9 fixed coastal slots)
@@ -38,9 +38,10 @@ Runtime: NONE (ADR-0003, zero-dep policy verified in package.json)
 Dev: @types/node, tsup, typescript, vitest
 
 ## Tests
+bankConservation.test.ts: 4 tests (S2.4.2a bank refund on build/buy/discard, conservation invariant, unfroze production)
 eventTiles.test.ts: 14 tests (S2.2.4 eventTiles + robinHood combos, cadence grants, cap behavior, robber/discard unchanged)
 replay.test.ts, rng.test.ts, types.test.ts, reduce.test.ts, board.test.ts, boardgen.test.ts, setup.test.ts, production.test.ts, victory.test.ts, and others: ~308 cases total
-Total: 322 tests, all regression/golden guards + determinism verification + contract checking; E2.2 (all catch-up mechanics) complete
+Total: 326 tests (was 322 before S2.4.2a), all regression/golden guards + determinism verification + contract checking; E2.2 complete + S2.4.2a fixes v0/v1 seed-stall root cause
 
 ## Gotchas
 1. **Seed is NEVER in GameState** — FIX-PLAN A1 (49fcbb5). Only seedHash travels with state. Seed passed to validate() as 4th param, revealed post-match for RNG audit. This is the commit-reveal invariant.
@@ -59,3 +60,4 @@ Total: 322 tests, all regression/golden guards + determinism verification + cont
 14. **Final round is deterministic-from-state (S2.2.3)** — NO seed slot, NO new PRNG. Trigger, round-completion (when next player === triggeredBy), threshold measure (via thresholdVp helper), and winner (computeFinalWinner: full VP → fewest buildings → earliest seat) are all pure functions of state + profile. verify.ts is untouched; golden replay/verify byte-frozen under finalRound:false.
 15. **Hidden-VP threshold swap uses PUBLIC-VP (S2.2.3)** — when hiddenVp:true, the win/trigger threshold reads computePublicVictoryPoints (dev-card VP excluded, no leak); hidden VP is revealed ONLY in game.ended finalStandings (always full VP). thresholdVp helper wraps the conditional; reuse computePublicVictoryPoints/computeVictoryPoints unchanged.
 16. **finalRound field is additive/absent when off (S2.2.3)** — the trigger event (game.finalRoundStarted) is NEVER emitted under finalRound:false, so state.finalRound is never written → serialized state byte-IDENTICAL to today (Classic golden/replay/verify frozen). Same "absent key = fact never happened" optionality as povertyTokens/devCards.
+17. **Bank conservation (S2.4.2a)** — creditBank refunds cost/discard resources on build/buy/discard events (physical-Catan parity) → unfroze production on long matches (v0/v1 seed-stall root cause). Setup payout (validate.ts:1283) still mints without debiting (opposite-direction, pre-existing, non-fatal) — strict 95 = future story.
