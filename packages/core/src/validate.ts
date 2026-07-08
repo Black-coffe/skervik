@@ -1155,9 +1155,33 @@ export function validate(
       // straight to a `moveRobber` (nobody happened to be holding >7 cards).
       if (total === 7) {
         const playersToDiscard = computePlayersOwingDiscard(state);
+        const stormEvents: GameEvent[] = [{ ...diceEvent, playersToDiscard }];
+        // Event-tile catch-up boost (S2.2.4): on a flagged cadence, THIS storm
+        // ALSO grants the trailing player(s) a poverty token — reusing the
+        // S2.2.2 machinery verbatim (same helper, same event, same shared
+        // pool/cap). The robber/discard flow above is completely unchanged;
+        // the grant is purely additive. `eventStorm` reads the PRE-roll
+        // counter — `reduce`'s `dice.rolled` case advances it by the same
+        // `+1`, so the two agree on which storm this is without parallel
+        // counting.
+        if (profile.catchUp.eventTiles) {
+          const eventStorm =
+            ((state.sevensRolled ?? 0) + 1) % profile.catchUp.eventTilesInterval === 0;
+          if (eventStorm) {
+            const grants = computePovertyGrants(state, {});
+            if (Object.keys(grants).length > 0) {
+              const povertyEvent: PovertyTokensGrantedEvent = {
+                type: 'poverty.tokensGranted',
+                index: state.eventIndex + stormEvents.length,
+                grants,
+              };
+              stormEvents.push(povertyEvent);
+            }
+          }
+        }
         return {
           ok: true,
-          events: [{ ...diceEvent, playersToDiscard }],
+          events: stormEvents,
         };
       }
 
