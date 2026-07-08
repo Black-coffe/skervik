@@ -23,8 +23,7 @@ function field(difficulty: Difficulty, tag: string): Record<PlayerId, Bot> {
 }
 
 describe('v1 difficulty — reproducibility & determinism', () => {
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  it.skip('same bot seeds + match seed → deep-equal finalState and identical events', () => {
+  it('same bot seeds + match seed → deep-equal finalState and identical events', () => {
     const seed: Seed = 'repro-seed-1';
     const a = simulateMatch({ seed, playerIds: PLAYER_IDS, bots: field('medium', 'x') });
     const b = simulateMatch({ seed, playerIds: PLAYER_IDS, bots: field('medium', 'x') });
@@ -33,8 +32,7 @@ describe('v1 difficulty — reproducibility & determinism', () => {
     expect(a.winnerId).toBe(b.winnerId);
   });
 
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  it.skip('hard is a deterministic argmax — the bot noise seed does NOT change its play', () => {
+  it('hard is a deterministic argmax — the bot noise seed does NOT change its play', () => {
     // Hard never draws from the rng, so two hard fields with DIFFERENT seeds must
     // produce the identical match (proving argmax, not luck).
     const seed: Seed = 'hard-determinism-seed';
@@ -52,8 +50,7 @@ describe('v1 difficulty — reproducibility & determinism', () => {
     expect(a.finalState).toEqual(b.finalState);
   });
 
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  it.skip('easy differs from hard on the same match seed (reduced weights + noise)', () => {
+  it('easy differs from hard on the same match seed (reduced weights + noise)', () => {
     const seed: Seed = 'easy-vs-hard-seed';
     const hard = simulateMatch({ seed, playerIds: PLAYER_IDS, bots: field('hard', 'h') });
     const easy = simulateMatch({ seed, playerIds: PLAYER_IDS, bots: field('easy', 'e') });
@@ -67,8 +64,7 @@ describe('v1 difficulty — reproducibility & determinism', () => {
   });
 });
 
-// BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-describe.skip('v1 strength trend — hard ≥ easy (weak, non-flaky signal)', () => {
+describe('v1 strength trend — hard ≥ easy (weak, non-flaky signal)', () => {
   it('a single hard seat wins at least its fair share against easy seats, over many seeds', () => {
     // Rotate the ONE hard seat through every position over N seeds to neutralize
     // turn-order bias. With 1 hard + 2 easy seats, a fair (equal-skill) bot would

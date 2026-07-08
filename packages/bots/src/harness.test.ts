@@ -29,10 +29,7 @@ function threeHeuristicBots(): Record<PlayerId, ReturnType<typeof createHeuristi
 }
 
 describe('simulateMatch — full Classic match (S2.4.1 in-process harness)', () => {
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  // (this pre-existing S2.4.1 test now drives the v1 brain, which cannot terminate
-  //  self-play until the core refunds spent resources to the bank).
-  it.skip('drives a complete match to game.ended with a winner at >= 10 VP', () => {
+  it('drives a complete match to game.ended with a winner at >= 10 VP', () => {
     const { finalState, winnerId, turns } = simulateMatch({
       seed: SEED,
       playerIds: PLAYER_IDS,
@@ -46,8 +43,7 @@ describe('simulateMatch — full Classic match (S2.4.1 in-process harness)', () 
     expect(turns).toBeGreaterThan(0);
   });
 
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  it.skip('is deterministic — the identical seed + bots twice yields deep-equal state and events', () => {
+  it('is deterministic — the identical seed + bots twice yields deep-equal state and events', () => {
     const a = simulateMatch({
       seed: SEED,
       playerIds: PLAYER_IDS,
@@ -64,8 +60,7 @@ describe('simulateMatch — full Classic match (S2.4.1 in-process harness)', () 
     expect(a.winnerId).toBe(b.winnerId);
   });
 
-  // BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix lands
-  it.skip('the persisted events replay-fold from genesis to the identical final state', () => {
+  it('the persisted events replay-fold from genesis to the identical final state', () => {
     const { finalState, events } = simulateMatch({
       seed: SEED,
       playerIds: PLAYER_IDS,
@@ -104,15 +99,14 @@ describe('simulateMatch — full Classic match (S2.4.1 in-process harness)', () 
 /**
  * S2.4.2 — the seed-robustness guarantee (fixes the v0 stall, [[v0-seed-
  * fragility-carryforward]]): v1 must ALWAYS reach `game.ended` within the
- * harness cap, on a broad spread of seeds, at every difficulty.
- *
- * BLOCKED: core bank-refund bug — see S2.4.2 Findings; unskip after the core fix
- * lands. This is the STORY'S central acceptance test, and it exposed the wall:
- * the FROZEN core never refunds spent/discarded resources to the finite bank, so
- * self-play production freezes and greedy bots deadlock below 10 VP. The bot code
- * is ready; this sweep should pass once the core refunds the bank on spend.
+ * harness cap, on a broad spread of seeds, at every difficulty. A stall is a
+ * BLOCKING bug — the harness (S2.4.1) throws loudly on the cap, so a stuck seed
+ * is a FAILING test here, never a silent skip. Passes since the S2.4.2a core
+ * bank-conservation fix (spent resources rejoin the finite bank → production no
+ * longer freezes) + v1's board-independent dev-card VP path (breaks a
+ * building-supply / board lock at ≤9 VP).
  */
-describe.skip('simulateMatch — v1 seed-sweep (no stall at any difficulty)', () => {
+describe('simulateMatch — v1 seed-sweep (no stall at any difficulty)', () => {
   const DIFFICULTIES: readonly Difficulty[] = ['easy', 'medium', 'hard'];
 
   /** 24 diverse seeds: a few hand-picked strings + `deriveValue`-spread ones (not one lucky string). */

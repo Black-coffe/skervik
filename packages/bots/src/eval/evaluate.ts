@@ -35,8 +35,10 @@ export type Difficulty = 'easy' | 'medium' | 'hard';
 /**
  * The weighted-feature profile a difficulty scores with. Each field weights one
  * raw feature (or names a flat action priority) into the single comparable
- * score. `easy` zeros `port`/`devCard`/`robberBlocking` so it plays "naively";
- * `hard`/`medium` use the full set. Provisional (balance-sim tunes them).
+ * score. `easy` zeros `port`/`robberBlocking` so it plays "naively" (dev-card
+ * buying stays active on every difficulty — termination needs the board-
+ * independent VP path); `hard`/`medium` use the full set. Provisional (balance-
+ * sim tunes them).
  */
 export interface Weights {
   /** Per-pip weight of a spot's production value (the dominant term). */
@@ -59,6 +61,16 @@ export interface Weights {
   readonly roadOpensSpot: number;
   /** Flat priority for a progress-making bank trade (the anti-stall fallback). */
   readonly bankTrade: number;
+  /**
+   * Flat priority for buying a dev card — the board-independent VP source that
+   * breaks a building-supply / board LOCK (a resource-rich bot with all 5
+   * settlement placements + 4 cities used sits at ≤9 VP with a huge idle hand;
+   * dev-card VP cards + largest army are its only remaining path to 10). Kept
+   * BELOW `bankTrade` so building is always preferred; only idle surplus buys.
+   */
+  readonly devCard: number;
+  /** Flat priority for PLAYING a held knight (largest army +2 VP — board-independent). */
+  readonly knight: number;
   /** Baseline for ending the turn — 0, so any positive-scoring action beats it. */
   readonly endTurn: number;
   /** Per blocking-value point when relocating the robber (0 on `easy`). */
@@ -82,6 +94,8 @@ const FULL_WEIGHTS: Weights = {
   road: 40,
   roadOpensSpot: 35,
   bankTrade: 25,
+  devCard: 20,
+  knight: 35,
   endTurn: 0,
   robberBlocking: 3,
   victimVp: 6,
@@ -189,6 +203,23 @@ export function evaluateAction(
     }
     case 'intent.bankTrade':
       return { score: weights.bankTrade, features: { bankTrade: weights.bankTrade } };
+    case 'intent.buyDevCard':
+      return { score: weights.devCard, features: { devCard: weights.devCard } };
+    case 'intent.playDevCard': {
+      // v1 only proactively plays the knight (largest army); its worth is a flat
+      // base plus the same robber block+victim terms as a plain relocation.
+      if (action.card !== 'knight') return { score: 0, features: {} };
+      const block =
+        weights.robberBlocking * blockingValue(state, playerId, action.tileId);
+      const victim =
+        action.victimId !== undefined
+          ? weights.victimVp * vpProximity(state, action.victimId)
+          : 0;
+      return {
+        score: weights.knight + block + victim,
+        features: { knight: weights.knight, robberBlocking: block, victimVp: victim },
+      };
+    }
     case 'intent.moveRobber': {
       const block =
         weights.robberBlocking * blockingValue(state, playerId, action.tileId);

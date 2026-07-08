@@ -8,21 +8,21 @@
 // seed-BLIND to the match (authoritative-server invariant) while tests stay
 // deterministic.
 //
-// Progress discipline (necessary but NOT sufficient — see the S2.4.2 WALL below):
-// the main candidate set ALWAYS includes `endTurn` (never empty), roads are only
-// generated TOWARD an open settlement site (never a dead-end that wastes scarce
-// timber/clay), and a bank-trade-toward-the-cheapest-reachable-target candidate
-// lets a build-blocked bot convert surplus. Higher-pip spot selection grows the
-// economy faster than v0's first-buildable.
+// Seed-robustness (the story's point — fixes the v0 stall): the main candidate
+// set ALWAYS includes `endTurn` (never empty), roads are only generated TOWARD an
+// open settlement site (never a dead-end that wastes scarce timber/clay), a
+// bank-trade-toward-the-cheapest-reachable-target candidate lets a build-blocked
+// bot convert surplus, and — for a resource-rich bot that has used every
+// settlement/city slot (a board/supply LOCK at ≤9 VP) — a `buyDevCard` +
+// knight-play path gives a board-INDEPENDENT VP route to 10 (VP cards + largest
+// army). Higher-pip spot selection grows the economy faster than v0's
+// first-buildable. Proven by the harness seed-sweep (`../harness.test.ts`).
 //
-// ⚠️ S2.4.2 WALL (see the story's `## Findings`): this does NOT make self-play
-// seed-robust. The FROZEN M1 core never refunds spent/discarded resources to the
-// finite bank (19/resource), so a long self-play match monotonically drains the
-// ~95-resource pool to zero, production freezes, and three symmetric greedy bots
-// deadlock at parity (~5-7 VP) BELOW the 10-VP threshold. v0 stalls the same way
-// ([[v0-seed-fragility-carryforward]] is a CORE-economy issue, not a bot-quality
-// one). Fixing it needs a core change (refund the bank on spend, physical-Catan
-// parity) or bot P2P trading — both out of this story's scope.
+// This became robust only once the S2.4.2a core fix (`8129962`) made the finite
+// bank CONSERVE — it now refunds spent/discarded resources (physical-Catan
+// parity), so production no longer freezes mid-match. Before that fix a long
+// self-play match drained the ~95-resource pool to zero and every greedy bot
+// (incl. v0) stalled — the true root of [[v0-seed-fragility-carryforward]].
 //
 // Profile-aware, never Classic-hardcoded: costs/supply/bank/robber knobs come
 // from `loadRuleProfile(state.profileId)`, and robber victims respect
@@ -52,6 +52,7 @@ import {
 } from '../eval/evaluate.js';
 import {
   bestBankRate,
+  blockingValue,
   type Buildings,
   buildingsOf,
   countOwned,
@@ -366,6 +367,32 @@ function mainCandidates(state: GameState, playerId: PlayerId): PlayerIntent[] {
     if (trade) candidates.push(trade);
   }
 
+  // Board-independent VP (breaks the building-supply / board LOCK, S2.4.2 post-
+  // bank-fix): a resource-rich bot with every settlement/city slot used sits at
+  // ≤9 VP with an idle hand — dev cards are its only path to 10. Buying is now
+  // safe (the S2.4.2a core credits the bank on spend, so no resource death
+  // spiral). VP cards count toward the win directly; knights build largest army.
+  const deckLeft = state.devDeckRemaining ?? profile.devCards.deck.length;
+  if (deckLeft > 0 && canAfford(resources, profile.devCards.buyCost)) {
+    candidates.push({ type: 'intent.buyDevCard', playerId });
+  }
+
+  // Play a held knight — largest army (+2 VP) + robber tempo, no board space needed.
+  if (canPlayKnight(state, playerId)) {
+    const knightTarget = bestRobberTarget(state, playerId, profile.robber);
+    if (knightTarget) {
+      candidates.push({
+        type: 'intent.playDevCard',
+        playerId,
+        card: 'knight',
+        tileId: knightTarget.tileId,
+        ...(knightTarget.victimId !== undefined
+          ? { victimId: knightTarget.victimId }
+          : {}),
+      });
+    }
+  }
+
   return candidates;
 }
 
@@ -413,6 +440,49 @@ function pickLeaderVictim(
     }
   }
   return best;
+}
+
+/** True if the player holds a knight it may LEGALLY play now (not bought this turn, none played yet). */
+function canPlayKnight(state: GameState, playerId: PlayerId): boolean {
+  if (state.devCardPlayedThisTurn) return false;
+  const holdings = state.devCards?.[playerId];
+  if (!holdings) return false;
+  const held = holdings.held.knight ?? 0;
+  const bought = holdings.boughtThisTurn.knight ?? 0;
+  return held - bought > 0;
+}
+
+/**
+ * The single best robber relocation (block value + victim public VP), argmax
+ * with a deterministic tie-break — used to aim a played KNIGHT. `null` when no
+ * legal tile exists.
+ */
+function bestRobberTarget(
+  state: GameState,
+  playerId: PlayerId,
+  robber: RobberProfile,
+): { tileId: string; victimId?: PlayerId } | null {
+  const moves = candidateRobberMoves(state, playerId, robber);
+  let best: {
+    move: Extract<PlayerIntent, { type: 'intent.moveRobber' }>;
+    score: number;
+    key: string;
+  } | null = null;
+  for (const move of moves) {
+    if (move.type !== 'intent.moveRobber') continue;
+    const block = blockingValue(state, playerId, move.tileId);
+    const victimVp =
+      move.victimId !== undefined ? computePublicVictoryPoints(state, move.victimId) : 0;
+    const score = block * 3 + victimVp * 6;
+    const key = `${move.tileId}:${move.victimId ?? ''}`;
+    if (best === null || score > best.score || (score === best.score && key < best.key)) {
+      best = { move, score, key };
+    }
+  }
+  if (best === null) return null;
+  return best.move.victimId !== undefined
+    ? { tileId: best.move.tileId, victimId: best.move.victimId }
+    : { tileId: best.move.tileId };
 }
 
 /**
