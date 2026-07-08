@@ -1,5 +1,5 @@
 # Map: packages/core (@skervik/core)
-last-verified: 2026-07-07 (S2.2.1 merged, main HEAD cd4b876)
+last-verified: 2026-07-08 (S2.2.3 merged, main HEAD 08cc776)
 
 ## Purpose
 Pure, deterministic, isomorphic rule engine for Skervik — zero runtime deps.
@@ -9,9 +9,9 @@ and server (authority).
 
 ## Entry points & files
 - index.ts: re-export barrel (CORE_VERSION, types, reduce/replay, validate, RNG, board/boardgen); exports computePublicVictoryPoints (S2.2.1)
-- types.ts: GameState, GameEvent (7 variants), PlayerIntent (4 variants), RejectReason (now incl. 'VICTIM_PROTECTED', S2.2.1), resource/board shapes
-- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[])
-- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action to emit awards + game.ended; NEW computePublicVictoryPoints(state, playerId) excludes hidden-VP-devcard line (used by friendly robber gate, S2.2.1)
+- types.ts: GameState, GameEvent (28 variants), PlayerIntent (18 variants), RejectReason (append-only union, incl. 'VICTIM_PROTECTED' S2.2.1), resource/board shapes; new GameState.finalRound? (S2.2.3), new GameFinalRoundStartedEvent (S2.2.3); types.test.ts exhaustiveness switch covers all 28 GameEvent variants
+- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[]); new case 'game.finalRoundStarted' (lines 716-729, S2.2.3) sets state.finalRound fact; 'game.ended' case unchanged (reused by final round)
+- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action; NEW computePublicVictoryPoints(state, playerId) excludes hidden-VP-devcard (S2.2.1 friendly robber, S2.2.3 hiddenVp threshold); NEW module-private thresholdVp(state, id) = hiddenVp ? computePublicVictoryPoints : computeVictoryPoints (S2.2.3, lines ~480-490); NEW computeFinalWinner(state) = highest full VP → fewest buildings → earliest seat (S2.2.3 tie-break, lines ~490-510); appendAwardsAndVictory win-check (line ~560): branches on catchUp.finalRound — off → emit game.ended as today; on & not-triggered → emit game.finalRoundStarted; on & already-triggered → emit nothing; turn-end path (intent.endTurn handler): when state.finalRound set AND next current === triggeredBy, append game.ended with computeFinalWinner winner (lines ~600-620)
 - rng.ts: rollDie(seed, index), deriveValue(seed, index) [1..6 and [0,1)]; mulberry32-counter mode (no mutable generator state); Seed type (opaque string)
 - board.ts: buildTopology() → BoardTopology (19 tiles, 54 vertices, 72 edges); AxialCoord, TileId, VertexId, EdgeId, PortSlot (9 fixed coastal slots)
 - boardgen.ts: generateBoard(seed) → BoardLayout; BOARD_GEN_STREAM slot map; CLASSIC_BOARD_PROFILE
@@ -24,6 +24,9 @@ and server (authority).
 - ValidateResult: {ok: true, events: GameEvent[]} | {ok: false, reason: RejectReason}
 - RejectReason: union of ~25 reasons incl. new 'VICTIM_PROTECTED' (friendly robber gate, S2.2.1); append-only for audit/replay
 - RobberProfile (S2.2.1): handLimit, halfDivisor, friendlyRobber (bool), friendlyRobberVpCeiling (PUBLIC-VP protection threshold)
+- CatchUpProfile (S2.2.2–S2.2.3, ruleProfile.ts:121-149): robinHood/robinHoodVpGap/robinHoodTokenCap/robinHoodExchangeRate (S2.2.2); NEW finalRound (bool, Splendor-style round-to-end, S2.2.3), hiddenVp (bool, dev-card VP excluded from trigger threshold, S2.2.3) — all off on shipping presets; three test-only profiles (FINAL_ROUND_TEST_PROFILE / HIDDEN_VP_TEST_PROFILE / FINAL_ROUND_HIDDEN_VP_TEST_PROFILE) in PROFILE_REGISTRY, NOT client-selectable
+- GameState.finalRound? (types.ts:378-381, S2.2.3 optional additive field): { triggeredBy: PlayerId, triggeredOnTurn: number } — ABSENT under finalRound:false, never written when off (golden byte-frozen); present once game.finalRoundStarted lands
+- GameFinalRoundStartedEvent (types.ts:850-854, S2.2.3): { type: 'game.finalRoundStarted', triggeredBy: PlayerId, triggeredOnTurn: number } — emitted when a player reaches vpToWin while finalRound:on; NEVER emitted under finalRound:false
 - Seed: opaque string, passed to validate() as 4th param only, NEVER stored in GameState (A1 invariant)
 - reduce signature: (state: GameState, event: GameEvent) → GameState
 - validate signature: (state, intent, playerId, seed) → ValidateResult
@@ -54,3 +57,6 @@ Total: 41 tests, all regression/golden guards + determinism verification + contr
 11. **Longest road is longest-simple-path, opponent buildings break chains** — the DFS engine (computeLongestRoad, longestRoadLength) enforces this; roads cannot pass through or around opponent settlements/cities (S1.3.4 victory.test.ts).
 12. **Largest army is strict-exceed, ties stay with incumbent** — first to largestArmyMin (3) knights gets the award; later players must exceed the incumbent's count to steal it, not tie (S1.3.4 CLASSIC_VICTORY_PROFILE.largestArmyMin=3).
 13. **Friendly-robber victim gate uses PUBLIC-VP only** — computePublicVictoryPoints(state, playerId) excludes hidden dev-cards to prevent a dishonest server from leaking dev-card hand via robber eligibility filtering (S2.2.1). When friendlyRobber=true, a candidate with PUBLIC-VP ≤ ceiling is rejected; validate + forcedAction.ts both apply this gate.
+14. **Final round is deterministic-from-state (S2.2.3)** — NO seed slot, NO new PRNG. Trigger, round-completion (when next player === triggeredBy), threshold measure (via thresholdVp helper), and winner (computeFinalWinner: full VP → fewest buildings → earliest seat) are all pure functions of state + profile. verify.ts is untouched; golden replay/verify byte-frozen under finalRound:false.
+15. **Hidden-VP threshold swap uses PUBLIC-VP (S2.2.3)** — when hiddenVp:true, the win/trigger threshold reads computePublicVictoryPoints (dev-card VP excluded, no leak); hidden VP is revealed ONLY in game.ended finalStandings (always full VP). thresholdVp helper wraps the conditional; reuse computePublicVictoryPoints/computeVictoryPoints unchanged.
+16. **finalRound field is additive/absent when off (S2.2.3)** — the trigger event (game.finalRoundStarted) is NEVER emitted under finalRound:false, so state.finalRound is never written → serialized state byte-IDENTICAL to today (Classic golden/replay/verify frozen). Same "absent key = fact never happened" optionality as povertyTokens/devCards.
