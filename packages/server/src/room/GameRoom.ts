@@ -36,7 +36,7 @@ import {
   type StateSnapshotMessage,
   type VersionErrorMessage,
 } from '@skervik/protocol';
-import { type Client, Room, ServerError } from 'colyseus';
+import { type Client, CloseCode, Room, ServerError } from 'colyseus';
 
 import {
   FsMatchMetadataStore,
@@ -67,6 +67,16 @@ const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
  * genuinely broken bot.
  */
 const DEFAULT_BOT_ACTION_CAP = 100;
+
+/**
+ * The delay before force-closing clients at game end (S2.3.3). Long enough that
+ * the `game.ended` `event.batch` broadcast (enqueued on the same tick) is
+ * flushed to every client BEFORE its socket closes — Colyseus flushes queued
+ * messages on its patch interval (~50ms), so a few hundred ms is a comfortable,
+ * player-imperceptible margin. Runs on the room's own wall-clock seam
+ * (`#scheduler`), never the deterministic core.
+ */
+const GAME_END_CLOSE_DELAY_MS = 500;
 
 /**
  * A cancellable one-shot timer — the minimal surface the room needs from a
@@ -182,6 +192,16 @@ export interface GameRoomOptions {
    * a future lobby (E2.5) can override it per match.
    */
   readonly reconnectGraceSeconds?: number;
+  /**
+   * The difficulty a fill-bot takes over an abandoned seat with (S2.3.3, "no
+   * dead time" product law) — installed when a dropped seat's grace expires
+   * with no reconnect, OR immediately on a consented leave, so the remaining
+   * humans play out a real match against a competent opponent instead of a
+   * stalled seat. Defaults to `'medium'` (a reasonable stand-in). A ROOM/infra
+   * option, not a `RuleProfile` field — bot-fill is resilience, not a game rule;
+   * a future lobby (E2.5) can override it per match.
+   */
+  readonly botFillDifficulty?: Difficulty;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -307,6 +327,18 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   /** {@link GameRoomOptions.reconnectGraceSeconds}, resolved at `onCreate` (S2.3.1). */
   #reconnectGraceSeconds = DEFAULT_RECONNECT_GRACE_SECONDS;
 
+  /** {@link GameRoomOptions.botFillDifficulty}, resolved at `onCreate` (S2.3.3). */
+  #botFillDifficulty: Difficulty = 'medium';
+
+  /**
+   * The one-way game-end close latch (S2.3.3): flips exactly once, when the
+   * `game.ended` batch is applied, so the consented client-close is scheduled a
+   * single time. Guards against a re-entrant/duplicate schedule (core freezes to
+   * `'finished'` at `game.ended`, so no further batch is even possible, but the
+   * latch keeps the intent explicit).
+   */
+  #gameEndClosing = false;
+
   /**
    * The per-turn bot-action counter (S2.4.3 no-hang discipline) + the
    * `state.turn` it was last reset for. Reset whenever `state.turn` advances
@@ -374,6 +406,7 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     this.#botActionCap = options?.botActionCap ?? DEFAULT_BOT_ACTION_CAP;
     this.#reconnectGraceSeconds =
       options?.reconnectGraceSeconds ?? DEFAULT_RECONNECT_GRACE_SECONDS;
+    this.#botFillDifficulty = options?.botFillDifficulty ?? 'medium';
 
     // Bot-seat creation at genesis (S2.4.3): a bot seat has no live `Client`,
     // so — unlike a human seat — it cannot be minted in `onJoin`. Each `bots`
@@ -685,10 +718,17 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         if (liveClient) this.#sendSnapshot(liveClient);
       })
       .catch(() => {
-        // Grace expired with no reconnect: the seat REMAINS in `state.seats`
-        // with `connected:false` (already set above) — no forfeit. Colyseus
-        // still fires `onLeave` once more as the final notice for this drop
-        // (see below); it's a harmless no-op re-affirmation at that point.
+        // Grace expired with no reconnect (S2.3.3, "no dead time" product law):
+        // the seat is not forfeited — instead a bot takes it over so the
+        // remaining humans play a real match to a real finish. The seat stays in
+        // `state.seats` with `connected:false` (already set above); `#botFillSeat`
+        // flips `isBot` + drives it through the S2.4.3 loop. Colyseus still fires
+        // `onLeave` once more as the terminal notice for this drop — but with the
+        // drop's NON-consented code, so `onLeave`'s consented-gated fill is
+        // skipped there (and the `#bots.has` guard would catch it regardless).
+        // Fork B: bot-fill happens ONLY on expiry, never during grace —
+        // forced-defaults cover the seat while it can still reconnect (S2.3.1).
+        if (seat) this.#botFillSeat(seat);
       });
   }
 
@@ -704,9 +744,91 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * the authoritative `gameState` is untouched — only the public projection
    * changes.
    */
-  override onLeave(client: Client): void {
+  override onLeave(client: Client, code?: number): void {
     const seat = this.state.seats.find((s) => s.playerId === client.sessionId);
     if (seat) seat.connected = false;
+
+    // A CONSENTED leave (S2.3.3, Key decision 3): a deliberate leaver is not
+    // coming back mid-match, so the seat is bot-filled IMMEDIATELY (not
+    // grace-held) — the remaining humans keep playing. `#botFillSeat` guards
+    // against the terminal drop-notice case (the seat is already in `#bots` from
+    // the expiry `.catch()` above) and against a finished game (the game-end
+    // close, part 3, force-closes clients with the SAME consented code, so this
+    // hook fires per seat then too — the `phase:'finished'` guard skips it). We
+    // do NOT fill on the FINAL grace-expiry notice via a non-consented code:
+    // that path is already handled by the expiry `.catch()`.
+    if (seat && code === CloseCode.CONSENTED) this.#botFillSeat(seat);
+  }
+
+  /**
+   * Installs a fill-bot on an abandoned HUMAN seat (S2.3.3) — the epic-closing
+   * "no dead time" capability. Reuses the S2.4.3 bot-drive seam WHOLESALE: the
+   * only thing that makes the drive loop treat a seat as a bot actor is its
+   * presence in `#bots` (`#nextBotActorId` gates on `#bots.has(playerId)`
+   * ALONE), so filling a seat is exactly: mint a `createHeuristicBot`, add it to
+   * `#bots`, flip the seat's existing `isBot`/`botDifficulty` client-signal
+   * fields (NO new SeatSchema field), and trigger the existing
+   * `#scheduleBotTurnIfNeeded` drive. The fill-bot holds NO authority and is
+   * MATCH-SEED-BLIND — its noise seed is `bot-fill-${seatIndex}`, never the
+   * room's secret `#seed` — and its moves are ORDINARY events (no timestamp /
+   * marker), so a drop+bot-fill match replays byte-identically from its log.
+   *
+   * Three guards keep it correct:
+   * - **Already a bot** → no-op: a genesis bot, or an already-filled seat (the
+   *   expiry `.catch()` + the terminal `onLeave` both call this for the same
+   *   drop). A filled seat = `isBot:true` + `connected:false`, distinguishable
+   *   from a genesis bot's `connected:true`.
+   * - **`finished`/`lobby` phase** → no-op: nothing to drive once the match is
+   *   over (the game-end consented close, part 3, would otherwise re-fill every
+   *   seat) or before it has started.
+   * - **No connected human remains** → no-op: bot-fill exists to keep the game
+   *   alive for the REMAINING humans; if the leaver was the last connected
+   *   human, there is no one left to play for — Colyseus auto-disposes the
+   *   client-empty room instead of running a pointless bot-vs-bot game (and this
+   *   keeps a bot from driving a step into the log during that teardown).
+   */
+  #botFillSeat(seat: SeatSchema): void {
+    const playerId = seat.playerId as PlayerId;
+    if (this.#bots.has(playerId)) return;
+    if (this.gameState.phase === 'finished' || this.gameState.phase === 'lobby') return;
+    const aHumanRemains = this.state.seats.some(
+      (s) => s.playerId !== seat.playerId && s.connected && !s.isBot,
+    );
+    if (!aHumanRemains) return;
+
+    const bot = createHeuristicBot({
+      difficulty: this.#botFillDifficulty,
+      seed: `bot-fill-${seat.seatIndex}`,
+    });
+    this.#bots.set(playerId, bot);
+    seat.isBot = true;
+    seat.botDifficulty = this.#botFillDifficulty;
+
+    // Drive it now if it is (or already owes) the current decision; otherwise
+    // the existing per-commit trigger picks the seat up when its turn comes.
+    this.#scheduleBotTurnIfNeeded();
+  }
+
+  /**
+   * Schedules the game-end consented close (S2.3.3). Fires exactly once (the
+   * `#gameEndClosing` latch), a short {@link GAME_END_CLOSE_DELAY_MS} after
+   * `game.ended`, via the room's ONE wall-clock seam (`#scheduler` — production
+   * `this.clock`, a test's manual scheduler): `this.disconnect(CloseCode.CONSENTED)`
+   * force-closes every client with code 4000. The client's S2.3.2a logic maps
+   * that code to a consented leave and clears its persisted reconnect pointer,
+   * so a post-match reload never tries to resume the finished seat. The delay
+   * lets the `game.ended` broadcast flush first (Colyseus enqueues messages, so
+   * an immediate disconnect would race the final batch). No event, no seed, no
+   * `GameState` — a pure transport-layer teardown, so replay stays byte-untouched.
+   */
+  #scheduleGameEndClose(): void {
+    if (this.#gameEndClosing) return;
+    this.#gameEndClosing = true;
+    this.#scheduler.setTimeout(() => {
+      // `disconnect` no-ops if the room is already disposing; the CONSENTED code
+      // is what the S2.3.2a client clears its reconnect pointer on.
+      void this.disconnect(CloseCode.CONSENTED);
+    }, GAME_END_CLOSE_DELAY_MS);
   }
 
   override onDispose(): void {
@@ -866,7 +988,8 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       //    the (possibly async) write so a re-entrant batch cannot double-reveal
       //    — though core freezes to `'finished'` at `game.ended`, so no further
       //    batch is even possible.
-      if (!this.#seedRevealed && result.events.some((e) => e.type === 'game.ended')) {
+      const gameEnded = result.events.some((e) => e.type === 'game.ended');
+      if (!this.#seedRevealed && gameEnded) {
         this.#seedRevealed = true;
         await this.matchMetadataStore.recordSeedReveal(
           this.gameState.matchId,
@@ -885,6 +1008,14 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       //    whole turn one enqueued step at a time, and what hands a human's
       //    commit off to a bot's turn). A no-op for a room with no bots.
       this.#scheduleBotTurnIfNeeded();
+
+      // 9. Game-end consented close (S2.3.3, fixes the S2.3.2a nit): once the
+      //    match ends, force-close every client with the CONSENTED code so a
+      //    post-match page reload clears its reconnect pointer (S2.3.2a) instead
+      //    of wasting a resume attempt on a finished seat. Deferred by one flush
+      //    cycle (see `#scheduleGameEndClose`) so this same batch's `game.ended`
+      //    broadcast reaches clients BEFORE their sockets close.
+      if (gameEnded) this.#scheduleGameEndClose();
     } catch (error) {
       // A durable-sink rejection (or any unexpected throw) fails the batch:
       // state was NOT advanced (assignment happens only after `append` resolved
