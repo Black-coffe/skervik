@@ -35,6 +35,20 @@ export class SeatSchema extends Schema {
    * bot (no karmic ban).
    */
   declare idle: boolean;
+  /**
+   * True for a bot seat (S2.4.3) — a server-minted `playerId` with no live
+   * `Client` behind it, driven through the room's own `#queue` instead of a
+   * socket. `false` (the default) for every human seat, unchanged from M1.
+   */
+  declare isBot: boolean;
+  /**
+   * The bot's difficulty code (S2.4.3) — `'easy' | 'medium' | 'hard'` for a bot
+   * seat, `''` for a human seat (same "empty = not set" convention as this
+   * schema's other presentational fields). A STRUCTURED code only: the UI
+   * localizes it into a display name (ADR-0008) — never a localized/human-
+   * readable label here.
+   */
+  declare botDifficulty: string;
 }
 
 defineTypes(SeatSchema, {
@@ -43,6 +57,8 @@ defineTypes(SeatSchema, {
   connected: 'boolean',
   consecutiveMisses: 'number',
   idle: 'boolean',
+  isBot: 'boolean',
+  botDifficulty: 'string',
 });
 
 /** The room's public lobby/late-join projection — see file header for the invariant this enforces. */

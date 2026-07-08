@@ -7,6 +7,7 @@
 // PERSISTED to the event log BEFORE it is committed/broadcast (S1.4.4b): no
 // client ever observes an event that was not durably recorded first. The secret
 // seed is revealed to match metadata ONLY after `game.ended` (S1.4.3).
+import { type Bot, createHeuristicBot, type Difficulty } from '@skervik/bots';
 import {
   type BoardGeneratedEvent,
   buildTopology,
@@ -49,6 +50,15 @@ import { resolveForcedAction } from './forcedAction.js';
 
 /** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
 const DEFAULT_MAX_SEATS = 4;
+
+/**
+ * The default per-turn bot-action safety cap (S2.4.3 no-hang discipline) —
+ * generous enough that no real turn (setup's handful of placements, a normal
+ * main-phase build/trade sequence) is ever truncated; a test overrides it via
+ * the `botActionCap` room option to prove the no-hang fallback without a
+ * genuinely broken bot.
+ */
+const DEFAULT_BOT_ACTION_CAP = 100;
 
 /**
  * A cancellable one-shot timer — the minimal surface the room needs from a
@@ -129,6 +139,29 @@ export interface GameRoomOptions {
    * `@colyseus/testing` has no tickable clock.
    */
   readonly turnTimerScheduler?: TurnTimerScheduler;
+  /**
+   * Bot seats to seat at genesis (S2.4.3) — each entry mints one server-owned
+   * bot seat (`'bot-0'`, `'bot-1'`, …) with a `Bot` brain behind it; a bot seat
+   * has no live `Client` (it can't be created in {@link GameRoom.onJoin}, so
+   * this is assembled in {@link onCreate} instead). Single-player is 1 human +
+   * this array sized to fill the rest of `maxSeats`; a pure bot-vs-bot room
+   * (this story's E2E) sizes it to `maxSeats` with no human at all. Defaults to
+   * `[]` — production Classic rooms are unaffected, byte-frozen. Lobby mode /
+   * difficulty SELECTION is S2.5.4; this option is the room-level knob a future
+   * lobby maps a UI pick onto.
+   */
+  readonly bots?: ReadonlyArray<{ readonly difficulty: Difficulty }>;
+  /**
+   * Per-turn bot-action safety cap (S2.4.3 test seam, no-hang discipline). If a
+   * bot seat's OWN decision keeps producing legal actions without its turn
+   * advancing (`state.turn` unchanged) past this many steps, the room stops
+   * trusting it for the rest of that span and falls back to the deterministic
+   * `resolveForcedAction` default — the same discipline S2.1.4 uses on a hard
+   * timeout, just triggered by a step count instead of a wall-clock. Defaults
+   * to a generous {@link DEFAULT_BOT_ACTION_CAP} (production); a test sets it
+   * tiny to prove the no-hang fallback without needing a genuinely broken bot.
+   */
+  readonly botActionCap?: number;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -239,6 +272,27 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   #consecutiveTimeouts = new Map<PlayerId, number>();
 
+  /**
+   * Bot seats seated at genesis (S2.4.3), keyed by their server-minted
+   * `playerId`. A `Bot` holds NO authority — it only proposes intents via
+   * `decide(state, playerId)` (no seed param); ONLY `validate` (fed the room's
+   * real secret seed) ever mutates state. Empty for every room that doesn't
+   * request `bots` — a plain human-only Classic room never touches this map.
+   */
+  #bots = new Map<PlayerId, Bot>();
+
+  /** {@link GameRoomOptions.botActionCap}, resolved at `onCreate`. */
+  #botActionCap = DEFAULT_BOT_ACTION_CAP;
+
+  /**
+   * The per-turn bot-action counter (S2.4.3 no-hang discipline) + the
+   * `state.turn` it was last reset for. Reset whenever `state.turn` advances
+   * (a new turn starts fresh), so the cap bounds "steps without this turn
+   * ending," not the whole match.
+   */
+  #botActionsThisTurn = 0;
+  #botActionsTrackedTurn = -1;
+
   override onCreate(options?: GameRoomOptions): void {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     // The match's rule profile (S2.1.1/S2.1.6) — Classic by default (production
@@ -294,6 +348,32 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       setTimeout: (callback, ms) => this.clock.setTimeout(callback, ms),
     };
 
+    this.#botActionCap = options?.botActionCap ?? DEFAULT_BOT_ACTION_CAP;
+
+    // Bot-seat creation at genesis (S2.4.3): a bot seat has no live `Client`,
+    // so — unlike a human seat — it cannot be minted in `onJoin`. Each `bots`
+    // entry becomes one stable `'bot-N'` seat + a `Bot` brain stored in
+    // `#bots`. The bot's OWN noise seed is `bot-${seatIndex}` — NEVER the
+    // match's secret `#seed` — so a single-player match stays reproducible
+    // from the same room options without coupling the bot to commit-reveal.
+    (options?.bots ?? []).forEach((spec, i) => {
+      const playerId = `bot-${i}` as PlayerId;
+      const seat = new SeatSchema().assign({
+        playerId,
+        seatIndex: this.state.seats.length,
+        connected: true,
+        consecutiveMisses: 0,
+        idle: false,
+        isBot: true,
+        botDifficulty: spec.difficulty,
+      });
+      this.state.seats.push(seat);
+      this.#bots.set(
+        playerId,
+        createHeuristicBot({ difficulty: spec.difficulty, seed: `bot-${i}` }),
+      );
+    });
+
     // The authoritative intent pipeline (S1.4.2), SERIALIZED per room (see
     // `#queue` doc): each intent is chained onto the room's queue rather than
     // dispatched as an independent floating promise, so a durable async sink
@@ -302,6 +382,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     this.onMessage('intent', (client, message: unknown) => {
       this.#enqueueIntent(client, message);
     });
+
+    // Bots alone can already fill the room (a pure bot-vs-bot room, or the
+    // last human-optional seat) — mirror `onJoin`'s seats-full auto-start latch
+    // (S2.4.3 reuses `#startMatch`, never a second start path).
+    this.#maybeAutoStart();
   }
 
   /**
@@ -320,6 +405,25 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
           'intent queue link threw unexpectedly (should be unreachable)',
           error,
         );
+      });
+  }
+
+  /**
+   * The seats-full auto-start latch (S1.7.2, generalized by S2.4.3 to count
+   * bot seats too): fires `#startMatch` exactly once, the moment the room's
+   * seat count (human + bot) reaches `maxClients` — from `onJoin` (a human
+   * fills the last seat) or from `onCreate` itself (bots alone already fill a
+   * bot-vs-bot room). The latch is set synchronously BEFORE the async enqueue
+   * so a re-entrant call can never fire a second start, and the start batch
+   * rides the SAME per-room `#queue` as every intent.
+   */
+  #maybeAutoStart(): void {
+    if (this.#matchStarted || this.state.seats.length < this.maxClients) return;
+    this.#matchStarted = true;
+    this.#queue = this.#queue
+      .then(() => this.#startMatch())
+      .catch((error: unknown) => {
+        this.#logInternalError('match-start queue link threw unexpectedly', error);
       });
   }
 
@@ -421,6 +525,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       // presentational field — setup auto-placement is DEFERRED (no hard forced
       // action), the first hard timer arms once real setup placements reach `roll`.
       this.#armTurnTimer();
+
+      // Trigger point 2/2 (S2.4.3): a bot placing FIRST in the snake draft (or
+      // acting first at all) needs to be driven right after genesis — the
+      // other trigger is the commit tail of every subsequent intent.
+      this.#scheduleBotTurnIfNeeded();
     } catch (error) {
       // Append failed: state was NOT advanced, nothing broadcast. Log with the
       // public seedHash only (never the raw seed) and swallow — nothing escapes
@@ -475,6 +584,8 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       connected: true,
       consecutiveMisses: 0,
       idle: false,
+      isBot: false,
+      botDifficulty: '',
     });
     this.state.seats.push(seat);
 
@@ -485,20 +596,11 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     };
     client.send(snapshot.type, snapshot);
 
-    // Match-start orchestration (S1.7.2): when the last seat needed to reach
-    // the start condition (the room's full seat cap) is taken, auto-start the
-    // match — no lobby-ready UI / host button for M1 (later). The latch is set
-    // synchronously here BEFORE the async enqueue so it fires exactly once, and
-    // the start batch rides the SAME per-room `#queue` as every intent (so it
-    // can never interleave with an in-flight intent's persist window).
-    if (!this.#matchStarted && this.state.seats.length >= this.maxClients) {
-      this.#matchStarted = true;
-      this.#queue = this.#queue
-        .then(() => this.#startMatch())
-        .catch((error: unknown) => {
-          this.#logInternalError('match-start queue link threw unexpectedly', error);
-        });
-    }
+    // Match-start orchestration (S1.7.2/S2.4.3): when the last seat needed to
+    // reach the start condition (the room's full seat cap, bot seats included)
+    // is taken, auto-start the match — no lobby-ready UI / host button for M1
+    // (later). See `#maybeAutoStart` for the latch discipline.
+    this.#maybeAutoStart();
   }
 
   override onLeave(client: Client): void {
@@ -681,6 +783,12 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       //    flag the seat idle). Then re-arm the turn timer from the NEW state.
       this.#recordActivity(playerId, forced);
       this.#armTurnTimer();
+
+      // 8. Trigger point 1/2 (S2.4.3): after ANY commit — human or bot — check
+      //    whether a bot seat must now act (this is what lets a bot play its
+      //    whole turn one enqueued step at a time, and what hands a human's
+      //    commit off to a bot's turn). A no-op for a room with no bots.
+      this.#scheduleBotTurnIfNeeded();
     } catch (error) {
       // A durable-sink rejection (or any unexpected throw) fails the batch:
       // state was NOT advanced (assignment happens only after `append` resolved
@@ -824,6 +932,124 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         await this.#applyAuthoritativeIntent(forced.playerId, forced.intent);
       }
     }
+  }
+
+  /**
+   * The bot seat that must act RIGHT NOW given `state`, or `undefined` if none
+   * does (a human seat's turn, a phase with no bot decision pending, or a room
+   * with no bots at all). Pure & re-derived fresh at every call — never cached
+   * across a `#queue` hop — mirroring `resolveForcedAction`'s own discipline,
+   * so it always reflects state exactly as it stands at execution time:
+   *
+   * - `'robber'` + pending discards → the FIRST bot among `playersToDiscard`
+   *   (a human owing discarder is left for their own client/timer).
+   * - `'robber'` with discards cleared, `'setup'`, `'roll'`, `'main'` → the
+   *   current player's seat, if it is a bot.
+   * - `'lobby'` / `'finished'` → never (no decision pending).
+   */
+  #nextBotActorId(state: GameState): PlayerId | undefined {
+    if (this.#bots.size === 0) return undefined;
+    if (state.phase === 'robber') {
+      const owing = state.playersToDiscard ?? [];
+      if (owing.length > 0) return owing.find((id) => this.#bots.has(id));
+      return this.#bots.has(state.currentPlayerId) ? state.currentPlayerId : undefined;
+    }
+    if (state.phase === 'setup' || state.phase === 'roll' || state.phase === 'main') {
+      return this.#bots.has(state.currentPlayerId) ? state.currentPlayerId : undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * The drive-loop TRIGGER (S2.4.3): a cheap synchronous check — never itself
+   * awaits a bot decision — that enqueues one bot step onto the EXISTING
+   * `#queue` when (and only when) a bot seat must act. Called from the tail of
+   * `#applyAuthoritativeIntent` (after every commit) and once after
+   * `#startMatch`; a no-op for a room with no bots or when it is a human
+   * seat's turn. Re-entrancy runs through the queue, not the stack: each bot
+   * step is its own fresh `#queue` link, and applying it re-triggers this
+   * check for the NEXT step — this is what plays a bot's whole turn (roll →
+   * build → … → endTurn) one enqueued step at a time and naturally terminates
+   * once no bot seat needs to act.
+   */
+  #scheduleBotTurnIfNeeded(): void {
+    if (this.#nextBotActorId(this.gameState) === undefined) return;
+    this.#queue = this.#queue
+      .then(() => this.#driveBotTurn())
+      .catch((error: unknown) => {
+        this.#logInternalError('bot-drive queue link threw unexpectedly', error);
+      });
+  }
+
+  /**
+   * Bumps the per-turn bot-action counter (S2.4.3 no-hang discipline),
+   * resetting it to 1 whenever `state.turn` has advanced since the last bump
+   * (a fresh turn gets a fresh budget). Pure bookkeeping — no clock, no seed.
+   */
+  #bumpBotActionCounter(turn: number): void {
+    if (turn !== this.#botActionsTrackedTurn) {
+      this.#botActionsTrackedTurn = turn;
+      this.#botActionsThisTurn = 0;
+    }
+    this.#botActionsThisTurn += 1;
+  }
+
+  /**
+   * Drives exactly ONE bot step through the SAME authoritative tail a human
+   * intent uses (S2.4.3) — `#applyAuthoritativeIntent(playerId, intent)` with
+   * `client === undefined`, the identical forced-injection signal S2.1.4
+   * uses. Runs inside the `#queue`, so it is serialized with every real intent
+   * and every forced timeout action.
+   *
+   * Re-resolves the acting seat AT EXECUTION TIME (never trusts a stale
+   * `playerId` captured when this step was scheduled — state may have moved
+   * on if another queue link landed first) and never spins:
+   *
+   * 1. Within the per-turn action cap, ask the bot for its own decision.
+   * 2. If that decision is missing/illegal (`validate` rejects it), OR the cap
+   *    was exceeded, fall back to `resolveForcedAction` — but ONLY if it
+   *    targets this SAME seat and is itself legal (never act on behalf of a
+   *    different, e.g. human, owing player just because this bot got capped).
+   * 3. If neither is available, the seat is truly stuck: fail LOUD (a
+   *    descriptive thrown error, caught + logged by `#scheduleBotTurnIfNeeded`'s
+   *    `.catch`, same discipline as every other queue-link failure) rather
+   *    than spin forever. Every OTHER seat's pipeline is unaffected.
+   */
+  async #driveBotTurn(): Promise<void> {
+    const state = this.gameState;
+    const playerId = this.#nextBotActorId(state);
+    if (playerId === undefined) return; // state moved on since this step was scheduled
+
+    this.#bumpBotActionCounter(state.turn);
+    const withinCap = this.#botActionsThisTurn <= this.#botActionCap;
+    const bot = this.#bots.get(playerId);
+    const proposed = withinCap ? (bot?.decide(state, playerId) ?? null) : null;
+    const proposedOk =
+      proposed !== null && validate(state, proposed, playerId, this.#seed).ok;
+
+    let intent: PlayerIntent | null = null;
+    if (proposedOk) {
+      intent = proposed;
+    } else {
+      const forced = resolveForcedAction(state);
+      if (
+        forced &&
+        forced.playerId === playerId &&
+        validate(state, forced.intent, playerId, this.#seed).ok
+      ) {
+        intent = forced.intent;
+      }
+    }
+
+    if (intent === null) {
+      throw new Error(
+        `bot seat ${playerId} is STUCK at phase=${state.phase} turn=${state.turn}: ` +
+          'neither its own decision nor the deterministic forced default validated ' +
+          '— failing loud rather than spinning (S2.4.3 no-hang discipline).',
+      );
+    }
+
+    await this.#applyAuthoritativeIntent(playerId, intent);
   }
 
   /**
