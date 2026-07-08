@@ -713,6 +713,21 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         eventIndex: event.index + 1,
       };
     }
+    case 'game.finalRoundStarted': {
+      // Record the Splendor-style final-round FACT (S2.2.3): who crossed
+      // `vpToWin` and when. `validate` decides WHEN to emit this (and later, on
+      // the turn-end path, when the round completes to `game.ended`); `reduce`
+      // only applies the fact (ADR-0003). Written ONLY under `finalRound:true`,
+      // so `state.finalRound` never appears in a shipping-preset match.
+      return {
+        ...state,
+        finalRound: {
+          triggeredBy: event.triggeredBy,
+          triggeredOnTurn: event.triggeredOnTurn,
+        },
+        eventIndex: event.index + 1,
+      };
+    }
     case 'game.ended': {
       // Freeze the match (S1.3.4): `validate` rejects every later gameplay
       // intent with `GAME_ALREADY_ENDED` once the phase is `'finished'`. The

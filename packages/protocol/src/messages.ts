@@ -468,6 +468,15 @@ const PovertyTokensGrantedEventSchema = z.object({
   index: z.number(),
   grants: CountMapSchema,
 });
+// S2.2.3: system-emitted Splendor-style final-round trigger — reaching
+// `vpToWin` under `catchUp.finalRound` starts a final round instead of ending.
+// NEVER emitted under `finalRound:false` (every shipping preset today).
+const GameFinalRoundStartedEventSchema = z.object({
+  type: z.literal('game.finalRoundStarted'),
+  index: z.number(),
+  triggeredBy: z.string(),
+  triggeredOnTurn: z.number(),
+});
 
 /**
  * The outbound {@link GameEvent} payload of an `event.batch` — pinned to core's
@@ -501,6 +510,7 @@ export const GameEventSchema = z.discriminatedUnion('type', [
   LongestRoadAwardedEventSchema,
   LargestArmyAwardedEventSchema,
   PovertyTokensGrantedEventSchema,
+  GameFinalRoundStartedEventSchema,
   GameEndedEventSchema,
 ]);
 
