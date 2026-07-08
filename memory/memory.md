@@ -51,9 +51,9 @@
 ## M2 Progress (Mode platform & resilience)
 - **E2.1 (Rule Profiles engine)** ✅ CLOSED — 6 stories merged 2026-07-07: `RuleProfile`+`loadRuleProfile`+presets, Balanced Deck, adaptive-duration, turn timers, parallel trade, 2-player mode.
 - **E2.2 (Catch-up mechanics)** ✅ CLOSED 4/4 — 2026-07-08 S2.2.4 merged `0aeeb4f`: friendly-robber (S2.2.1), robin-hood poverty tokens (S2.2.2), final-round+hidden-VP (S2.2.3), event-tiles (S2.2.4). All flags off on shipping presets, Classic byte-frozen.
-- **E2.3 (Reconnect & grace) 3/4 DONE** — S2.3.1 `e8d3172` reconnect-grace (seat-identity hold 120s) + S2.3.2 `a9d42fd` full-state resync on reconnect (client stable-handle) + S2.3.2a `e1c8d73` page-reload resume (current-room pointer + self-contained token, retry ~31.5s). Human-reconnect COMPLETE (in-tab blip + reload both work). Next: S2.3.3 bot-fill on grace-expiry.
+- **E2.3 (Reconnect & grace)** ✅ **CLOSED 4/4** — S2.3.1 `e8d3172` reconnect-grace (seat-identity hold 120s) + S2.3.2 `a9d42fd` full-state resync on reconnect (client stable-handle) + S2.3.2a `e1c8d73` page-reload resume (current-room pointer + self-contained token, retry ~31.5s) + S2.3.3 `481c72d` bot-fill on grace-expiry + safe-leave (three guards: double-install, terminal-drop-notice skip, no-connected-human check; game-end 4000 consented close). Human-resilience COMPLETE (drop+recon both work; expired seats auto-fill).
 - **E2.4 (Bots)** ✅ CLOSED 3/3 — S2.4.1 `57efc8c` harness, S2.4.2 `62400ca` v1 ×3 difficulty + S2.4.2a `8129962` core bank-fix, S2.4.3 `1da5022` single-player + bot-fill in-process seam live; all merged 2026-07-08; see memory/map/bots.md and memory/map/server.md.
-- **Next:** **E2.3 (S2.3.2a page-reload + S2.3.3 bot-fill) ‖ E2.5 lobby ‖ E2.6 accounts**.
+- **Next:** **E2.5 lobby (Redis presence/matchmaking) ‖ E2.6 accounts (auth/ratings) ‖ E2.7 profile-preset assignment**.
 - **Deferred nit:** `eventTilesInterval>0` guard (preset validation) → batched into preset-assignment story (plan §4).
 
 ## Learnings

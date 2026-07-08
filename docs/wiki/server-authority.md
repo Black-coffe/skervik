@@ -2,7 +2,7 @@
 domain: networking
 tags: [security, anti-cheat, architecture, invariant]
 related: [deterministic-core, fair-rng-commit-reveal, seed-handling]
-last-verified: 2026-07-03
+last-verified: 2026-07-08
 ---
 
 # Authoritative server (anti-cheat)
@@ -44,10 +44,13 @@ Bot-generated intents flow through the same `validate` gate as human intents, pr
 logged events (no bot-specific markers) → replay is byte-identical to human play. Bots are
 driven in-process via the `#queue` serialization seam (no separate process — M5 decision).
 
-**Reconnection (E2.3 S2.3.1):** Reconnect-grace via native Colyseus 0.17 `allowReconnection` is a
-**transport concern only** — it touches only `seat.connected` and client lifecycle, never `gameState`
-or the event log. An absent player's seat identity is held for a configurable grace window (default
-120s); on reconnect (same `sessionId`) the seat restores `connected=true` without replaying any
-events (determinism intact). After grace expiry, the seat remains unpause but not forfeited — bot-fill
-(E2.3.3) may later replace it. Turn timers are not paused during grace; forced-action defaults keep
-the match advancing. This is the "no karmic bans" law: network failure ≠ game-over.
+**Reconnection & resilience (E2.3 S2.3.1–S2.3.3):** Reconnect-grace via native Colyseus 0.17 
+`allowReconnection` is a **transport concern only** — it touches only `seat.connected` and client 
+lifecycle, never `gameState` or the event log. An absent player's seat identity is held for a 
+configurable grace window (default 120s); on reconnect (same `sessionId`) the seat restores 
+`connected=true` without replaying any events (determinism intact). After grace expiry, the seat 
+remains active but unpause; `#botFillSeat()` may replace it with a fill-bot if any human still 
+holds a connected seat (three guards: double-install, non-consented-drop skip, no-human-remains 
+check). On consented game-end, `#scheduleGameEndClose()` defers disconnect(4000) 500ms so clients 
+receive the final state. Turn timers are not paused during grace; forced-action defaults keep the 
+match advancing. This is the "no karmic bans" law: network failure ≠ game-over.
