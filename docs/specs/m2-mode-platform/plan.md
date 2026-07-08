@@ -181,6 +181,7 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | ~~robber-steal-eligibility duplication~~ **DISCHARGED by S2.2.2** (`c759090`): `isStealable(state,id,robber)` extracted + used at both validate.ts sites + forcedAction.ts; `computeVictoryPoints = computePublicVictoryPoints + hiddenVP`. Behavior-preserving (S2.2.1 + victory suites green unchanged, lead-review confirmed). | ✅ done | S2.2.1 nit → S2.2.2 |
 | **robinHood exchange-rate guard** (S2.2.2 nit): discounted-trade legality accepts `robinHoodExchangeRate` without asserting it beats the actor's natural port rate — harmless while default 2 ≤ every natural rate, but a future profile setting rate > a port rate needs a guard. Also: reduce's `poverty.tokensGranted` case doesn't re-cap (trusts validate — unreachable via honest emission). | revisit when a preset first sets `robinHood:true` (batched preset-assignment) | S2.2.2 lead-review nits |
 | **eventTilesInterval `> 0` guard** (S2.2.4 nit): validate computes `((sevensRolled ?? 0)+1) % eventTilesInterval`; if a future config set interval `0`, `x % 0 === NaN` → `NaN === 0` is `false` → the mechanic silently never grants (no crash — a dead flag, not a failure). Harmless today (all presets = 3, `eventTiles:false`). Assert `eventTilesInterval >= 1` at profile-load, or document the floor. | revisit when a preset first sets `eventTiles:true` (batched preset-assignment — same story as the robinHood-rate-guard nit) | S2.2.4 lead-review nit |
+| **v0 bot brain seed-fragility** (S2.4.1 finding): the ported expansion-first v0 `decideAction` is greedy and does NOT terminate on every seed — a fresh seed stalled (VP froze ~turn 200, never recovered at a 20000-turn cap) because a starving board/roll sequence dead-ends the greedy heuristic. Harness `simulateMatch` fails LOUD on this (cap/deadlock throw — never hangs), and the S1.7.2 E2E always pinned ONE proven seed for the same reason ([[e2e-scripted-driver-expansion]]). NOT a harness bug. | **S2.4.2** heuristic v1 ×3 difficulty must be robust across arbitrary seeds (the scored brain, not greedy-first) — a bot-fill/single-player bot that can stall is unshippable | S2.4.1 lead-review carry-forward |
 
 ## 5. Tier & model routing (token economy)
 
@@ -209,8 +210,9 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | S2.2.3 final round + hidden VP | T3 | ✅ done — Splendor round-to-circle + public-VP threshold; forced-action no-hang CLOSED; lead-review MERGE | `08cc776` |
 | S2.2.4 catch-up event tiles | T2 | ✅ done — deterministic poverty-token boost on every Nth storm; reuses S2.2.2 grant; no new event/protocol/verify/seed; Classic byte-frozen; lead-review MERGE WITH NITS | `0aeeb4f` |
 | E2.2 catch-up (×4) | T1–T3 | ✅ **DONE 4/4 — EPIC CLOSED** (all merged, each lead-reviewed) | — |
+| S2.4.1 bot worker harness | T2 | ✅ done — `@skervik/bots` opened: S1.7.2 `decideAction` MOVED byte-identical (server E2E re-shims, 103/103 green), `Bot` seam (no seed/no authority) + in-process `simulateMatch` (fail-loud cap, full match 278 turns); no core/server-room change; lead-review MERGE WITH NITS | `57efc8c` |
 | E2.3 reconnect & bot-fill (×3) | T2–T3 | ▫ not started | — |
-| E2.4 bots (×3) | T2–T3 | ▫ not started | — |
+| E2.4 bots (×3) | T2–T3 | ⏳ S2.4.1 done; **S2.4.2 heuristic v1 ×3 difficulty [T3]** (+ shared eval module; fixes v0 seed-stall) · S2.4.3 single-player + bot-fill [T2] not started | — |
 | E2.5 lobby/matchmaking/presence (×4) | T2–T3 | ▫ not started (S2.5.4 resolves override seam) | — |
 | E2.6 persistence & accounts (×5; S2.6.5 non-gating) | T2–T3 | ▫ not started | — |
 
