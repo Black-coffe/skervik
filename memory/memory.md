@@ -48,5 +48,11 @@
 ## No-go zones
 - generated output (`dist/`,`build/`), lockfile (auto), vendored VULYK (`.claude/`,`templates/`,`bootstrap/`,`AGENTS.md`,`CLAUDE.vulyk.md`), migrations (later).
 
+## M2 Progress (Mode platform & resilience)
+- **E2.1 (Rule Profiles engine)** ✅ CLOSED — 6 stories merged 2026-07-07: `RuleProfile`+`loadRuleProfile`+presets, Balanced Deck, adaptive-duration, turn timers, parallel trade, 2-player mode.
+- **E2.2 (Catch-up mechanics)** ✅ CLOSED 4/4 — 2026-07-08 S2.2.4 merged `0aeeb4f`: friendly-robber (S2.2.1), robin-hood poverty tokens (S2.2.2), final-round+hidden-VP (S2.2.3), event-tiles (S2.2.4). All flags off on shipping presets, Classic byte-frozen.
+- **Next:** E2.4→E2.3 chain (bots → reconnect/bot-fill) ‖ E2.5 lobby (Redis, mode selector, override delivery) → E2.6 accounts.
+- **Deferred nit:** `eventTilesInterval>0` guard (preset validation) → batched into preset-assignment story (plan §4).
+
 ## Learnings
 - Consolidated: memory/learnings/CONSOLIDATED.md (run /vulyk-gc to refresh).

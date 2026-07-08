@@ -1,5 +1,5 @@
 # Map: packages/core (@skervik/core)
-last-verified: 2026-07-08 (S2.2.3 merged, main HEAD 08cc776)
+last-verified: 2026-07-08 (S2.2.4 merged, main HEAD 0aeeb4f)
 
 ## Purpose
 Pure, deterministic, isomorphic rule engine for Skervik — zero runtime deps.
@@ -10,8 +10,8 @@ and server (authority).
 ## Entry points & files
 - index.ts: re-export barrel (CORE_VERSION, types, reduce/replay, validate, RNG, board/boardgen); exports computePublicVictoryPoints (S2.2.1)
 - types.ts: GameState, GameEvent (28 variants), PlayerIntent (18 variants), RejectReason (append-only union, incl. 'VICTIM_PROTECTED' S2.2.1), resource/board shapes; new GameState.finalRound? (S2.2.3), new GameFinalRoundStartedEvent (S2.2.3); types.test.ts exhaustiveness switch covers all 28 GameEvent variants
-- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[]); new case 'game.finalRoundStarted' (lines 716-729, S2.2.3) sets state.finalRound fact; 'game.ended' case unchanged (reused by final round)
-- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action; NEW computePublicVictoryPoints(state, playerId) excludes hidden-VP-devcard (S2.2.1 friendly robber, S2.2.3 hiddenVp threshold); NEW module-private thresholdVp(state, id) = hiddenVp ? computePublicVictoryPoints : computeVictoryPoints (S2.2.3, lines ~480-490); NEW computeFinalWinner(state) = highest full VP → fewest buildings → earliest seat (S2.2.3 tie-break, lines ~490-510); appendAwardsAndVictory win-check (line ~560): branches on catchUp.finalRound — off → emit game.ended as today; on & not-triggered → emit game.finalRoundStarted; on & already-triggered → emit nothing; turn-end path (intent.endTurn handler): when state.finalRound set AND next current === triggeredBy, append game.ended with computeFinalWinner winner (lines ~600-620)
+- reduce.ts: reduce(state, event) → new GameState; pure, never mutates input; replay(state, events[]); case 'game.finalRoundStarted' (S2.2.3) sets state.finalRound fact; 'game.ended' case unchanged (reused by final round); 'dice.rolled' case with total=7 (S2.2.4) increments sevensRolled when catchUp.eventTiles true, else stays absent
+- validate.ts: validate(state, intent, playerId, seed) → {ok: true, events[]} | {ok: false, reason}; owns CLASSIC_SETUP_PROFILE, CLASSIC_VICTORY_PROFILE, CLASSIC_ROBBER_PROFILE, GAMEPLAY_SLOT map; victory pipeline (computeVictoryPoints, computeLongestRoad, computeLargestArmy) runs post-action; computePublicVictoryPoints(state, playerId) excludes hidden-VP-devcard (S2.2.1 friendly robber, S2.2.3 hiddenVp threshold); module-private thresholdVp helper = hiddenVp ? computePublicVictoryPoints : computeVictoryPoints (S2.2.3); computeFinalWinner = highest full VP → fewest buildings → earliest seat (S2.2.3 tie-break); appendAwardsAndVictory win-check: branches on catchUp.finalRound — off → emit game.ended; on & not-triggered → emit game.finalRoundStarted; on & already-triggered → emit nothing; turn-end path (intent.endTurn): when state.finalRound set AND next current === triggeredBy, append game.ended with computeFinalWinner winner; rollDice 7-branch (S2.2.4): if catchUp.eventTiles, after discard/robber setup, checks eventStorm = ((sevensRolled+1) % eventTilesInterval === 0), then REUSES computePovertyGrants() to emit poverty.tokensGranted (same event, same pool, same trailing-player mechanics as S2.2.2)
 - rng.ts: rollDie(seed, index), deriveValue(seed, index) [1..6 and [0,1)]; mulberry32-counter mode (no mutable generator state); Seed type (opaque string)
 - board.ts: buildTopology() → BoardTopology (19 tiles, 54 vertices, 72 edges); AxialCoord, TileId, VertexId, EdgeId, PortSlot (9 fixed coastal slots)
 - boardgen.ts: generateBoard(seed) → BoardLayout; BOARD_GEN_STREAM slot map; CLASSIC_BOARD_PROFILE
@@ -24,8 +24,9 @@ and server (authority).
 - ValidateResult: {ok: true, events: GameEvent[]} | {ok: false, reason: RejectReason}
 - RejectReason: union of ~25 reasons incl. new 'VICTIM_PROTECTED' (friendly robber gate, S2.2.1); append-only for audit/replay
 - RobberProfile (S2.2.1): handLimit, halfDivisor, friendlyRobber (bool), friendlyRobberVpCeiling (PUBLIC-VP protection threshold)
-- CatchUpProfile (S2.2.2–S2.2.3, ruleProfile.ts:121-149): robinHood/robinHoodVpGap/robinHoodTokenCap/robinHoodExchangeRate (S2.2.2); NEW finalRound (bool, Splendor-style round-to-end, S2.2.3), hiddenVp (bool, dev-card VP excluded from trigger threshold, S2.2.3) — all off on shipping presets; three test-only profiles (FINAL_ROUND_TEST_PROFILE / HIDDEN_VP_TEST_PROFILE / FINAL_ROUND_HIDDEN_VP_TEST_PROFILE) in PROFILE_REGISTRY, NOT client-selectable
+- CatchUpProfile (S2.2.2–S2.2.4, ruleProfile.ts:121-164): robinHood/robinHoodVpGap/robinHoodTokenCap/robinHoodExchangeRate (S2.2.2); finalRound (bool, Splendor-style round-to-end, S2.2.3), hiddenVp (bool, dev-card VP excluded from trigger threshold, S2.2.3); NEW eventTiles (bool, 7-roll cadence grants poverty tokens, S2.2.4) + eventTilesInterval (count modulo, S2.2.4) — all off on shipping presets; two test-only profiles (EVENT_TILES_TEST_PROFILE_ID `'__event_tiles_test__'` interval 2, EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID both flags true) in PROFILE_REGISTRY, NOT client-selectable
 - GameState.finalRound? (types.ts:378-381, S2.2.3 optional additive field): { triggeredBy: PlayerId, triggeredOnTurn: number } — ABSENT under finalRound:false, never written when off (golden byte-frozen); present once game.finalRoundStarted lands
+- GameState.sevensRolled? (types.ts:393, S2.2.4 optional additive field): cumulative 7-roll count (cadence anchor for event-tile grants) — ABSENT under eventTiles:false, never written when off (golden byte-frozen); incremented in reduce's dice.rolled case when total=7
 - GameFinalRoundStartedEvent (types.ts:850-854, S2.2.3): { type: 'game.finalRoundStarted', triggeredBy: PlayerId, triggeredOnTurn: number } — emitted when a player reaches vpToWin while finalRound:on; NEVER emitted under finalRound:false
 - Seed: opaque string, passed to validate() as 4th param only, NEVER stored in GameState (A1 invariant)
 - reduce signature: (state: GameState, event: GameEvent) → GameState
@@ -37,11 +38,9 @@ Runtime: NONE (ADR-0003, zero-dep policy verified in package.json)
 Dev: @types/node, tsup, typescript, vitest
 
 ## Tests
-replay.test.ts: 4 describe blocks (golden fixture parsing, RNG stream audit, replay determinism, idempotency)
-rng.test.ts: 5 test cases (deriveValue golden outputs, range [0,1), repetition, call-order independence, seed variation)
-types.test.ts: 3 describe blocks (GameState serialization, GameEvent/Intent discrimination, RejectReason enum)
-reduce.test.ts, board.test.ts, boardgen.test.ts, setup.test.ts, production.test.ts: ~36 real cases total
-Total: 41 tests, all regression/golden guards + determinism verification + contract checking
+eventTiles.test.ts: 14 tests (S2.2.4 eventTiles + robinHood combos, cadence grants, cap behavior, robber/discard unchanged)
+replay.test.ts, rng.test.ts, types.test.ts, reduce.test.ts, board.test.ts, boardgen.test.ts, setup.test.ts, production.test.ts, victory.test.ts, and others: ~308 cases total
+Total: 322 tests, all regression/golden guards + determinism verification + contract checking; E2.2 (all catch-up mechanics) complete
 
 ## Gotchas
 1. **Seed is NEVER in GameState** — FIX-PLAN A1 (49fcbb5). Only seedHash travels with state. Seed passed to validate() as 4th param, revealed post-match for RNG audit. This is the commit-reveal invariant.
