@@ -1,13 +1,14 @@
 # Map: packages/server (@skervik/server)
-last-verified: 2026-07-03 (S1.4.1 merged)
+last-verified: 2026-07-08 (S2.4.1 merged; scriptedDriver is now a bots shim)
 
 ## Purpose
-Authoritative game room & REST stub. Colyseus stateful room holds the plain `GameState` + private seed; `@colyseus/schema` mirrors only the public lobby/late-join projection (seedHash/phase/currentPlayerId/seats). No gameplay flows through the Schema yet — that's `event.batch` broadcasts (S1.4.2). No seed reveal (S1.4.3), no event-log persistence (S1.4.4).
+Authoritative game room & REST stub. Colyseus stateful room holds the plain `GameState` + private seed; `@colyseus/schema` mirrors only the public lobby/late-join projection (seedHash/phase/currentPlayerId/seats). No gameplay flows through the Schema yet — that's `event.batch` broadcasts (S1.4.2). No seed reveal (S1.4.3), no event-log persistence (S1.4.4). S2.4.3 will wire bot seats into the room via `#queue` forced-action seam.
 
 ## Entry points & files
 - index.ts: SERVER_VERSION, createGameServer(), GAME_ROOM_NAME, GameRoom/GameRoomOptions re-export
-- room/GameRoom.ts: Colyseus `Room` subclass; authoritative plain GameState (matchId/phase/turn/currentPlayerId/players/eventIndex/seedHash); private `#seed` (Seed type); onCreate/onJoin/onLeave/onDispose lifecycle; sha256Hex() helper
+- room/GameRoom.ts: Colyseus `Room` subclass; authoritative plain GameState (matchId/phase/turn/currentPlayerId/players/eventIndex/seedHash); private `#seed` (Seed type); onCreate/onJoin/onLeave/onDispose lifecycle; sha256Hex() helper; `#queue` serialization guard (S2.1.4)
 - schema/RoomSchema.ts: minimal `@colyseus/schema` projection (seedHash/phase/currentPlayerId/seats); SeatSchema (playerId/seatIndex/connected); createRoomSchema factory (initializes empty seats ArraySchema)
+- e2e/scriptedDriver.ts: S2.4.1 — thin re-export shim; decideAction(state, playerId) moved to @skervik/bots (canonical v0 bot brain); S1.7.2 E2E suite 103/103 green UNCHANGED (parity proof)
 
 ## Key types & contracts
 - GameRoom extends Colyseus `Room<{ state: RoomSchema }>` — the authority. Clients never mutate state.
@@ -18,9 +19,9 @@ Authoritative game room & REST stub. Colyseus stateful room holds the plain `Gam
 - SeatSchema: playerId, seatIndex, connected (no resources/hands)
 
 ## Dependencies
-Runtime: colyseus 0.17.10, @colyseus/schema 4.0.27
+Runtime: colyseus 0.17.10, @colyseus/schema 4.0.27, @skervik/core, @skervik/protocol, @skervik/bots (S2.4.1: re-exported by scriptedDriver.ts)
 Dev: @colyseus/testing (S1.4.2+)
-Imports: @skervik/core (GameState, PlayerId, Seed types), @skervik/protocol (StateSnapshotMessage)
+Imports: @skervik/core (GameState, PlayerId, Seed types), @skervik/protocol (StateSnapshotMessage), @skervik/bots (decideAction)
 
 ## Gotchas
 1. **Seed is NEVER in GameState** — only seedHash is public; raw seed stays in `#seed` private field and `validate()`'s 4th param (ADR-0009 Fork 3, seed-handling.md).

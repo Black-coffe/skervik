@@ -26,7 +26,7 @@
   types (GameState/GameEvent/PlayerIntent), pure reduce/validate, seeded PRNG (mulberry32
   counter-mode, `rng.ts`, rollDie wired as validate.ts 4th param), ndjson replay + golden determinism fixture. 36 tests.
   Game rules (resources/build/trade/robber/VP) = 0%, scheduled M1.
-- `packages/protocol` stub (type defs next S1.5.1); `packages/server` stub (real E1.4); `packages/client` E0.4 perf prototype real (Pixi.js v8, 19-hex isometric, pixi.js dep live) + product client E1.6 TBD; `packages/bots` stub (real E2.4).
+- `packages/protocol` stub (type defs next S1.5.1); `packages/server` stub (real E1.4); `packages/client` E0.4 perf prototype real (Pixi.js v8, 19-hex isometric, pixi.js dep live) + product client E1.6 TBD; `packages/bots` REAL as of S2.4.1 `57efc8c` (v0 brain heuristic/v0.ts + Bot seam + in-process simulateMatch; deps @skervik/core only).
 - Tooling: ESLint flat (+ADR-0003 core guard), Prettier, Vitest 4, tsup(libs)+Vite(client), husky+commitlint.
 
 ## Decisions (docs/adr/) — all accepted
@@ -51,7 +51,8 @@
 ## M2 Progress (Mode platform & resilience)
 - **E2.1 (Rule Profiles engine)** ✅ CLOSED — 6 stories merged 2026-07-07: `RuleProfile`+`loadRuleProfile`+presets, Balanced Deck, adaptive-duration, turn timers, parallel trade, 2-player mode.
 - **E2.2 (Catch-up mechanics)** ✅ CLOSED 4/4 — 2026-07-08 S2.2.4 merged `0aeeb4f`: friendly-robber (S2.2.1), robin-hood poverty tokens (S2.2.2), final-round+hidden-VP (S2.2.3), event-tiles (S2.2.4). All flags off on shipping presets, Classic byte-frozen.
-- **Next:** E2.4→E2.3 chain (bots → reconnect/bot-fill) ‖ E2.5 lobby (Redis, mode selector, override delivery) → E2.6 accounts.
+- **E2.4 (Bots)** OPENED — S2.4.1 harness merged `57efc8c` (@skervik/bots real); see memory/map/bots.md; v0 seed-fragility → S2.4.2.
+- **Next:** S2.4.2 (heuristic v1 ×3 difficulty, seed-robust, shared eval module) → S2.4.3 (single-player + bot-fill, wires bot into server #queue) → E2.3 ‖ E2.5 → E2.6.
 - **Deferred nit:** `eventTilesInterval>0` guard (preset validation) → batched into preset-assignment story (plan §4).
 
 ## Learnings
