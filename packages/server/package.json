@@ -15,6 +15,7 @@
     "@colyseus/schema": "^4.0.27",
     "@colyseus/ws-transport": "^0.17.13",
     "@fastify/cors": "^11.2.0",
+    "@skervik/bots": "workspace:*",
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
     "colyseus": "^0.17.10",
