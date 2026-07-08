@@ -35,7 +35,7 @@ import {
   StateSnapshotEnvelopeSchema,
   type StateSnapshotMessage,
 } from '@skervik/protocol';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createGameServer, GAME_ROOM_NAME, type GameRoom } from '../index.js';
 import { InMemoryMatchMetadataStore } from '../matchMetadata.js';
@@ -207,7 +207,13 @@ describe('GameRoom', () => {
     await client.leave();
   });
 
-  it('onLeave marks the seat disconnected without mutating the authoritative GameState', async () => {
+  // S2.3.1: `client.leave()` (no args) defaults to a CONSENTED leave (the SDK
+  // sends `Protocol.LEAVE_ROOM`), so Colyseus dispatches straight to `onLeave`
+  // — no grace hold (that boundary, and the non-consented `onDrop` grace path,
+  // are covered by the S2.3.1 suite below). This M1 property — disconnect
+  // marks the seat without ever touching the authoritative GameState — still
+  // holds unchanged for the consented path.
+  it('a consented .leave() marks the seat disconnected without mutating the authoritative GameState (no grace hold)', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME);
     const client = await testServer.connectTo(room, CONNECT_OPTS);
     await nextTick();
@@ -1218,6 +1224,191 @@ describe('GameRoom', () => {
     const { room, sink } = await seatFullRoom(3);
     expect(room.gameState.profileId).toBe('classic');
     expect(sink.events.some((e) => e.type === 'neutral.placed')).toBe(false);
+  });
+
+  // --- S2.3.1: reconnect grace ("no karmic bans") -------------------------
+  // Colyseus 0.17 splits the M1-era single `onLeave(client, consented)` stub
+  // into `onDrop` (non-consented, network drop) + `onLeave` (consented leave,
+  // and the terminal notice once a drop's grace expires with no reconnect) —
+  // see `GameRoom.onDrop`'s doc comment. `client.leave(false)` (the SDK's
+  // non-consented form) closes the raw socket without sending `LEAVE_ROOM`,
+  // so the server sees a close code other than `CloseCode.CONSENTED` and
+  // dispatches to `onDrop`. `#reconnectGraceSeconds` is a small REAL value in
+  // every test here — Colyseus's own `allowReconnection` expiry timer is an
+  // internal wall-clock `setTimeout` in `@colyseus/core` with no scheduler
+  // seam (unlike the room's OWN `#armTurnTimer`, which stays on the injectable
+  // `turnTimerScheduler` and is untouched by this story) — so "fast and
+  // deterministic" here means a short real wait, the same idiom `nextTick()`
+  // already uses elsewhere in this file, never anything close to a real 120s.
+
+  it('grace hold + reclaim: a non-consented drop holds the seat; reconnecting within grace reclaims it with the gameState byte-identical throughout', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      reconnectGraceSeconds: 5,
+    });
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const sessionId = client.sessionId;
+    const reconnectionToken = client.reconnectionToken;
+    const gameStateBefore = JSON.stringify(room.gameState);
+
+    await client.leave(false); // non-consented (raw close, no LEAVE_ROOM) → onDrop
+    await nextTick();
+
+    expect(room.state.seats).toHaveLength(1); // held, not removed
+    expect(room.state.seats.find((s) => s.playerId === sessionId)?.connected).toBe(false);
+    expect(JSON.stringify(room.gameState)).toBe(gameStateBefore);
+
+    const reconnected = await testServer.sdk.reconnect(reconnectionToken);
+    await nextTick();
+
+    expect(reconnected.sessionId).toBe(sessionId); // SAME seat/session, no identity remap
+    expect(room.state.seats.find((s) => s.playerId === sessionId)?.connected).toBe(true);
+    expect(JSON.stringify(room.gameState)).toBe(gameStateBefore); // untouched across the whole cycle
+
+    await reconnected.leave();
+  });
+
+  it('grace expiry, no forfeit: a dropped client that never reconnects leaves the seat held, connected:false, no crash', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      reconnectGraceSeconds: 0.05, // tiny REAL grace — no scheduler seam on Colyseus's own timer
+    });
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const sessionId = client.sessionId;
+
+    await client.leave(false);
+    await nextTick();
+    // Wait past the 50ms grace window (short real wait, not a 120s sleep).
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(room.state.seats).toHaveLength(1); // NO forfeit — the seat is never removed
+    expect(room.state.seats.find((s) => s.playerId === sessionId)?.connected).toBe(false);
+  });
+
+  it('the turn timer keeps running through grace: an absent current player is forced past, and reconnect resumes on the resulting consistent state', async () => {
+    const scheduler = new ManualScheduler();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      seed: MATCH_START_SEED,
+      turnTimerScheduler: scheduler,
+      reconnectGraceSeconds: 30,
+    });
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const a = c1.sessionId;
+    const b = c2.sessionId;
+    const reconnectionToken = c1.reconnectionToken;
+
+    // A main-phase turn owned by `a`, holding just enough for one proposeTrade
+    // — a committing action that STAYS in `main`, so it (re-)arms the hard
+    // timer for `a`'s own turn (mirrors the S2.1.4 test above).
+    room.gameState = {
+      ...room.gameState,
+      phase: 'main',
+      turn: 1,
+      currentPlayerId: a as PlayerId,
+      players: [
+        {
+          id: a as PlayerId,
+          name: a,
+          victoryPoints: 0,
+          resources: { timber: 1, clay: 1 },
+        },
+        { id: b as PlayerId, name: b, victoryPoints: 0, resources: {} },
+      ],
+      playerOrder: [a as PlayerId, b as PlayerId],
+    };
+    room.state.phase = 'main';
+    room.state.currentPlayerId = a;
+
+    c1.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.proposeTrade',
+        playerId: a,
+        give: { timber: 1 },
+        get: { clay: 1 },
+      },
+    });
+    await nextTick();
+    expect(scheduler.armed).toBe(true);
+    expect(room.gameState.currentPlayerId).toBe(a);
+
+    // `a` drops (non-consented) while still the current player — the timer is
+    // NOT paused, and the seat is held for reconnect.
+    await c1.leave(false);
+    await nextTick();
+    expect(room.state.seats.find((s) => s.playerId === a)?.connected).toBe(false);
+
+    // The hard timeout still fires a forced default for the absent `a` — the
+    // match advances to `b` exactly as it would for a connected player.
+    scheduler.fire();
+    await nextTick();
+    expect(room.gameState.currentPlayerId).toBe(b);
+    expect(room.gameState.phase).toBe('roll');
+    const gameStateAfterForce = JSON.stringify(room.gameState);
+
+    // `a` reconnects within grace and resumes on that SAME consistent state —
+    // reconnect itself advances nothing further.
+    const reconnected = await testServer.sdk.reconnect(reconnectionToken);
+    await nextTick();
+    expect(reconnected.sessionId).toBe(a);
+    expect(room.state.seats.find((s) => s.playerId === a)?.connected).toBe(true);
+    expect(JSON.stringify(room.gameState)).toBe(gameStateAfterForce);
+
+    await reconnected.leave();
+    await c2.leave();
+  });
+
+  it('no auto-dispose during grace: a single-human room whose human drops does not dispose before grace expiry', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 1,
+      reconnectGraceSeconds: 0.3,
+    });
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const disposeSpy = vi.spyOn(room, 'onDispose');
+
+    await client.leave(false);
+    await nextTick();
+    // Still well within the grace window — Colyseus's own reserved-seat
+    // bookkeeping behind `allowReconnection` keeps the room alive even at
+    // zero live clients (a bot-filled single-player room keeps playing the
+    // same way while its one human is held).
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(disposeSpy).not.toHaveBeenCalled();
+  });
+
+  it('determinism guard: a drop + reconnect cycle appends ZERO events, leaving gameState byte-identical', async () => {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 2,
+      sink,
+      reconnectGraceSeconds: 5,
+    });
+    const client = await testServer.connectTo(room, CONNECT_OPTS);
+    await nextTick();
+
+    const reconnectionToken = client.reconnectionToken;
+    const eventsBefore = sink.events.length;
+    const gameStateBefore = JSON.stringify(room.gameState);
+
+    await client.leave(false); // non-consented drop
+    await nextTick();
+    expect(sink.events).toHaveLength(eventsBefore); // the drop appended NO event
+
+    const reconnected = await testServer.sdk.reconnect(reconnectionToken);
+    await nextTick();
+    expect(sink.events).toHaveLength(eventsBefore); // the reclaim appended NO event either
+    expect(JSON.stringify(room.gameState)).toBe(gameStateBefore);
+
+    await reconnected.leave();
   });
 });
 

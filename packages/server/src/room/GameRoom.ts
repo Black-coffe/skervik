@@ -52,6 +52,14 @@ import { resolveForcedAction } from './forcedAction.js';
 const DEFAULT_MAX_SEATS = 4;
 
 /**
+ * The default seat-hold grace window in seconds (S2.3.1, "no karmic bans"
+ * product law: a network drop must never cost you the game) — NOT clamped at
+ * runtime (a test injects a tiny value via {@link GameRoomOptions.reconnectGraceSeconds}
+ * so the expiry path stays fast/deterministic; production rooms get this floor).
+ */
+const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
+
+/**
  * The default per-turn bot-action safety cap (S2.4.3 no-hang discipline) —
  * generous enough that no real turn (setup's handful of placements, a normal
  * main-phase build/trade sequence) is ever truncated; a test overrides it via
@@ -162,6 +170,18 @@ export interface GameRoomOptions {
    * tiny to prove the no-hang fallback without needing a genuinely broken bot.
    */
   readonly botActionCap?: number;
+  /**
+   * The seat-hold grace window in seconds (S2.3.1, "no karmic bans" product
+   * law) — how long a NON-consented drop's seat is held via Colyseus's native
+   * `allowReconnection` before it gives up (the seat still isn't removed past
+   * that point; there is just no more automatic reclaim — bot-fill of an
+   * expired hold is S2.3.3). Defaults to {@link DEFAULT_RECONNECT_GRACE_SECONDS}
+   * (120, the product-law floor); a test injects a tiny value so the expiry
+   * path is exercised fast, without a real 120s wait. This is a ROOM/infra
+   * option, not a `RuleProfile` field — grace is resilience, not a game rule;
+   * a future lobby (E2.5) can override it per match.
+   */
+  readonly reconnectGraceSeconds?: number;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -284,6 +304,9 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   /** {@link GameRoomOptions.botActionCap}, resolved at `onCreate`. */
   #botActionCap = DEFAULT_BOT_ACTION_CAP;
 
+  /** {@link GameRoomOptions.reconnectGraceSeconds}, resolved at `onCreate` (S2.3.1). */
+  #reconnectGraceSeconds = DEFAULT_RECONNECT_GRACE_SECONDS;
+
   /**
    * The per-turn bot-action counter (S2.4.3 no-hang discipline) + the
    * `state.turn` it was last reset for. Reset whenever `state.turn` advances
@@ -349,6 +372,8 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     };
 
     this.#botActionCap = options?.botActionCap ?? DEFAULT_BOT_ACTION_CAP;
+    this.#reconnectGraceSeconds =
+      options?.reconnectGraceSeconds ?? DEFAULT_RECONNECT_GRACE_SECONDS;
 
     // Bot-seat creation at genesis (S2.4.3): a bot seat has no live `Client`,
     // so — unlike a human seat — it cannot be minted in `onJoin`. Each `bots`
@@ -603,14 +628,58 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     this.#maybeAutoStart();
   }
 
-  override onLeave(client: Client): void {
-    // M1: no grace timer, no bot-fill, no removal — M2 owns reconnect. The
-    // authoritative GameState is untouched; only the public projection notes
-    // the disconnect.
+  /**
+   * The non-consented-drop hook (S2.3.1, "no karmic bans" product law).
+   * Colyseus 0.17 splits the M1-era single `onLeave(client, consented)` into
+   * three hooks — `onDrop` (network drop, no consent), `onLeave` (a consented
+   * `.leave()`, and the FINAL notice once a drop's grace expires with no
+   * reconnect), `onReconnect` (unused here — the reclaim runs off the
+   * `allowReconnection` promise directly, see below) — and dispatches to
+   * `onDrop` whenever the close code isn't `CloseCode.CONSENTED`. This is
+   * exactly the primitive the framework's own docs recommend for this purpose.
+   *
+   * Marks the seat absent, then HOLDS it via the native `allowReconnection`
+   * for `#reconnectGraceSeconds`: the returned promise RESOLVES if the same
+   * session reconnects in time (reclaim: flip `connected` back) or REJECTS on
+   * timeout (grace expired — the seat simply stays `connected:false`, no
+   * forfeit, no removal; bot-fill of an expired hold is S2.3.3). Neither
+   * branch touches the authoritative `gameState` or appends an event — this
+   * is a pure transport-layer projection update, so determinism/replay stays
+   * byte-untouched. The turn timer (S2.1.4) is completely unaffected: it keeps
+   * arming/firing off `gameState` alone, so an absent CURRENT player still
+   * gets forced past on schedule while their seat sits in grace.
+   */
+  override onDrop(client: Client): void {
     const seat = this.state.seats.find((s) => s.playerId === client.sessionId);
-    if (seat) {
-      seat.connected = false;
-    }
+    if (seat) seat.connected = false;
+
+    this.allowReconnection(client, this.#reconnectGraceSeconds)
+      .then(() => {
+        if (seat) seat.connected = true; // reclaimed within grace — same seat, same playerId
+      })
+      .catch(() => {
+        // Grace expired with no reconnect: the seat REMAINS in `state.seats`
+        // with `connected:false` (already set above) — no forfeit. Colyseus
+        // still fires `onLeave` once more as the final notice for this drop
+        // (see below); it's a harmless no-op re-affirmation at that point.
+      });
+  }
+
+  /**
+   * Fires directly for a CONSENTED `.leave()` (deliberate leave — mark
+   * disconnected, NO grace hold; the safe-leave/rejoin UX is S2.3.3's
+   * boundary). It ALSO fires a second time, via Colyseus's own dispatch, as
+   * the terminal notice after a non-consented drop's grace window expires
+   * without a reconnect (`onDrop` above) — by then the seat is already
+   * `connected:false`, so this is a no-op re-affirmation for that path. It
+   * never fires at all on a successful reconnect (Colyseus only invokes it
+   * when the `allowReconnection` deferred settles by REJECTION). Either way,
+   * the authoritative `gameState` is untouched — only the public projection
+   * changes.
+   */
+  override onLeave(client: Client): void {
+    const seat = this.state.seats.find((s) => s.playerId === client.sessionId);
+    if (seat) seat.connected = false;
   }
 
   override onDispose(): void {
