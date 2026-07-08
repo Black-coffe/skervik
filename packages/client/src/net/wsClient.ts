@@ -27,6 +27,7 @@ import {
 
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { parseJoinError, statusForLeaveCode } from './connection.js';
+import { clearReconnectionToken, persistReconnectionToken } from './reconnectToken.js';
 
 export interface WsClientCallbacks {
   /** A joining/late-join `state.snapshot` — seed `gameState` and the real seat id. */
@@ -62,6 +63,10 @@ export interface WsClientHandle {
  */
 export interface RoomLike {
   readonly sessionId: string;
+  /** The match's room id — the sessionStorage token-persistence key (S2.3.2, Key decision 3). */
+  readonly roomId: string;
+  /** The SDK's own reclaim token for THIS joined session (S2.3.2). */
+  readonly reconnectionToken: string;
   onMessage(type: string, callback: (message: unknown) => void): unknown;
   send(type: string, message: unknown): void;
   onLeave(callback: (code: number) => void): unknown;
@@ -70,60 +75,148 @@ export interface RoomLike {
 }
 
 /**
+ * The client-side reconnect capability {@link attachRoom} needs to recover
+ * from an UNEXPECTED drop (S2.3.2) — supplied by {@link connect}, which owns
+ * the real `@colyseus/sdk` `Client`, so this module stays lib-free and the
+ * whole flow still unit-tests against a mock `reconnect`. `reconnect` mints a
+ * BRAND NEW `RoomLike` from a persisted `reconnectionToken` (a real
+ * `client.reconnect` HTTP roundtrip in production). `maxAttempts`/`backoffMs`
+ * bound the retry — a few attempts with short backoff, capped well under the
+ * server's 120s grace (Key decision 5).
+ */
+export interface ReconnectCapability {
+  readonly reconnect: (token: string) => Promise<RoomLike>;
+  readonly maxAttempts?: number;
+  readonly backoffMs?: readonly number[];
+}
+
+const DEFAULT_RECONNECT_MAX_ATTEMPTS = 3;
+const DEFAULT_RECONNECT_BACKOFF_MS: readonly number[] = [250, 750];
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
  * Wire a joined room to the typed callbacks. Pure over {@link RoomLike}, so a
  * mock room drives the entire fold/reject/error/leave path. Each inbound
  * message is zod-validated (the discriminant already matched the channel name,
  * but the schema guards the payload shape); a frame that fails validation is
  * dropped with a dev warning rather than propagated.
+ *
+ * S2.3.2: an optional {@link ReconnectCapability} lets this recover from an
+ * UNEXPECTED drop — `reconnect(token)` with a bounded retry, then a
+ * SYNCHRONOUS re-wire of the new room (no `await` in between) so
+ * `onMessage('state.snapshot')` is registered before the server's reclaim
+ * unicast can arrive (Key decision 5, the resync race). The RETURNED handle
+ * stays the SAME object across a reconnect — `sendIntent`/`disconnect`
+ * indirect through the current room, so a caller that stashed the handle once
+ * (the store) never needs to re-fetch it after a reconnect.
  */
-export function attachRoom(room: RoomLike, callbacks: WsClientCallbacks): WsClientHandle {
-  room.onMessage('state.snapshot', (message) => {
-    const parsed = StateSnapshotEnvelopeSchema.safeParse(message);
-    if (!parsed.success) {
-      warnDrop('state.snapshot', parsed.error);
-      return;
-    }
-    callbacks.onSnapshot(parsed.data.payload as GameState, room.sessionId as PlayerId);
-  });
+export function attachRoom(
+  room: RoomLike,
+  callbacks: WsClientCallbacks,
+  reconnectCapability?: ReconnectCapability,
+): WsClientHandle {
+  let activeRoom = room;
 
-  room.onMessage('event.batch', (message) => {
-    const parsed = EventBatchEnvelopeSchema.safeParse(message);
-    if (!parsed.success) {
-      warnDrop('event.batch', parsed.error);
-      return;
-    }
-    callbacks.onBatch(parsed.data.payload as readonly GameEvent[]);
-  });
+  const wire = (r: RoomLike): void => {
+    // Persist BEFORE the drop can happen (it's async) — covers both the
+    // initial join and every successful reconnect (the SDK mints a fresh
+    // token on each). Keeping it here (rather than only in `connect`) means
+    // this also runs for the reconnected room, DRY.
+    persistReconnectionToken(r.roomId, r.reconnectionToken);
 
-  room.onMessage('intent.rejected', (message) => {
-    const parsed = RejectEnvelopeSchema.safeParse(message);
-    if (!parsed.success) {
-      warnDrop('intent.rejected', parsed.error);
-      return;
-    }
-    callbacks.onReject(parsed.data.payload.reason as RejectReason);
-  });
+    r.onMessage('state.snapshot', (message) => {
+      const parsed = StateSnapshotEnvelopeSchema.safeParse(message);
+      if (!parsed.success) {
+        warnDrop('state.snapshot', parsed.error);
+        return;
+      }
+      callbacks.onSnapshot(parsed.data.payload as GameState, r.sessionId as PlayerId);
+    });
 
-  room.onMessage('intent.error', (message) => {
-    const parsed = ErrorEnvelopeSchema.safeParse(message);
-    if (!parsed.success) {
-      warnDrop('intent.error', parsed.error);
-      return;
-    }
-    callbacks.onError();
-  });
+    r.onMessage('event.batch', (message) => {
+      const parsed = EventBatchEnvelopeSchema.safeParse(message);
+      if (!parsed.success) {
+        warnDrop('event.batch', parsed.error);
+        return;
+      }
+      callbacks.onBatch(parsed.data.payload as readonly GameEvent[]);
+    });
 
-  room.onLeave((code) => callbacks.onConnectionChange(statusForLeaveCode(code)));
-  room.onError(() => callbacks.onConnectionChange('error'));
+    r.onMessage('intent.rejected', (message) => {
+      const parsed = RejectEnvelopeSchema.safeParse(message);
+      if (!parsed.success) {
+        warnDrop('intent.rejected', parsed.error);
+        return;
+      }
+      callbacks.onReject(parsed.data.payload.reason as RejectReason);
+    });
+
+    r.onMessage('intent.error', (message) => {
+      const parsed = ErrorEnvelopeSchema.safeParse(message);
+      if (!parsed.success) {
+        warnDrop('intent.error', parsed.error);
+        return;
+      }
+      callbacks.onError();
+    });
+
+    r.onLeave((code) => {
+      const status = statusForLeaveCode(code);
+      if (status === 'disconnected') {
+        // A consented leave (ours via `disconnect()`, or the server's) —
+        // never reconnect, forget the token (Key decision 3).
+        clearReconnectionToken(r.roomId);
+        callbacks.onConnectionChange(status);
+        return;
+      }
+      callbacks.onConnectionChange(status); // 'reconnecting'
+      if (reconnectCapability) void attemptReconnect(r, reconnectCapability);
+    });
+    r.onError(() => callbacks.onConnectionChange('error'));
+  };
+
+  const attemptReconnect = async (
+    droppedRoom: RoomLike,
+    capability: ReconnectCapability,
+  ): Promise<void> => {
+    const token = droppedRoom.reconnectionToken;
+    const maxAttempts = capability.maxAttempts ?? DEFAULT_RECONNECT_MAX_ATTEMPTS;
+    const backoffMs = capability.backoffMs ?? DEFAULT_RECONNECT_BACKOFF_MS;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const newRoom = await capability.reconnect(token);
+        activeRoom = newRoom; // the returned handle now indirects through the new room
+        wire(newRoom); // synchronous re-wire — no await before this (Key decision 5)
+        callbacks.onConnectionChange('connected');
+        return;
+      } catch {
+        const isLastAttempt = attempt === maxAttempts - 1;
+        if (!isLastAttempt) {
+          await delay(backoffMs[attempt] ?? backoffMs.at(-1) ?? 0);
+        }
+      }
+    }
+    // Grace expired / reconnect refused — terminal, no fresh-join fallback
+    // (a new seat via the lobby is out of scope, S2.3.2 §"DEFER").
+    clearReconnectionToken(droppedRoom.roomId);
+    callbacks.onConnectionChange('disconnected');
+  };
+
+  wire(room);
 
   return {
-    sessionId: room.sessionId,
+    get sessionId() {
+      return activeRoom.sessionId;
+    },
     sendIntent: (intent) => {
       const envelope: IntentMessage = { v: 1, type: 'intent', payload: intent };
-      room.send('intent', envelope);
+      activeRoom.send('intent', envelope);
     },
     disconnect: () => {
-      room.leave(true);
+      activeRoom.leave(true);
     },
   };
 }
@@ -160,7 +253,17 @@ export async function connect(
       ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
       ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
     });
-    const handle = attachRoom(room as unknown as RoomLike, callbacks);
+    // S2.3.2: `client.reconnect` (the real `@colyseus/sdk` `Client`) is the
+    // reconnect capability `attachRoom` calls on an unexpected drop — kept
+    // here, not in `attachRoom`, so that module never imports the SDK.
+    const reconnectCapability: ReconnectCapability = {
+      reconnect: async (token) => (await client.reconnect(token)) as unknown as RoomLike,
+    };
+    const handle = attachRoom(
+      room as unknown as RoomLike,
+      callbacks,
+      reconnectCapability,
+    );
     callbacks.onConnectionChange('connected');
     return handle;
   } catch (error) {

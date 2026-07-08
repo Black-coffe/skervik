@@ -10,11 +10,41 @@ import type {
   RejectMessage,
   StateSnapshotMessage,
 } from '@skervik/protocol';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { devFixtureState } from '../dev/devFixture.js';
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
-import { attachRoom, type RoomLike, type WsClientCallbacks } from './wsClient.js';
+import { CONSENTED_LEAVE_CODE } from './connection.js';
+import { readReconnectionToken } from './reconnectToken.js';
+import {
+  attachRoom,
+  type ReconnectCapability,
+  type RoomLike,
+  type WsClientCallbacks,
+} from './wsClient.js';
+
+/** A minimal in-memory `Storage` — this test runner has no DOM/jsdom (S2.3.2). */
+class MemoryStorage implements Storage {
+  #data = new Map<string, string>();
+  get length(): number {
+    return this.#data.size;
+  }
+  clear(): void {
+    this.#data.clear();
+  }
+  getItem(key: string): string | null {
+    return this.#data.has(key) ? (this.#data.get(key) ?? null) : null;
+  }
+  key(index: number): string | null {
+    return Array.from(this.#data.keys())[index] ?? null;
+  }
+  removeItem(key: string): void {
+    this.#data.delete(key);
+  }
+  setItem(key: string, value: string): void {
+    this.#data.set(key, value);
+  }
+}
 
 /**
  * A faithful mock of the `colyseus.js` `Room` message bus — no socket. Captures
@@ -23,6 +53,8 @@ import { attachRoom, type RoomLike, type WsClientCallbacks } from './wsClient.js
  */
 class MockRoom implements RoomLike {
   sessionId = 'seat-abc';
+  roomId = 'room-xyz';
+  reconnectionToken = 'reconnect-token-1';
   readonly sent: Array<{ type: string; message: unknown }> = [];
   left: boolean | undefined = undefined;
   #handlers = new Map<string, (message: unknown) => void>();
@@ -103,6 +135,18 @@ const batchEnvelope: EventBatchMessage = {
     },
   ],
 };
+
+// S2.3.2: `attachRoom` persists the reconnectionToken via `sessionStorage` on
+// every wire — stub a fresh in-memory store for every test in this file (a
+// no-op for the tests below that don't care) so the persist/clear tests can
+// observe real writes without touching a real browser store.
+beforeEach(() => {
+  vi.stubGlobal('sessionStorage', new MemoryStorage());
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('attachRoom — inbound message wiring', () => {
   let room: MockRoom;
@@ -189,5 +233,109 @@ describe('attachRoom — the returned handle', () => {
     expect(handle.sessionId).toBe('seat-abc');
     handle.disconnect();
     expect(room.left).toBe(true);
+  });
+});
+
+// S2.3.2 — the client half of the reconnect loop: persist the token on join,
+// call `reconnect(token)` on an UNEXPECTED drop (bounded retry), re-wire the
+// new room synchronously on success (Key decision 5, the resync race), and
+// go terminal (disconnected, token cleared) on a consented leave or an
+// exhausted retry.
+describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
+  it('persists the reconnectionToken on a fresh join, leaving the join snapshot path unchanged', () => {
+    const room = new MockRoom();
+    const harness = makeCallbacks();
+    attachRoom(room, harness.callbacks);
+
+    expect(readReconnectionToken(room.roomId)).toBe(room.reconnectionToken);
+
+    room.emit('state.snapshot', snapshotEnvelope);
+    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, room.sessionId);
+  });
+
+  it('an unexpected drop calls reconnect(token) with the persisted token; on resolve it re-wires the new room synchronously (a snapshot folds) and status goes reconnecting → connected', async () => {
+    const room = new MockRoom();
+    const reconnectedRoom = new MockRoom();
+    reconnectedRoom.sessionId = 'seat-abc-2';
+    reconnectedRoom.roomId = room.roomId;
+    reconnectedRoom.reconnectionToken = 'reconnect-token-2';
+    const harness = makeCallbacks();
+    const reconnect = vi
+      .fn<ReconnectCapability['reconnect']>()
+      .mockResolvedValue(reconnectedRoom);
+
+    const handle = attachRoom(room, harness.callbacks, { reconnect, maxAttempts: 1 });
+
+    room.fireLeave(1006); // an unexpected close (not the consented code)
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('reconnecting');
+    expect(reconnect).toHaveBeenCalledWith(room.reconnectionToken);
+
+    await vi.waitFor(() => {
+      expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
+    });
+
+    // Re-wired synchronously on resolve — the handler was registered in time
+    // to fold this message (proves the resync race is won, Key decision 5).
+    expect(reconnectedRoom.hasHandler('state.snapshot')).toBe(true);
+    reconnectedRoom.emit('state.snapshot', snapshotEnvelope);
+    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, 'seat-abc-2');
+
+    // The ORIGINAL handle now indirects through the reconnected room — a
+    // caller that stashed it once (the store) never needs a fresh handle.
+    expect(handle.sessionId).toBe('seat-abc-2');
+  });
+
+  it('a consented disconnect() does not reconnect and clears the token', () => {
+    const room = new MockRoom();
+    const harness = makeCallbacks();
+    const reconnect = vi.fn<ReconnectCapability['reconnect']>();
+    const handle = attachRoom(room, harness.callbacks, { reconnect });
+
+    handle.disconnect();
+    expect(room.left).toBe(true);
+    room.fireLeave(CONSENTED_LEAVE_CODE);
+
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('disconnected');
+    expect(readReconnectionToken(room.roomId)).toBeNull();
+  });
+
+  it('reconnect failure (the bounded retry is exhausted) goes terminal: disconnected, token cleared', async () => {
+    const room = new MockRoom();
+    const harness = makeCallbacks();
+    const reconnect = vi
+      .fn<ReconnectCapability['reconnect']>()
+      .mockRejectedValue(new Error('server refused the reclaim'));
+
+    attachRoom(room, harness.callbacks, { reconnect, maxAttempts: 1 });
+
+    room.fireLeave(1006);
+    await vi.waitFor(() => {
+      expect(harness.onConnectionChange).toHaveBeenLastCalledWith('disconnected');
+    });
+
+    expect(reconnect).toHaveBeenCalledTimes(1);
+    expect(readReconnectionToken(room.roomId)).toBeNull();
+  });
+
+  it('retries within the bounded attempt count before succeeding', async () => {
+    const room = new MockRoom();
+    const reconnectedRoom = new MockRoom();
+    reconnectedRoom.roomId = room.roomId;
+    const harness = makeCallbacks();
+    const reconnect = vi
+      .fn<ReconnectCapability['reconnect']>()
+      .mockRejectedValueOnce(new Error('first attempt fails'))
+      .mockResolvedValueOnce(reconnectedRoom);
+
+    attachRoom(room, harness.callbacks, { reconnect, maxAttempts: 2, backoffMs: [0] });
+
+    room.fireLeave(1006);
+    await vi.waitFor(() => {
+      expect(reconnect).toHaveBeenCalledTimes(2);
+    });
+    await vi.waitFor(() => {
+      expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
+    });
   });
 });

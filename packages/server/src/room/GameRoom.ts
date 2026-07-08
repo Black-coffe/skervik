@@ -614,18 +614,31 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     });
     this.state.seats.push(seat);
 
-    const snapshot: StateSnapshotMessage = {
-      v: 1,
-      type: 'state.snapshot',
-      payload: this.gameState,
-    };
-    client.send(snapshot.type, snapshot);
+    this.#sendSnapshot(client);
 
     // Match-start orchestration (S1.7.2/S2.4.3): when the last seat needed to
     // reach the start condition (the room's full seat cap, bot seats included)
     // is taken, auto-start the match — no lobby-ready UI / host button for M1
     // (later). See `#maybeAutoStart` for the latch discipline.
     this.#maybeAutoStart();
+  }
+
+  /**
+   * Mint + unicast a fresh `StateSnapshotMessage` (the CURRENT authoritative
+   * `gameState`, NO seed — `PublicGameState`) to ONE client (S2.3.2). Extracted
+   * from the join path so the exact same minting is reused at the S2.3.1
+   * reclaim seam below: Colyseus takes the `onReconnect` path on a reconnect,
+   * never `onJoin`, so the reclaimed client would otherwise never get the
+   * authoritative core `gameState` its board depends on. Never a `broadcast` —
+   * only the given client receives it.
+   */
+  #sendSnapshot(client: Client): void {
+    const snapshot: StateSnapshotMessage = {
+      v: 1,
+      type: 'state.snapshot',
+      payload: this.gameState,
+    };
+    client.send(snapshot.type, snapshot);
   }
 
   /**
@@ -656,6 +669,20 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     this.allowReconnection(client, this.#reconnectGraceSeconds)
       .then(() => {
         if (seat) seat.connected = true; // reclaimed within grace — same seat, same playerId
+        // S2.3.2: unicast a fresh authoritative snapshot to THIS reclaimed
+        // client — the reconnect took the `onReconnect` path, not `onJoin`, so
+        // its core `gameState` (and anything forced actions advanced while it
+        // was away) is otherwise never resent. IMPORTANT: send to the LIVE
+        // client Colyseus just re-registered in `this.clients` — NOT the
+        // `client` closed over from this `onDrop` call. Colyseus's own native
+        // reconnection swaps in a fresh `Client` for the new connection
+        // internally; sending on the stale closed-over reference (even though
+        // it still briefly reports an "open" readyState) writes into a socket
+        // that never reaches the reconnected client — empirically verified
+        // while building this story (zero bytes arrived via the stale ref,
+        // every byte via the live one); a Colyseus 0.17 quirk, undocumented.
+        const liveClient = this.clients.find((c) => c.sessionId === client.sessionId);
+        if (liveClient) this.#sendSnapshot(liveClient);
       })
       .catch(() => {
         // Grace expired with no reconnect: the seat REMAINS in `state.seats`

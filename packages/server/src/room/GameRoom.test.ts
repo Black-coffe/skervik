@@ -1269,6 +1269,60 @@ describe('GameRoom', () => {
     await reconnected.leave();
   });
 
+  // --- S2.3.2: the server half of the resync — a fresh snapshot at reclaim --
+
+  it('S2.3.2 reclaim resync: the reclaimed client receives a SECOND state.snapshot of the CURRENT gameState (unicast, not broadcast); the join snapshot behavior is unchanged', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      maxSeats: 2,
+      reconnectGraceSeconds: 5,
+    });
+
+    // c1: capture every state.snapshot it ever receives (join + reclaim).
+    const snapshotsForC1: StateSnapshotMessage[] = [];
+    const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+    c1.onMessage('state.snapshot', (m: StateSnapshotMessage) => snapshotsForC1.push(m));
+    await nextTick();
+
+    // c2: a second, never-dropped client — proves the reclaim resync is a
+    // UNICAST (it must see nothing beyond its own join snapshot).
+    const snapshotsForC2: StateSnapshotMessage[] = [];
+    const c2 = await testServer.connectTo(room, CONNECT_OPTS);
+    c2.onMessage('state.snapshot', (m: StateSnapshotMessage) => snapshotsForC2.push(m));
+    await nextTick();
+
+    expect(snapshotsForC1).toHaveLength(1); // onJoin behavior UNCHANGED
+    expect(snapshotsForC2).toHaveLength(1);
+
+    const sessionId = c1.sessionId;
+    const reconnectionToken = c1.reconnectionToken;
+
+    await c1.leave(false); // non-consented drop → onDrop grace hold
+    await nextTick();
+
+    const reconnected = await testServer.sdk.reconnect(reconnectionToken);
+    reconnected.onMessage('state.snapshot', (m: StateSnapshotMessage) =>
+      snapshotsForC1.push(m),
+    );
+    await nextTick();
+
+    expect(reconnected.sessionId).toBe(sessionId); // same seat/session, reclaim not a fresh join
+
+    // The reclaim unicast — a SECOND snapshot, minted from the CURRENT
+    // authoritative gameState (post any forced actions), still seed-free.
+    expect(snapshotsForC1).toHaveLength(2);
+    expect(snapshotsForC1[1]?.type).toBe('state.snapshot');
+    expect(JSON.stringify(snapshotsForC1[1]?.payload)).toBe(
+      JSON.stringify(room.gameState),
+    );
+    expect(Object.keys(snapshotsForC1[1]?.payload ?? {})).not.toContain('seed');
+
+    // c2 (never dropped) received nothing extra — this was a unicast.
+    expect(snapshotsForC2).toHaveLength(1);
+
+    await reconnected.leave();
+    await c2.leave();
+  });
+
   it('grace expiry, no forfeit: a dropped client that never reconnects leaves the seat held, connected:false, no crash', async () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
       reconnectGraceSeconds: 0.05, // tiny REAL grace — no scheduler seam on Colyseus's own timer
