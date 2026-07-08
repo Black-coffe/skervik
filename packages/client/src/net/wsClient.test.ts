@@ -15,13 +15,36 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { devFixtureState } from '../dev/devFixture.js';
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { CONSENTED_LEAVE_CODE } from './connection.js';
-import { readReconnectionToken } from './reconnectToken.js';
+import {
+  persistCurrentRoomId,
+  persistReconnectionToken,
+  readCurrentRoomId,
+  readReconnectionToken,
+} from './reconnectToken.js';
 import {
   attachRoom,
+  connect,
+  DEFAULT_RECONNECT_BACKOFF_MS,
+  DEFAULT_RECONNECT_MAX_ATTEMPTS,
   type ReconnectCapability,
   type RoomLike,
   type WsClientCallbacks,
 } from './wsClient.js';
+
+// S2.3.2a: `connect()` imports the real `@colyseus/sdk` `Client` — mock its
+// constructor so the resume-first / fresh-join branches drive against fake
+// `reconnect`/`joinOrCreate` promises instead of a real socket. `vi.hoisted`
+// so the mock functions exist before `vi.mock`'s factory runs (hoisting).
+const { mockReconnect, mockJoinOrCreate } = vi.hoisted(() => ({
+  mockReconnect: vi.fn(),
+  mockJoinOrCreate: vi.fn(),
+}));
+
+vi.mock('@colyseus/sdk', () => ({
+  Client: vi.fn().mockImplementation(function MockClient() {
+    return { reconnect: mockReconnect, joinOrCreate: mockJoinOrCreate };
+  }),
+}));
 
 /** A minimal in-memory `Storage` — this test runner has no DOM/jsdom (S2.3.2). */
 class MemoryStorage implements Storage {
@@ -242,12 +265,13 @@ describe('attachRoom — the returned handle', () => {
 // go terminal (disconnected, token cleared) on a consented leave or an
 // exhausted retry.
 describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
-  it('persists the reconnectionToken on a fresh join, leaving the join snapshot path unchanged', () => {
+  it('persists the reconnectionToken + the current-room pointer on a fresh join, leaving the join snapshot path unchanged', () => {
     const room = new MockRoom();
     const harness = makeCallbacks();
     attachRoom(room, harness.callbacks);
 
     expect(readReconnectionToken(room.roomId)).toBe(room.reconnectionToken);
+    expect(readCurrentRoomId()).toBe(room.roomId);
 
     room.emit('state.snapshot', snapshotEnvelope);
     expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, room.sessionId);
@@ -285,7 +309,7 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     expect(handle.sessionId).toBe('seat-abc-2');
   });
 
-  it('a consented disconnect() does not reconnect and clears the token', () => {
+  it('a consented disconnect() does not reconnect and clears the token + the current-room pointer', () => {
     const room = new MockRoom();
     const harness = makeCallbacks();
     const reconnect = vi.fn<ReconnectCapability['reconnect']>();
@@ -298,6 +322,7 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     expect(reconnect).not.toHaveBeenCalled();
     expect(harness.onConnectionChange).toHaveBeenLastCalledWith('disconnected');
     expect(readReconnectionToken(room.roomId)).toBeNull();
+    expect(readCurrentRoomId()).toBeNull();
   });
 
   it('reconnect failure (the bounded retry is exhausted) goes terminal: disconnected, token cleared', async () => {
@@ -337,5 +362,103 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     await vi.waitFor(() => {
       expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
     });
+  });
+});
+
+// S2.3.2a nit #2: the previous default (3 attempts, ~1s total) gave up while
+// the server still holds the 120s grace. The widened default is bounded and
+// non-blocking, but wide enough to ride out a real outage, and still
+// terminates on exhaustion (never retries forever).
+describe('attachRoom — the widened default retry budget (S2.3.2a)', () => {
+  it('is bounded but wider than a sub-second blip, and an exhausted retry still terminates to disconnected', async () => {
+    vi.useFakeTimers();
+    const room = new MockRoom();
+    const harness = makeCallbacks();
+    const reconnect = vi
+      .fn<ReconnectCapability['reconnect']>()
+      .mockRejectedValue(new Error('outage'));
+
+    attachRoom(room, harness.callbacks, { reconnect }); // no explicit maxAttempts/backoffMs → defaults
+
+    room.fireLeave(1006);
+    await vi.runAllTimersAsync();
+
+    expect(DEFAULT_RECONNECT_MAX_ATTEMPTS).toBeGreaterThan(3);
+    expect(DEFAULT_RECONNECT_BACKOFF_MS.reduce((sum, ms) => sum + ms, 0)).toBeGreaterThan(
+      10_000,
+    );
+    expect(reconnect).toHaveBeenCalledTimes(DEFAULT_RECONNECT_MAX_ATTEMPTS);
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('disconnected');
+
+    vi.useRealTimers();
+  });
+});
+
+// S2.3.2a — the forcing story: S2.3.2 persisted a `reconnectionToken` that was
+// never actually READ in production (write-only), because a cold-loaded app
+// has no `roomId` in memory to look it up with. `connect()` now tries a
+// resume FIRST via the current-room pointer; these tests drive it against a
+// mocked `@colyseus/sdk` `Client` (no real socket).
+describe('connect — resume on a cold load (S2.3.2a)', () => {
+  beforeEach(() => {
+    mockReconnect.mockReset();
+    mockJoinOrCreate.mockReset();
+  });
+
+  it('[forcing] a persisted current-room pointer + matching token makes connect() call client.reconnect (not joinOrCreate), wire the resumed room via attachRoom, and fold a subsequent snapshot', async () => {
+    persistCurrentRoomId('room-cold');
+    persistReconnectionToken('room-cold', 'saved-token');
+
+    const resumedRoom = new MockRoom();
+    resumedRoom.roomId = 'room-cold';
+    resumedRoom.sessionId = 'seat-resumed';
+    mockReconnect.mockResolvedValue(resumedRoom);
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks);
+
+    expect(mockReconnect).toHaveBeenCalledWith('saved-token');
+    expect(mockJoinOrCreate).not.toHaveBeenCalled();
+    expect(handle).not.toBeNull();
+    expect(handle?.sessionId).toBe('seat-resumed');
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
+
+    // Wired through the real attachRoom path — a `state.snapshot` folds.
+    resumedRoom.emit('state.snapshot', snapshotEnvelope);
+    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, 'seat-resumed');
+  });
+
+  it('cold-load fallback: an expired token (reconnect rejects) clears the pointer+token and falls through to joinOrCreate', async () => {
+    persistCurrentRoomId('room-expired');
+    persistReconnectionToken('room-expired', 'stale-token');
+    mockReconnect.mockRejectedValue(new Error('grace expired'));
+
+    const freshRoom = new MockRoom();
+    freshRoom.roomId = 'room-fresh';
+    mockJoinOrCreate.mockResolvedValue(freshRoom);
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks);
+
+    expect(mockReconnect).toHaveBeenCalledWith('stale-token');
+    expect(mockJoinOrCreate).toHaveBeenCalledTimes(1);
+    expect(handle).not.toBeNull();
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
+    expect(readReconnectionToken('room-expired')).toBeNull();
+    // The fresh join re-persists its own pointer (unaffected by the clear above).
+    expect(readCurrentRoomId()).toBe('room-fresh');
+  });
+
+  it('no pointer → straight to joinOrCreate (unchanged behavior, no regression)', async () => {
+    const freshRoom = new MockRoom();
+    mockJoinOrCreate.mockResolvedValue(freshRoom);
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks);
+
+    expect(mockReconnect).not.toHaveBeenCalled();
+    expect(mockJoinOrCreate).toHaveBeenCalledTimes(1);
+    expect(handle).not.toBeNull();
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
   });
 });

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  clearCurrentRoomId,
   clearReconnectionToken,
+  persistCurrentRoomId,
   persistReconnectionToken,
+  readCurrentRoomId,
   readReconnectionToken,
 } from './reconnectToken.js';
 
@@ -58,5 +61,34 @@ describe('reconnectToken — sessionStorage helper', () => {
     expect(() => persistReconnectionToken('room-1', 'token-abc')).not.toThrow();
     expect(readReconnectionToken('room-1')).toBeNull();
     expect(() => clearReconnectionToken('room-1')).not.toThrow();
+  });
+});
+
+describe('reconnectToken — current-room pointer (S2.3.2a)', () => {
+  it('persists + reads back the current roomId', () => {
+    vi.stubGlobal('sessionStorage', new MemoryStorage());
+    persistCurrentRoomId('room-1');
+    expect(readCurrentRoomId()).toBe('room-1');
+  });
+
+  it('a later persist overwrites the earlier pointer (one active match per tab)', () => {
+    vi.stubGlobal('sessionStorage', new MemoryStorage());
+    persistCurrentRoomId('room-1');
+    persistCurrentRoomId('room-2');
+    expect(readCurrentRoomId()).toBe('room-2');
+  });
+
+  it('clears the persisted pointer', () => {
+    vi.stubGlobal('sessionStorage', new MemoryStorage());
+    persistCurrentRoomId('room-1');
+    clearCurrentRoomId();
+    expect(readCurrentRoomId()).toBeNull();
+  });
+
+  it('degrades to a no-op when sessionStorage is unavailable, never throws', () => {
+    vi.stubGlobal('sessionStorage', undefined);
+    expect(() => persistCurrentRoomId('room-1')).not.toThrow();
+    expect(readCurrentRoomId()).toBeNull();
+    expect(() => clearCurrentRoomId()).not.toThrow();
   });
 });
