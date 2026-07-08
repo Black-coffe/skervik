@@ -192,12 +192,20 @@ export function reduce(state: GameState, event: GameEvent): GameState {
       // count — advance it by one per `dice.rolled`. Classic (`'dice'`) never
       // populates the key, so its reduced state (and every golden fixture)
       // stays byte-identical (absent resolves to `'classic'`).
-      const randomness = loadRuleProfile(state.profileId ?? 'classic').randomness;
+      const profile = loadRuleProfile(state.profileId ?? 'classic');
       const balancedAdvance =
-        randomness === 'balanced_deck'
+        profile.randomness === 'balanced_deck'
           ? { balancedRollsDrawn: (state.balancedRollsDrawn ?? 0) + 1 }
           : {};
       if (event.total === 7) {
+        // Event-tile storm counter (S2.2.4): advances ONLY under
+        // `catchUp.eventTiles` — `sevensRolled` stays absent otherwise, so a
+        // shipping-preset match's reduced state (and every golden fixture)
+        // is byte-identical. Anchors the SAME counter validate reads
+        // pre-roll to decide `eventStorm` — no parallel counting.
+        const eventTilesAdvance = profile.catchUp.eventTiles
+          ? { sevensRolled: (state.sevensRolled ?? 0) + 1 }
+          : {};
         return {
           ...state,
           phase: 'robber',
@@ -205,6 +213,7 @@ export function reduce(state: GameState, event: GameEvent): GameState {
             ? { playersToDiscard: event.playersToDiscard }
             : {}),
           ...balancedAdvance,
+          ...eventTilesAdvance,
           eventIndex: event.index + 1,
         };
       }

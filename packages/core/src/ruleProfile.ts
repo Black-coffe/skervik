@@ -147,6 +147,20 @@ export interface CatchUpProfile {
    * in the final standings. Off on every shipping preset.
    */
   readonly hiddenVp: boolean;
+  /**
+   * When `true`, a storm (7-roll) on a deterministic cadence (every
+   * {@link CatchUpProfile.eventTilesInterval}-th storm, counted by
+   * `GameState.sevensRolled`) ALSO grants the trailing player(s) a poverty
+   * token — REUSING the `robinHood` machinery (same helper, same event, same
+   * shared pool/cap) as a SECOND emission site (S2.2.4). The robber/discard
+   * flow of the storm is completely unchanged. Off on every shipping preset.
+   */
+  readonly eventTiles: boolean;
+  /**
+   * Every Nth storm is an "event tile" (provisional balance knob, S2.2.4) —
+   * dead while {@link CatchUpProfile.eventTiles} is `false`.
+   */
+  readonly eventTilesInterval: number;
 }
 
 /** Victory threshold + award minimums/values — `validate.ts`. */
@@ -348,6 +362,13 @@ export const CLASSIC_PROFILE: RuleProfile = {
     // byte-identical to M1 (instant `game.ended` on the acting player's full VP).
     finalRound: false,
     hiddenVp: false,
+    // Byte-frozen off (S2.2.4) — Balanced/Blitz/twoPlayer inherit both via their
+    // `...CLASSIC_PROFILE` spread; liveness proven by the internal
+    // EVENT_TILES/EVENT_TILES_ROBIN_HOOD test profiles below. Off → storms
+    // never advance `sevensRolled` or emit an extra `poverty.tokensGranted`,
+    // so the roll's event batch stays byte-identical to M1.
+    eventTiles: false,
+    eventTilesInterval: 3,
   },
   victory: {
     vpToWin: 10,
@@ -568,6 +589,52 @@ export const FINAL_ROUND_HIDDEN_VP_TEST_PROFILE: RuleProfile = {
 };
 
 /**
+ * INTERNAL, NON-SHIPPING profile ids used ONLY to prove the S2.2.4
+ * `eventTiles` catch-up path in tests — deliberately absent from
+ * {@link RuleProfileId} (and the protocol's `profileId` enum), so no client
+ * can select them. No shipping preset enables `eventTiles` yet (assigning
+ * catch-up flags to specific presets is a batched product decision now that
+ * all four E2.2 mechanics exist), yet the flag's live behavior still needs
+ * coverage — the S2.1.5/S2.2.1/S2.2.2/S2.2.3 precedent of proving a knob via
+ * a distinct profile.
+ */
+export const EVENT_TILES_TEST_PROFILE_ID = '__event_tiles_test__';
+export const EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID = '__event_tiles_robin_hood_test__';
+
+/**
+ * Classic in every rule value EXCEPT `catchUp.eventTiles: true` (interval 2,
+ * for a short cadence in tests) — the internal fixture behind
+ * {@link EVENT_TILES_TEST_PROFILE_ID}. Its `.id` stays `'classic'` (inherited
+ * via the spread; {@link RuleProfileId} has no test member) — the registry
+ * key, not `.id`, is what resolves it.
+ */
+export const EVENT_TILES_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    eventTiles: true,
+    eventTilesInterval: 2,
+  },
+};
+
+/**
+ * Classic in every rule value EXCEPT BOTH `catchUp.eventTiles: true`
+ * (interval 2) and `catchUp.robinHood: true` — the internal fixture behind
+ * {@link EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID}, proving the non-7
+ * `robinHood` grant and the event-storm grant share one `povertyTokens` pool
+ * and one cap.
+ */
+export const EVENT_TILES_ROBIN_HOOD_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  catchUp: {
+    ...CLASSIC_PROFILE.catchUp,
+    eventTiles: true,
+    eventTilesInterval: 2,
+    robinHood: true,
+  },
+};
+
+/**
  * The profile registry: the shipping presets plus the internal
  * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
  * {@link RuleProfileId}) so the non-shipping test ids have a home without
@@ -582,6 +649,8 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   [FINAL_ROUND_TEST_PROFILE_ID]: FINAL_ROUND_TEST_PROFILE,
   [HIDDEN_VP_TEST_PROFILE_ID]: HIDDEN_VP_TEST_PROFILE,
   [FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID]: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE,
+  [EVENT_TILES_TEST_PROFILE_ID]: EVENT_TILES_TEST_PROFILE,
+  [EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID]: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE,
 };
 
 /**

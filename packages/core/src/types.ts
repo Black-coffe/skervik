@@ -379,6 +379,18 @@ export interface GameState {
     readonly triggeredBy: PlayerId;
     readonly triggeredOnTurn: number;
   };
+  /**
+   * Cumulative count of storms/7-rolls (S2.2.4 `catchUp.eventTiles`) — the
+   * cadence anchor for the event-tile catch-up boost: every
+   * `catchUp.eventTilesInterval`-th storm ALSO grants the trailing player(s) a
+   * poverty token (via the SAME `poverty.tokensGranted` event/pool as
+   * {@link GameState.povertyTokens}). Advances ONLY under `eventTiles:true`
+   * (`reduce`'s `dice.rolled` case) — absent under `eventTiles:false` (every
+   * shipping preset), so serialized state stays byte-IDENTICAL to today
+   * (Classic golden/replay/verify frozen). Same "absent key = fact never
+   * happened" convention as {@link GameState.povertyTokens}/{@link GameState.finalRound}.
+   */
+  readonly sevensRolled?: number;
 }
 
 /** Fields shared by every {@link GameEvent} variant. */
