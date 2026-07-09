@@ -13,13 +13,17 @@
 import {
   type BoardGeneratedEvent,
   buildTopology,
+  type ExperimentalProfileId,
   type GameEndedEvent,
   type GameEvent,
   type GameState,
   generateBoard,
+  loadRuleProfile,
   type MatchStartedEvent,
   type PlayerId,
   reduce,
+  type RuleProfile,
+  type RuleProfileId,
   type Seed,
   validate,
 } from '@skervik/core';
@@ -39,6 +43,17 @@ export interface SimulateMatchOptions {
   readonly bots: Readonly<Record<PlayerId, Bot>>;
   /** HARD cap on applied steps — throws loudly if exceeded, never hangs. Default {@link DEFAULT_MAX_TURNS}. */
   readonly maxTurns?: number;
+  /**
+   * The rule profile to simulate under (S2.2.5) — a shipping
+   * {@link RuleProfileId} or an internal `EXPERIMENTAL_PROFILE_IDS`
+   * measurement id (untyped `string` here so the harness stays agnostic of
+   * which; `loadRuleProfile` is the sole validator, and throws on an unknown
+   * id). Default Classic (`'classic'`). Bot noise seeds are derived from
+   * `(difficulty, seed, playerId)` ONLY — never from `profileId` — so the
+   * same match `seed` produces the same bot behavior across every profile
+   * (paired comparison, S2.2.5 Constraint 4).
+   */
+  readonly profileId?: string;
 }
 
 /** A hard safety cap on applied steps if the caller doesn't set one — fails loudly, never hangs. */
@@ -47,16 +62,33 @@ const DEFAULT_MAX_TURNS = 6000;
 const HARNESS_MATCH_ID = 'bots-harness-match';
 const HARNESS_SEED_HASH = 'bots-harness-seed-hash'; // opaque here; a real room uses its own commit hash.
 
-/** The genesis batch a real `GameRoom` emits on seats-full (match.started + board.generated). */
-function genesisEvents(seed: Seed, playerIds: readonly PlayerId[]): GameEvent[] {
+/**
+ * The genesis batch a real `GameRoom` emits on seats-full (match.started +
+ * board.generated). `profileId` is the RESOLVED profile's id — the
+ * `match.started` event carries the key ONLY when it is not Classic
+ * (S2.2.5 Constraint 1: `reduce.ts` sets `state.profileId` only if the event
+ * carries the key at all, so emitting `profileId: 'classic'` — instead of
+ * omitting the key — would still shift the event bytes vs. every pre-S2.1.1
+ * golden fixture). The cast is the same one every internal test profile
+ * already uses (`ROBIN_HOOD_TEST_PROFILE_ID as RuleProfileId`, etc.) —
+ * `RuleProfileId` deliberately excludes measurement ids; the registry key,
+ * not the type, is what resolves them.
+ */
+function genesisEvents(
+  seed: Seed,
+  playerIds: readonly PlayerId[],
+  profileId: string,
+  profile: RuleProfile,
+): GameEvent[] {
   const matchStarted: MatchStartedEvent = {
     type: 'match.started',
     index: 0,
     matchId: HARNESS_MATCH_ID,
     seedHash: HARNESS_SEED_HASH,
     playerIds: [...playerIds],
+    ...(profileId === 'classic' ? {} : { profileId: profileId as RuleProfileId }),
   };
-  const layout = generateBoard(seed, buildTopology());
+  const layout = generateBoard(seed, buildTopology(), profile.board);
   const boardGenerated: BoardGeneratedEvent = {
     type: 'board.generated',
     index: 1,
@@ -91,8 +123,10 @@ function lobbyState(): GameState {
 export function simulateMatch(opts: SimulateMatchOptions): SimResult {
   const { seed, playerIds, bots } = opts;
   const maxTurns = opts.maxTurns ?? DEFAULT_MAX_TURNS;
+  const profileId = opts.profileId ?? 'classic';
+  const profile = loadRuleProfile(profileId as RuleProfileId | ExperimentalProfileId);
 
-  const genesis = genesisEvents(seed, playerIds);
+  const genesis = genesisEvents(seed, playerIds, profileId, profile);
   let state = genesis.reduce((s, e) => reduce(s, e), lobbyState());
   const events: GameEvent[] = [...genesis];
   let turns = 0;
