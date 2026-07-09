@@ -635,6 +635,47 @@ export const EVENT_TILES_ROBIN_HOOD_TEST_PROFILE: RuleProfile = {
 };
 
 /**
+ * INTERNAL, NON-SHIPPING profile ids used ONLY to measure a `vpToWin: 9`
+ * threshold for S2.2.5's pre-registered H3 comparison — deliberately absent
+ * from {@link RuleProfileId} (and the protocol's `profileId` enum), so no
+ * client can select them. The owner has NOT yet decided whether Balanced
+ * ships with a lowered VP threshold; that decision is conditional on H3's
+ * result (S2.2.6). This is MEASUREMENT SCAFFOLDING introduced for S2.2.5 H3
+ * — remove it, or promote it into a real preset, in S2.2.6 (Law 2: no dead
+ * config surviving by accident).
+ */
+export const VP9_TEST_PROFILE_ID = '__vp9_test__';
+export const BALANCED_VP9_TEST_PROFILE_ID = '__balanced_vp9_test__';
+
+/**
+ * Classic in every rule value EXCEPT `victory.vpToWin: 9` — the internal
+ * fixture behind {@link VP9_TEST_PROFILE_ID}. Its `.id` stays `'classic'`
+ * (inherited via the spread; {@link RuleProfileId} has no test member) — the
+ * registry key, not `.id`, is what resolves it.
+ */
+export const VP9_TEST_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  victory: {
+    ...CLASSIC_PROFILE.victory,
+    vpToWin: 9,
+  },
+};
+
+/**
+ * Balanced (`randomness: 'balanced_deck'`) with `victory.vpToWin: 9` — the
+ * actual H3 candidate preset (owner-proposed: Balanced = balanced_deck + a
+ * lowered VP threshold, conditional on this measurement). Its `.id` stays
+ * `'balanced'` (inherited via the spread) — the registry key resolves it.
+ */
+export const BALANCED_VP9_TEST_PROFILE: RuleProfile = {
+  ...BALANCED_PROFILE,
+  victory: {
+    ...BALANCED_PROFILE.victory,
+    vpToWin: 9,
+  },
+};
+
+/**
  * The profile registry: the shipping presets plus the internal
  * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
  * {@link RuleProfileId}) so the non-shipping test ids have a home without
@@ -651,6 +692,8 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   [FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID]: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE,
   [EVENT_TILES_TEST_PROFILE_ID]: EVENT_TILES_TEST_PROFILE,
   [EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID]: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE,
+  [VP9_TEST_PROFILE_ID]: VP9_TEST_PROFILE,
+  [BALANCED_VP9_TEST_PROFILE_ID]: BALANCED_VP9_TEST_PROFILE,
 };
 
 /**
@@ -672,6 +715,8 @@ export const EXPERIMENTAL_PROFILE_IDS = {
   finalRoundHiddenVp: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID,
   eventTiles: EVENT_TILES_TEST_PROFILE_ID,
   eventTilesRobinHood: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID,
+  vp9: VP9_TEST_PROFILE_ID,
+  balancedVp9: BALANCED_VP9_TEST_PROFILE_ID,
 } as const;
 
 /** A measurement-only profile id from {@link EXPERIMENTAL_PROFILE_IDS} — never a {@link RuleProfileId}. */

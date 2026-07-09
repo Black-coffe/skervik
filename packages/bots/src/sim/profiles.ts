@@ -65,4 +65,15 @@ export const SWEEP_PROFILES: readonly ProfileSweepSpec[] = [
     label: 'eventTilesRobinHoodTest',
     isolates: 'catchUp: eventTiles + robinHood (interval 2)',
   },
+  {
+    id: EXPERIMENTAL_PROFILE_IDS.vp9,
+    label: '__vp9_test__',
+    isolates: 'victory.vpToWin: 9 (S2.2.5 H3 measurement profile)',
+  },
+  {
+    id: EXPERIMENTAL_PROFILE_IDS.balancedVp9,
+    label: '__balanced_vp9_test__',
+    isolates:
+      "randomness: 'balanced_deck' + victory.vpToWin: 9 (S2.2.5 H3 candidate preset)",
+  },
 ];
