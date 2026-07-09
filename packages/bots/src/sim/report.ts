@@ -29,7 +29,16 @@ export interface SweepReport {
   readonly sensitivityMetric: string;
   /** The `vpToWin` whose anchor cuts EVERY arm was scored at, or `null` for a self-scored run. */
   readonly scoredAtVpToWin: number | null;
-  /** `true` when each arm scored itself — the CONFOUNDED variant; `discordantPairs` then report anchor placement. */
+  /**
+   * `true` when the arms' `scoredAtVpToWin` CUTS DIFFER (`cuts.size > 1` in
+   * `buildReport`) — NOT "each arm scored itself" (a run of profiles that all
+   * happen to share `vpToWin` self-scores without disagreeing, e.g.
+   * `--profiles classic,hiddenVpTest --self-scored` correctly yields `false`:
+   * both are `vpToWin:10`, so the cuts match and the run is not confounded).
+   * The report describes the INSTRUMENT (whether the cuts actually diverged),
+   * not the flag an operator typed. `true` is the CONFOUNDED variant;
+   * `discordantPairs` then report anchor placement rather than catch-up.
+   */
   readonly selfScored: boolean;
   readonly excludedProfiles: readonly string[];
   readonly notes: readonly string[];

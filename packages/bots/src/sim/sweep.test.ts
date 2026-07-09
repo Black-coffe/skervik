@@ -214,4 +214,44 @@ describe('buildReport — labels the scoring mode instead of hiding it', () => {
     );
     expect(selfScored).toContain('SELF-SCORED (CONFOUNDED)');
   });
+
+  /**
+   * S2.2.6 lead-review nit 4: the test above pins the FIXED string, not the
+   * BUG CLASS. The reviewer proved this — reintroducing the exact defect
+   * (re-appending a profile name after the asserted prefix, e.g.
+   * `` `MATCHED — every arm scored at vpToWin=${report.scoredAtVpToWin} (the
+   * classic baseline cuts)` ``) left all 71 tests green. A header naming a
+   * profile it did not use is this epic's whole failure mode (describing an
+   * instrument other than the one that took the reading), so the guard must
+   * forbid the SHAPE (any profile label appended to the line), not just miss
+   * one fixed wording. Scoped to the `- anchor scoring:` LINE only —
+   * `not.toContain` over the whole markdown would false-positive on
+   * `comebackMetric`/`excludedProfiles`, which legitimately mention `classic`.
+   */
+  it('the anchor-scoring line names cuts only, never a profile label (bug-class guard)', () => {
+    const anchorScoringLine = (report: ReturnType<typeof buildReport>): string => {
+      const line = formatMarkdownTable(report)
+        .split('\n')
+        .find((l) => l.startsWith('- anchor scoring:'));
+      if (line === undefined) throw new Error('no anchor-scoring line in the report');
+      return line;
+    };
+
+    const matchedLine = anchorScoringLine(
+      buildReport(2, runSweep(2, ['classic', 'blitz'])),
+    );
+    const selfScoredLine = anchorScoringLine(
+      buildReport(2, runSweep(2, ['classic', 'blitz'], { selfScored: true })),
+    );
+
+    for (const line of [matchedLine, selfScoredLine]) {
+      expect(line).toMatch(
+        /^- anchor scoring: (MATCHED — every arm scored at vpToWin=\d+|\*\*SELF-SCORED)/,
+      );
+      // No profile label anywhere on the line — the cuts are a NUMBER, not a name.
+      for (const spec of SWEEP_PROFILES) {
+        expect(line).not.toContain(spec.label);
+      }
+    }
+  });
 });
