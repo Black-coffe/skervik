@@ -22,7 +22,10 @@ import {
   BLITZ_PROFILE,
   CLASSIC_PROFILE,
   loadRuleProfile,
+  type RuleProfile,
   type RuleProfileId,
+  TWO_PLAYER_PROFILE,
+  validateRuleProfile,
 } from './ruleProfile.js';
 import type { GameState, PlayerState } from './types.js';
 import {
@@ -194,5 +197,59 @@ describe('vpToWin is live config: Blitz ends a match Classic would not', () => {
 
     const next = result.events.reduce(reduce, nearWin('classic'));
     expect(next.phase).toBe('main');
+  });
+});
+
+describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
+  it(
+    'every shipping preset passes (proven twice over: this loop, AND the module-level ' +
+      'loop over the whole PROFILE_REGISTRY at import — a violation there would have ' +
+      'thrown before any test in this file could run)',
+    () => {
+      const shipping: readonly RuleProfile[] = [
+        CLASSIC_PROFILE,
+        BALANCED_PROFILE,
+        BLITZ_PROFILE,
+        TWO_PLAYER_PROFILE,
+      ];
+      for (const profile of shipping) {
+        expect(() => validateRuleProfile(profile)).not.toThrow();
+      }
+    },
+  );
+
+  it('G1 rejects catchUp.eventTilesInterval < 1 (the modulo check would be permanently false)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: { ...CLASSIC_PROFILE.catchUp, eventTilesInterval: 0 },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/eventTilesInterval/);
+  });
+
+  it('G2 rejects catchUp.eventTiles:true with catchUp.robinHood:false (a dead grant nobody can spend)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: { ...CLASSIC_PROFILE.catchUp, eventTiles: true, robinHood: false },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/robinHood/);
+  });
+
+  it('G3 rejects catchUp.robinHoodExchangeRate >= bankTrade.baseRate (a surcharge, not a discount)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: {
+        ...CLASSIC_PROFILE.catchUp,
+        robinHoodExchangeRate: CLASSIC_PROFILE.bankTrade.baseRate, // == 4, not < 4
+      },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/robinHoodExchangeRate/);
+  });
+
+  it('G3 does NOT reject a rate equal to a 2:1 port rate — only the base-rate upper bound is a real invariant', () => {
+    const twoToOne: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: { ...CLASSIC_PROFILE.catchUp, robinHoodExchangeRate: 2 },
+    };
+    expect(() => validateRuleProfile(twoToOne)).not.toThrow();
   });
 });
