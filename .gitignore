@@ -22,3 +22,6 @@ coverage/
 .env
 .env.local
 .pnpm-store/
+
+# S2.2.5 balance-sim CLI output — generated per-run; the story file carries the reported numbers.
+packages/bots/sim-results.json

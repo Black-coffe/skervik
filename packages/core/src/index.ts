@@ -58,6 +58,7 @@ export type {
   BuildProfile,
   CatchUpProfile,
   DevCardProfile,
+  ExperimentalProfileId,
   ProductionProfile,
   RobberProfile,
   RuleProfile,
@@ -70,6 +71,7 @@ export {
   BALANCED_PROFILE,
   BLITZ_PROFILE,
   CLASSIC_PROFILE,
+  EXPERIMENTAL_PROFILE_IDS,
   loadRuleProfile,
   TWO_PLAYER_PROFILE,
 } from './ruleProfile.js';

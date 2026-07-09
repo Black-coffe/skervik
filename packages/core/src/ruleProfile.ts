@@ -654,13 +654,43 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
 };
 
 /**
- * Resolves a {@link RuleProfileId} to its {@link RuleProfile} — a pure, total,
- * deterministic function (no wall-clock, no RNG, no I/O). An unknown id (only
- * reachable from an untrusted/deserialized value the type system can't check)
- * throws a typed error rather than silently falling back, so a corrupt
- * `profileId` surfaces loudly instead of quietly picking Classic rules.
+ * Groups every INTERNAL, NON-SHIPPING `*_TEST_PROFILE_ID` constant declared
+ * above behind one named export (S2.2.5) — the id set the balance-sim harness
+ * (`@skervik/bots/src/sim`) sweeps to measure a catch-up flag's live effect
+ * before S2.2.6 assigns it to a shipping preset. These are MEASUREMENT
+ * profiles, not selectable modes: they must NEVER be added to
+ * {@link RuleProfileId} and must NEVER reach a lobby or the protocol's
+ * `profileId` enum — only {@link loadRuleProfile} (a server/sim-internal
+ * resolver) accepts them.
  */
-export function loadRuleProfile(id: RuleProfileId): RuleProfile {
+export const EXPERIMENTAL_PROFILE_IDS = {
+  parallelTrade: PARALLEL_TRADE_TEST_PROFILE_ID,
+  friendlyRobber: FRIENDLY_ROBBER_TEST_PROFILE_ID,
+  robinHood: ROBIN_HOOD_TEST_PROFILE_ID,
+  finalRound: FINAL_ROUND_TEST_PROFILE_ID,
+  hiddenVp: HIDDEN_VP_TEST_PROFILE_ID,
+  finalRoundHiddenVp: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID,
+  eventTiles: EVENT_TILES_TEST_PROFILE_ID,
+  eventTilesRobinHood: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID,
+} as const;
+
+/** A measurement-only profile id from {@link EXPERIMENTAL_PROFILE_IDS} — never a {@link RuleProfileId}. */
+export type ExperimentalProfileId =
+  (typeof EXPERIMENTAL_PROFILE_IDS)[keyof typeof EXPERIMENTAL_PROFILE_IDS];
+
+/**
+ * Resolves a {@link RuleProfileId} (or, S2.2.5, an {@link ExperimentalProfileId}
+ * measurement id) to its {@link RuleProfile} — a pure, total, deterministic
+ * function (no wall-clock, no RNG, no I/O). Widening the parameter beyond
+ * {@link RuleProfileId} is TYPE-ONLY: {@link PROFILE_REGISTRY} was already
+ * keyed by `string` and has resolved every `*_TEST_PROFILE_ID` since S2.1.5 —
+ * this only lets a caller (the balance-sim harness) pass one without a cast.
+ * An unknown id (only reachable from an untrusted/deserialized value the type
+ * system can't check) throws a typed error rather than silently falling back,
+ * so a corrupt `profileId` surfaces loudly instead of quietly picking Classic
+ * rules.
+ */
+export function loadRuleProfile(id: RuleProfileId | ExperimentalProfileId): RuleProfile {
   const profile = PROFILE_REGISTRY[id];
   if (profile === undefined) {
     throw new Error(`Unknown rule profile id: ${String(id)}`);
