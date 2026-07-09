@@ -87,6 +87,7 @@ export {
   CLASSIC_VICTORY_PROFILE,
   computePublicVictoryPoints,
   isStealable,
+  isTrailing,
   validate,
 } from './validate.js';
 export type { RandomnessMismatch, VerifyRandomnessResult } from './verify.js';

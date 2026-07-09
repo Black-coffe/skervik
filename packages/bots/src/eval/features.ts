@@ -18,6 +18,7 @@ import {
   findTile,
   findVertex,
   type GameState,
+  isTrailing,
   loadRuleProfile,
   type PlayerId,
   type PortContent,
@@ -184,23 +185,6 @@ export function vpProximity(state: GameState, playerId: PlayerId): number {
   return computePublicVictoryPoints(state, playerId);
 }
 
-// TODO(S2.4.4): DELETE this shim and call core's exported `isTrailing`
-// directly once `validate.ts`/`index.ts` export it (blocked on a concurrent
-// lead-review sweep of those two files — see the story file's sequencing
-// note). Mirrors `validate.ts`'s private `isTrailing` (~:471-477) EXACTLY:
-// PUBLIC-VP-only (a hidden VP card never lifts a player out of trailing, no
-// leak), leader gap = `catchUp.robinHoodVpGap`. Kept to a SINGLE call site
-// ({@link povertyDiscountRate}) so the swap is a one-line change, not a diff
-// across two divergent definitions of "trailing".
-function isTrailingLocal(state: GameState, playerId: PlayerId): boolean {
-  const { catchUp } = loadRuleProfile(state.profileId ?? 'classic');
-  const leaderVp = state.players.reduce(
-    (max, player) => Math.max(max, computePublicVictoryPoints(state, player.id)),
-    0,
-  );
-  return computePublicVictoryPoints(state, playerId) <= leaderVp - catchUp.robinHoodVpGap;
-}
-
 /**
  * S2.4.4 — the discounted bank-trade rate a TRAILING player holding a poverty
  * token may use for `give`, or `null` when no discounted trade is worth
@@ -232,7 +216,7 @@ export function povertyDiscountRate(
   if ((state.povertyTokens?.[playerId] ?? 0) < 1) return null;
   const discountRate = profile.catchUp.robinHoodExchangeRate;
   if (discountRate >= bestBankRate(state, playerId, give)) return null;
-  if (!isTrailingLocal(state, playerId)) return null;
+  if (!isTrailing(state, playerId)) return null;
   return discountRate;
 }
 
