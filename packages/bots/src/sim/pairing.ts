@@ -7,10 +7,23 @@
 import { chiSquarePValue1df } from './metrics.js';
 import type { ProfileSweepResult } from './sweep.js';
 
+/**
+ * Which per-seed boolean outcome to pair on. S2.2.5a runs the same paired test
+ * twice: once on the PRIMARY outcome (winner trailing at the VP-relative anchor
+ * `T*`) and once on the SENSITIVITY outcome (winner was the unique last place at
+ * the old midpoint). Agreement between them is the evidence that the anchor no
+ * longer leaks the treatment; divergence means neither may be reported as a
+ * verdict.
+ */
+export type PairedOutcome = (result: ProfileSweepResult) => ReadonlyArray<boolean | null>;
+
+export const PRIMARY_OUTCOME: PairedOutcome = (r) => r.comebackBySeed;
+export const SENSITIVITY_OUTCOME: PairedOutcome = (r) => r.sensitivityBySeed;
+
 export interface DiscordantPairs {
   readonly baselineLabel: string;
   readonly profileLabel: string;
-  /** Seeds where BOTH the baseline and the profile completed — stalled seeds on either side are excluded. */
+  /** Seeds where BOTH sides produced a non-`null` outcome — stalls (and, for the sensitivity outcome, dropped ties) are excluded. */
   readonly n: number;
   readonly bothComeback: number;
   readonly neitherComeback: number;
@@ -33,6 +46,7 @@ export interface DiscordantPairs {
 export function computeDiscordantPairs(
   baseline: ProfileSweepResult,
   profile: ProfileSweepResult,
+  outcome: PairedOutcome = PRIMARY_OUTCOME,
 ): DiscordantPairs {
   let n = 0;
   let bothComeback = 0;
@@ -40,10 +54,12 @@ export function computeDiscordantPairs(
   let profileOnlyComeback = 0;
   let baselineOnlyComeback = 0;
 
-  const len = Math.min(baseline.comebackBySeed.length, profile.comebackBySeed.length);
+  const baselineOutcome = outcome(baseline);
+  const profileOutcome = outcome(profile);
+  const len = Math.min(baselineOutcome.length, profileOutcome.length);
   for (let i = 0; i < len; i += 1) {
-    const b = baseline.comebackBySeed[i];
-    const p = profile.comebackBySeed[i];
+    const b = baselineOutcome[i];
+    const p = profileOutcome[i];
     if (b === null || b === undefined || p === null || p === undefined) continue; // a stall on either side — excluded from the paired comparison
     n += 1;
     if (b && p) bothComeback += 1;
@@ -73,17 +89,30 @@ export function computeDiscordantPairs(
 
 /**
  * Compares every OTHER result in `results` against the one labelled
- * `'classic'` (falling back to the first entry if Classic isn't present in a
- * filtered run) — label-based, not index-based, so a `--profiles` subset run
- * (e.g. just `classic` + one candidate) still finds the right baseline
- * regardless of array order.
+ * `'classic'` — label-based, not index-based, so a `--profiles` subset run
+ * (e.g. just `classic` + one candidate) finds the right baseline regardless of
+ * array order.
+ *
+ * THROWS when no `'classic'` row is present (S2.2.5a, reviewer finding S-2).
+ * The old `?? results[0]` fallback silently re-baselined a subset run against
+ * whichever profile happened to sort first, labelling the output `vs. Classic`
+ * while comparing something else entirely — a wrong number that looks right.
  */
 export function computeAllDiscordantPairs(
   results: readonly ProfileSweepResult[],
+  outcome: PairedOutcome = PRIMARY_OUTCOME,
 ): readonly DiscordantPairs[] {
-  const baseline = results.find((r) => r.label === 'classic') ?? results[0];
-  if (!baseline) return [];
+  if (results.length === 0) return [];
+  const baseline = results.find((r) => r.label === 'classic');
+  if (!baseline) {
+    throw new Error(
+      "computeAllDiscordantPairs needs the 'classic' baseline in `results`, but the " +
+        `sweep ran only: ${results.map((r) => r.label).join(', ')}. Add 'classic' to ` +
+        '--profiles: a paired comparison against a substitute baseline is not the ' +
+        'comparison the report claims to print.',
+    );
+  }
   return results
     .filter((r) => r !== baseline)
-    .map((profile) => computeDiscordantPairs(baseline, profile));
+    .map((profile) => computeDiscordantPairs(baseline, profile, outcome));
 }

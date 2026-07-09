@@ -17,9 +17,11 @@ export interface ProfileSweepSpec {
 }
 
 /**
- * The ten profiles to sweep (story table). `twoPlayer` is DELIBERATELY
- * excluded — it needs `neutralSettlements` phantom placement, a different
- * player count, and a different genesis path (out of scope, Law 3).
+ * The twelve profiles to sweep (story table): the ten of the original S2.2.5
+ * set plus the two `vp9` measurement fixtures added for H3 (`f05605e`).
+ * `twoPlayer` is DELIBERATELY excluded — it needs `neutralSettlements` phantom
+ * placement, a different player count, and a different genesis path (out of
+ * scope, Law 3).
  */
 export const SWEEP_PROFILES: readonly ProfileSweepSpec[] = [
   { id: 'classic', label: 'classic', isolates: 'baseline' },

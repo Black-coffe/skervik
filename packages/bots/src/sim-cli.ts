@@ -26,8 +26,9 @@ function parseSeedsArg(argv: readonly string[]): number {
 /**
  * `--profiles a,b,c` restricts the sweep to a subset of `SWEEP_PROFILES` by
  * label (e.g. a pre-registered single profile-vs-Classic comparison at a
- * larger seed count, without paying for all ten profiles). Absent = every
- * profile, the original behavior.
+ * larger seed count, without paying for all twelve profiles). Absent = every
+ * profile, the original behavior. Any subset MUST include `classic` —
+ * `pairing.ts` throws without it rather than silently re-baselining (S2.2.5a).
  */
 function parseProfilesArg(argv: readonly string[]): readonly string[] | undefined {
   const idx = argv.indexOf('--profiles');

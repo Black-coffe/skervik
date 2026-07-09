@@ -10,6 +10,10 @@ export {
   splitByMedianTurns,
 } from './lengthSplit.js';
 export {
+  type AnchorSnapshot,
+  anchorSnapshot,
+  type AnchorThresholds,
+  anchorThresholds,
   chiSquarePValue1df,
   lastPlacePlayers,
   mean,
@@ -18,12 +22,17 @@ export {
   normalCdf,
   percentile,
   type ProportionInterval,
+  soleLastPlacePlayer,
+  trailingPlayers,
   wilsonInterval,
 } from './metrics.js';
 export {
   computeAllDiscordantPairs,
   computeDiscordantPairs,
   type DiscordantPairs,
+  type PairedOutcome,
+  PRIMARY_OUTCOME,
+  SENSITIVITY_OUTCOME,
 } from './pairing.js';
 export { type ProfileSweepSpec, SWEEP_PROFILES } from './profiles.js';
 export {

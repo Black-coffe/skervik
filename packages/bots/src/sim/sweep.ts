@@ -16,12 +16,14 @@ import {
 import { type Bot, createHeuristicBot } from '../bot.js';
 import { type SimResult, simulateMatch } from '../harness.js';
 import {
-  lastPlacePlayers,
+  anchorSnapshot,
+  anchorThresholds,
   mean,
   median,
   midpointPublicVp,
   percentile,
   type ProportionInterval,
+  soleLastPlacePlayer,
   wilsonInterval,
 } from './metrics.js';
 import { type ProfileSweepSpec, SWEEP_PROFILES } from './profiles.js';
@@ -37,8 +39,18 @@ export const SWEEP_PLAYER_IDS: readonly PlayerId[] = [
 /** Uniform difficulty for every seat in the sweep (story: "all seats difficulty: 'hard'"). */
 export const SWEEP_BOT_DIFFICULTY = 'hard';
 
-/** Named salt for the `deriveValue`-derived seed set — recorded in the report header for reproducibility. */
-export const SWEEP_SEED_SALT = 'balance-sim-salt';
+/**
+ * Named salt for the `deriveValue`-derived seed set — recorded in the report
+ * header for reproducibility.
+ *
+ * S2.2.5a rotated this from `'balance-sim-salt'` to `…-v2`. The metric that
+ * produced S2.2.5's H2/H3 results was confounded and has been replaced; a
+ * hypothesis may not be re-tested on the same data after the metric that
+ * produced its result was changed to fix that result. H2′/H3′ are therefore
+ * pre-registered against a FRESH seed set. Any number in this repo derived
+ * under `'balance-sim-salt'` is void — see the story's `## Retraction`.
+ */
+export const SWEEP_SEED_SALT = 'balance-sim-salt-v2';
 
 /** Derives `n` reproducible match seeds, the `harness.test.ts` `deriveValue('sweep-salt', i)` pattern. */
 export function sweepSeeds(n: number): readonly Seed[] {
@@ -78,23 +90,92 @@ export interface ProfileSweepResult {
   readonly medianTurns: number;
   readonly p90Turns: number;
   readonly maxTurns: number;
-  /** Share of COMPLETED matches where the midpoint-last-place player(s) included the winner. */
+  /** This profile's `victory.vpToWin` — the treatment variable H2′/H3′ vary. */
+  readonly vpToWin: number;
+  /** `ceil(vpToWin/2)` — the leader public VP that defines the anchor turn `T*`. */
+  readonly anchorVp: number;
+  /** `ceil(vpToWin/4)` — the deficit behind the leader at `T*` that makes a player "trailing". */
+  readonly deficitThreshold: number;
+  /**
+   * PRIMARY OUTCOME (S2.2.5a): share of COMPLETED matches in which the winner
+   * was TRAILING at the anchor turn `T*` — both the anchor and the deficit
+   * scale with `vpToWin`, so the metric does not move with the treatment.
+   *
+   * Matches with ZERO trailing players stay in this denominator and can never
+   * be in the numerator (see {@link zeroTrailingMatches}); the audit fields
+   * below exist so a reader can check that the profiles' trailing-count
+   * WEIGHTS, not their within-stratum rates, are not doing the work — the
+   * exact failure mode that voided the S2.2.5 metric.
+   */
   readonly comebackRate: number;
   /** 95% Wilson score interval on {@link comebackRate} (over `completed`, `n` = completed). */
   readonly comebackRateCI: ProportionInterval;
+  /** Median `T*` over completed matches — reported so a profile's anchor position is auditable. */
+  readonly medianAnchorTurn: number;
+  readonly p90AnchorTurn: number;
+  /**
+   * CONFOUND AUDIT (1): how many completed matches had exactly k trailing
+   * players at `T*`, for k in 0..3 (a 4-player cohort's leader never trails).
+   * These are the STRATUM WEIGHTS.
+   */
+  readonly trailingCountHistogram: Readonly<Record<string, number>>;
+  /**
+   * CONFOUND AUDIT (2): the comeback rate WITHIN each trailing-count stratum.
+   * If these agree across profiles while only {@link trailingCountHistogram}
+   * differs, the headline difference is a weighting artifact and NO verdict may
+   * be drawn. Under a null (winner uniform over 4 seats), stratum k's rate is
+   * k/4.
+   */
+  readonly comebackByTrailingCount: Readonly<
+    Record<
+      string,
+      { readonly matches: number; readonly comebacks: number; readonly rate: number }
+    >
+  >;
+  /** CONFOUND AUDIT (3): matches with NO trailing player — excluded from the numerator by construction. */
+  readonly zeroTrailingMatches: number;
+  /** Completed matches where the leader never reached `ceil(vpToWin/2)` public VP (hidden-VP win) — never dropped silently. */
+  readonly anchorMissingMatches: number;
+  /**
+   * Descriptive companion, weighting-free: the denominator is every (match,
+   * player) pair where that player was trailing at `T*`, and the numerator is
+   * the pairs where that player went on to win. Under a null of "trailing does
+   * not matter" this is ~0.25 by symmetry, which makes it directly
+   * interpretable — unlike a marginal rate, whose scale depends on how many
+   * players happen to be trailing.
+   */
+  readonly trailingSlots: number;
+  readonly pWinGivenTrailing: number;
+  readonly pWinGivenTrailingCI: ProportionInterval;
+  /**
+   * SENSITIVITY OUTCOME (the reviewer's cheap option): the winner was the
+   * UNIQUE last-place player at the OLD, endogenous midpoint anchor. Ties are
+   * DROPPED from the denominator, not credited to everyone tied.
+   * `sensitivityN = completed - sensitivityTiesDropped`. If this disagrees with
+   * {@link comebackRate}, the anchor still leaks and neither may be reported as
+   * a verdict.
+   */
+  readonly sensitivityComebackRate: number;
+  readonly sensitivityComebackRateCI: ProportionInterval;
+  readonly sensitivityN: number;
+  readonly sensitivityTiesDropped: number;
+  /** Per-seed sensitivity outcome, aligned with the shared seed order; `null` = stalled seed OR dropped tie. */
+  readonly sensitivityBySeed: ReadonlyArray<boolean | null>;
   readonly meanFinalVpGap: number;
   /** Win share by seat index (0..3), over completed matches. */
   readonly seatWinRate: readonly number[];
   readonly eventTilesInterval: number;
   /**
-   * Per-seed comeback outcome, ALIGNED WITH the sweep's own seed order (same
-   * index as the shared seed list) — `null` for a stalled seed. Feeds the
+   * Per-seed PRIMARY comeback outcome, ALIGNED WITH the sweep's own seed order
+   * (same index as the shared seed list) — `null` for a stalled seed. Feeds the
    * paired (McNemar-style) discordant-pair comparison against Classic
    * (`pairing.ts`) — a marginal comebackRate delta alone can't tell whether
    * two profiles disagree on the SAME seeds or merely have the same rate by
    * coincidence.
    */
   readonly comebackBySeed: ReadonlyArray<boolean | null>;
+  /** Per-seed count of trailing players at `T*` — `null` for a stalled seed or a missing anchor. */
+  readonly trailingCountBySeed: ReadonlyArray<number | null>;
   /**
    * Per-seed `SimResult.turns` (applied-step count), ALIGNED WITH the same
    * seed order as {@link comebackBySeed} — `null` for a stalled seed. Feeds
@@ -130,14 +211,44 @@ export function runSweepForProfile(
   spec: ProfileSweepSpec,
   seeds: readonly Seed[],
 ): ProfileSweepResult {
+  // Cast: `ProfileSweepSpec.id` is untyped `string` (shipping ids + measurement
+  // ids share one field) — the registry key, not the type, is what resolves it
+  // (same precedent as every internal test profile's `X as RuleProfileId`).
+  const profile = loadRuleProfile(spec.id as RuleProfileId | ExperimentalProfileId);
+  const { vpToWin } = profile.victory;
+  const { anchorVp, deficitThreshold } = anchorThresholds(vpToWin);
+
   const turnsList: number[] = [];
+  const anchorTurns: number[] = [];
   const stalledSeeds: Seed[] = [];
   const vpGaps: number[] = [];
   const seatWins = SWEEP_PLAYER_IDS.map(() => 0);
   const comebackBySeed: Array<boolean | null> = [];
+  const trailingCountBySeed: Array<number | null> = [];
+  const sensitivityBySeed: Array<boolean | null> = [];
   const turnsBySeed: Array<number | null> = [];
+  // Pre-seeded 0..3 in a fixed key order: a 4-seat cohort's leader never trails,
+  // and `JSON.stringify` preserves insertion order, so byte-identical output must
+  // not depend on which stratum a run happens to observe first (AC: determinism).
+  const trailingCountHistogram: Record<string, number> = {
+    '0': 0,
+    '1': 0,
+    '2': 0,
+    '3': 0,
+  };
+  const comebacksByTrailingCount: Record<string, number> = {
+    '0': 0,
+    '1': 0,
+    '2': 0,
+    '3': 0,
+  };
   let comebacks = 0;
   let completed = 0;
+  let zeroTrailingMatches = 0;
+  let anchorMissingMatches = 0;
+  let trailingSlots = 0;
+  let sensitivityComebacks = 0;
+  let sensitivityTiesDropped = 0;
   let povertyTokensGrantedEvents = 0;
   let povertyTokensGrantedTotal = 0;
   let povertyDiscountTrades = 0;
@@ -156,6 +267,8 @@ export function runSweepForProfile(
       // Non-termination (cap hit) or a deadlock — reported below, never dropped silently.
       stalledSeeds.push(seed);
       comebackBySeed.push(null);
+      trailingCountBySeed.push(null);
+      sensitivityBySeed.push(null);
       turnsBySeed.push(null);
       continue;
     }
@@ -179,12 +292,43 @@ export function runSweepForProfile(
       povertyTokensAtEndHistogram[held] = (povertyTokensAtEndHistogram[held] ?? 0) + 1;
     }
 
+    // PRIMARY (S2.2.5a): was the winner trailing at the VP-relative anchor `T*`?
+    const anchor = anchorSnapshot(result.events, SWEEP_PLAYER_IDS, vpToWin);
+    if (anchor === null) {
+      // The leader never reached ceil(V/2) PUBLIC VP — only reachable if hidden
+      // VP carried the win. Counted, never silently folded into the numerator.
+      anchorMissingMatches += 1;
+      comebackBySeed.push(null);
+      trailingCountBySeed.push(null);
+    } else {
+      anchorTurns.push(anchor.turn);
+      const trailingCount = anchor.trailing.length;
+      const stratum = String(trailingCount);
+      trailingCountHistogram[stratum] = (trailingCountHistogram[stratum] ?? 0) + 1;
+      trailingSlots += trailingCount;
+      if (trailingCount === 0) zeroTrailingMatches += 1;
+
+      const isComeback =
+        result.winnerId !== null && anchor.trailing.includes(result.winnerId);
+      if (isComeback) {
+        comebacks += 1;
+        comebacksByTrailingCount[stratum] = (comebacksByTrailingCount[stratum] ?? 0) + 1;
+      }
+      comebackBySeed.push(isComeback);
+      trailingCountBySeed.push(trailingCount);
+    }
+
+    // SENSITIVITY: unique last place at the OLD, endogenous midpoint — ties dropped.
     const midpoint = midpointPublicVp(result.events, result.finalState, SWEEP_PLAYER_IDS);
-    const trailingAtMidpoint = lastPlacePlayers(midpoint, SWEEP_PLAYER_IDS);
-    const isComeback =
-      result.winnerId !== null && trailingAtMidpoint.includes(result.winnerId);
-    if (isComeback) comebacks += 1;
-    comebackBySeed.push(isComeback);
+    const soleLast = soleLastPlacePlayer(midpoint, SWEEP_PLAYER_IDS);
+    if (soleLast === null) {
+      sensitivityTiesDropped += 1;
+      sensitivityBySeed.push(null);
+    } else {
+      const isSensitivityComeback = result.winnerId === soleLast;
+      if (isSensitivityComeback) sensitivityComebacks += 1;
+      sensitivityBySeed.push(isSensitivityComeback);
+    }
 
     const finalVps = SWEEP_PLAYER_IDS.map((id) =>
       computePublicVictoryPoints(result.finalState, id),
@@ -201,10 +345,22 @@ export function runSweepForProfile(
     }
   }
 
-  // Cast: `ProfileSweepSpec.id` is untyped `string` (shipping ids + measurement
-  // ids share one field) — the registry key, not the type, is what resolves it
-  // (same precedent as every internal test profile's `X as RuleProfileId`).
-  const profile = loadRuleProfile(spec.id as RuleProfileId | ExperimentalProfileId);
+  // Matches that actually produced an anchor — the primary metric's denominator.
+  const anchoredMatches = completed - anchorMissingMatches;
+  const sensitivityN = completed - sensitivityTiesDropped;
+  const comebackByTrailingCount: Record<
+    string,
+    { matches: number; comebacks: number; rate: number }
+  > = {};
+  for (const stratum of ['0', '1', '2', '3']) {
+    const matches = trailingCountHistogram[stratum] ?? 0;
+    const stratumComebacks = comebacksByTrailingCount[stratum] ?? 0;
+    comebackByTrailingCount[stratum] = {
+      matches,
+      comebacks: stratumComebacks,
+      rate: matches > 0 ? stratumComebacks / matches : 0,
+    };
+  }
 
   return {
     id: spec.id,
@@ -216,12 +372,30 @@ export function runSweepForProfile(
     medianTurns: median(turnsList),
     p90Turns: percentile(turnsList, 90),
     maxTurns: turnsList.length > 0 ? Math.max(...turnsList) : 0,
-    comebackRate: completed > 0 ? comebacks / completed : 0,
-    comebackRateCI: wilsonInterval(comebacks, completed),
+    vpToWin,
+    anchorVp,
+    deficitThreshold,
+    comebackRate: anchoredMatches > 0 ? comebacks / anchoredMatches : 0,
+    comebackRateCI: wilsonInterval(comebacks, anchoredMatches),
+    medianAnchorTurn: median(anchorTurns),
+    p90AnchorTurn: percentile(anchorTurns, 90),
+    trailingCountHistogram,
+    comebackByTrailingCount,
+    zeroTrailingMatches,
+    anchorMissingMatches,
+    trailingSlots,
+    pWinGivenTrailing: trailingSlots > 0 ? comebacks / trailingSlots : 0,
+    pWinGivenTrailingCI: wilsonInterval(comebacks, trailingSlots),
+    sensitivityComebackRate: sensitivityN > 0 ? sensitivityComebacks / sensitivityN : 0,
+    sensitivityComebackRateCI: wilsonInterval(sensitivityComebacks, sensitivityN),
+    sensitivityN,
+    sensitivityTiesDropped,
+    sensitivityBySeed,
     meanFinalVpGap: mean(vpGaps),
     seatWinRate: seatWins.map((w) => (completed > 0 ? w / completed : 0)),
     eventTilesInterval: profile.catchUp.eventTilesInterval,
     comebackBySeed,
+    trailingCountBySeed,
     turnsBySeed,
     povertyTokensGrantedEvents,
     povertyTokensGrantedTotal,
@@ -236,8 +410,10 @@ export function runSweepForProfile(
  * (order-preserving, so `'classic'` stays the McNemar baseline in
  * `pairing.ts` regardless of which subset is requested). Lets a caller
  * pre-register a SINGLE profile-vs-Classic comparison at a larger seed count
- * without paying for all ten profiles (e.g. `runSweep(5000, ['classic',
- * 'friendlyRobberTest'])`).
+ * without paying for all twelve profiles (e.g. `runSweep(5000, ['classic',
+ * 'friendlyRobberTest'])`). `'classic'` must be in any requested subset —
+ * `pairing.ts` throws without it rather than silently re-baselining (S2.2.5a,
+ * reviewer finding S-2).
  */
 export function runSweep(
   n: number,
