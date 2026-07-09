@@ -5,11 +5,20 @@
 // package's forcing tests. Changes NO core rule and NO preset — measurement
 // only (see `docs/specs/m2-mode-platform/S2.2.5-balance-sim-harness.md`).
 export {
+  computeAllLengthSplits,
+  type LengthSplit,
+  splitByMedianTurns,
+} from './lengthSplit.js';
+export {
+  chiSquarePValue1df,
   lastPlacePlayers,
   mean,
   median,
   midpointPublicVp,
+  normalCdf,
   percentile,
+  type ProportionInterval,
+  wilsonInterval,
 } from './metrics.js';
 export {
   computeAllDiscordantPairs,

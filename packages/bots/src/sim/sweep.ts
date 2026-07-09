@@ -96,6 +96,14 @@ export interface ProfileSweepResult {
    */
   readonly comebackBySeed: ReadonlyArray<boolean | null>;
   /**
+   * Per-seed `SimResult.turns` (applied-step count), ALIGNED WITH the same
+   * seed order as {@link comebackBySeed} — `null` for a stalled seed. Feeds
+   * the within-profile match-length-vs-comeback split (`lengthSplit.ts`,
+   * team-lead-requested exploratory diagnostic): whether SHORTER matches of
+   * THIS profile show a higher comeback rate than longer ones.
+   */
+  readonly turnsBySeed: ReadonlyArray<number | null>;
+  /**
    * Robin-Hood/poverty-token diagnostics (team-lead-requested, post-hoc):
    * total `poverty.tokensGranted` EVENTS across completed seeds, the total
    * token-units those events granted (sum of `grants` values — an event can
@@ -127,6 +135,7 @@ export function runSweepForProfile(
   const vpGaps: number[] = [];
   const seatWins = SWEEP_PLAYER_IDS.map(() => 0);
   const comebackBySeed: Array<boolean | null> = [];
+  const turnsBySeed: Array<number | null> = [];
   let comebacks = 0;
   let completed = 0;
   let povertyTokensGrantedEvents = 0;
@@ -147,11 +156,13 @@ export function runSweepForProfile(
       // Non-termination (cap hit) or a deadlock — reported below, never dropped silently.
       stalledSeeds.push(seed);
       comebackBySeed.push(null);
+      turnsBySeed.push(null);
       continue;
     }
 
     completed += 1;
     turnsList.push(result.turns);
+    turnsBySeed.push(result.turns);
 
     for (const event of result.events) {
       if (event.type === 'poverty.tokensGranted') {
@@ -211,6 +222,7 @@ export function runSweepForProfile(
     seatWinRate: seatWins.map((w) => (completed > 0 ? w / completed : 0)),
     eventTilesInterval: profile.catchUp.eventTilesInterval,
     comebackBySeed,
+    turnsBySeed,
     povertyTokensGrantedEvents,
     povertyTokensGrantedTotal,
     povertyDiscountTrades,

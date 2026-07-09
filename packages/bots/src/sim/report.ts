@@ -3,6 +3,7 @@
 // the payload — AC5 requires two runs at the same seed count to be
 // BYTE-IDENTICAL, so nothing here may vary run-to-run other than the results
 // themselves).
+import { computeAllLengthSplits, type LengthSplit } from './lengthSplit.js';
 import { computeAllDiscordantPairs, type DiscordantPairs } from './pairing.js';
 import {
   type ProfileSweepResult,
@@ -28,6 +29,14 @@ export interface SweepReport {
   readonly results: readonly ProfileSweepResult[];
   /** Each non-Classic profile's paired, per-seed comeback comparison against Classic (team-lead diagnostic). */
   readonly discordantPairs: readonly DiscordantPairs[];
+  /**
+   * EXPLORATORY (not a hypothesis test — no p-value): for EACH profile,
+   * splits its own completed matches at its own median `turns` and reports
+   * the comeback rate in the shorter vs. longer half. Answers "does match
+   * length alone predict a comeback, within one profile" independent of any
+   * catch-up flag (team-lead diagnostic).
+   */
+  readonly lengthSplits: readonly LengthSplit[];
 }
 
 export const SWEEP_NOTES: readonly string[] = [
@@ -54,6 +63,7 @@ export function buildReport(
     notes: SWEEP_NOTES,
     results,
     discordantPairs: computeAllDiscordantPairs(results),
+    lengthSplits: computeAllLengthSplits(results),
   };
 }
 
@@ -152,6 +162,29 @@ export function formatMarkdownTable(report: SweepReport): string {
       `| ${d.profileLabel} | ${d.n} | ${d.bothComeback} | ${d.neitherComeback} | ` +
         `${d.profileOnlyComeback} | ${d.baselineOnlyComeback} | ${d.mcNemarChiSquare.toFixed(2)} | ` +
         `${d.pValue.toFixed(4)} |`,
+    );
+  }
+  lines.push('');
+
+  lines.push(
+    '## Match-length vs. comeback split (EXPLORATORY — descriptive, not a hypothesis test)',
+  );
+  lines.push('');
+  lines.push(
+    'For EACH profile, splits its own completed matches at its own median `turns` and ' +
+      'reports the comeback rate in the shorter half vs. the longer half. Answers whether ' +
+      'match length alone predicts a comeback WITHIN one profile, independent of any ' +
+      'catch-up flag. No p-value is attached — this is descriptive, not pre-registered.',
+  );
+  lines.push('');
+  lines.push(
+    '| profile | n | medianTurns (split point) | shorterN | shorter comeback% | longerN | longer comeback% |',
+  );
+  lines.push('|---|---|---|---|---|---|---|');
+  for (const s of report.lengthSplits) {
+    lines.push(
+      `| ${s.label} | ${s.n} | ${s.medianTurns.toFixed(1)} | ${s.shorterN} | ` +
+        `${pct(s.shorterComebackRate)} | ${s.longerN} | ${pct(s.longerComebackRate)} |`,
     );
   }
   lines.push('');
