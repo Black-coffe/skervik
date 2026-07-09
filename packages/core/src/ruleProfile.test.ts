@@ -226,6 +226,30 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
     expect(() => validateRuleProfile(violating)).toThrow(/eventTilesInterval/);
   });
 
+  // S2.2.6 lead-review nit 4 (core side): `NaN < 1` and `Infinity < 1` are
+  // BOTH `false`, so a bare `< 1` check lets the exact dead-flag defect it
+  // exists to prevent slip through unnoticed (`(s+1) % NaN` and
+  // `(s+1) % Infinity` are never `0` either). The real invariant is
+  // `Number.isInteger(v) && v >= 1`.
+  it('G1 rejects catchUp.eventTilesInterval = NaN (the modulo check is NEVER 0, same dead-flag defect)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: { ...CLASSIC_PROFILE.catchUp, eventTilesInterval: Number.NaN },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/eventTilesInterval/);
+  });
+
+  it('G1 rejects catchUp.eventTilesInterval = Infinity (passes a bare `< 1` check, same dead-flag defect)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: {
+        ...CLASSIC_PROFILE.catchUp,
+        eventTilesInterval: Number.POSITIVE_INFINITY,
+      },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/eventTilesInterval/);
+  });
+
   it('G2 rejects catchUp.eventTiles:true with catchUp.robinHood:false (a dead grant nobody can spend)', () => {
     const violating: RuleProfile = {
       ...CLASSIC_PROFILE,
@@ -251,5 +275,19 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
       catchUp: { ...CLASSIC_PROFILE.catchUp, robinHoodExchangeRate: 2 },
     };
     expect(() => validateRuleProfile(twoToOne)).not.toThrow();
+  });
+
+  // S2.2.6 lead-review nit 3: the lower-bound leg (`< 1`) had no forcing
+  // test — deleting it left all 331 tests green, the exact "guard exists,
+  // property isn't bound" disease G1/G2 exist to prevent. The leg is not
+  // decorative: at rate 0, a trailing token-holder's `intent.count === 0`
+  // satisfies the discount branch (`validate.ts:1986`), `canAfford({give:0})`
+  // trivially passes, and the bank hands over a resource for nothing.
+  it('G3 rejects catchUp.robinHoodExchangeRate 0 (a free resource, not a discount)', () => {
+    const violating: RuleProfile = {
+      ...CLASSIC_PROFILE,
+      catchUp: { ...CLASSIC_PROFILE.catchUp, robinHoodExchangeRate: 0 },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/robinHoodExchangeRate/);
   });
 });

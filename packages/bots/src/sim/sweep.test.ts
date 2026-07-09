@@ -216,19 +216,19 @@ describe('buildReport — labels the scoring mode instead of hiding it', () => {
   });
 
   /**
-   * S2.2.6 lead-review nit 4: the test above pins the FIXED string, not the
-   * BUG CLASS. The reviewer proved this — reintroducing the exact defect
-   * (re-appending a profile name after the asserted prefix, e.g.
-   * `` `MATCHED — every arm scored at vpToWin=${report.scoredAtVpToWin} (the
-   * classic baseline cuts)` ``) left all 71 tests green. A header naming a
-   * profile it did not use is this epic's whole failure mode (describing an
-   * instrument other than the one that took the reading), so the guard must
-   * forbid the SHAPE (any profile label appended to the line), not just miss
-   * one fixed wording. Scoped to the `- anchor scoring:` LINE only —
-   * `not.toContain` over the whole markdown would false-positive on
-   * `comebackMetric`/`excludedProfiles`, which legitimately mention `classic`.
+   * S2.2.6 lead-review nit 4 (round 2): the round-1 version of this test
+   * still enumerated the names a defect might use (`SWEEP_PROFILES` labels,
+   * via an UN-anchored regex) instead of forbidding the shape. The reviewer
+   * defeated it twice: appending `(the Classic baseline cuts)` slipped past
+   * the `not.toContain` loop because it is case-sensitive and
+   * `CLASSIC_PROFILE.name` is `'Classic'`, not `'classic'`; appending `(the
+   * twoPlayer baseline cuts)` slipped past because `twoPlayer` is a REAL
+   * `RuleProfileId` deliberately excluded from `SWEEP_PROFILES`, so the loop
+   * never checked it. Both mutations left all 72 tests green. The fix is an
+   * end-anchored (`$`) regex matching the ENTIRE line — nothing can be
+   * appended, so no enumeration of "known bad names" is needed at all.
    */
-  it('the anchor-scoring line names cuts only, never a profile label (bug-class guard)', () => {
+  it('the anchor-scoring line is EXACTLY one of two shapes, end to end (bug-class guard)', () => {
     const anchorScoringLine = (report: ReturnType<typeof buildReport>): string => {
       const line = formatMarkdownTable(report)
         .split('\n')
@@ -244,14 +244,9 @@ describe('buildReport — labels the scoring mode instead of hiding it', () => {
       buildReport(2, runSweep(2, ['classic', 'blitz'], { selfScored: true })),
     );
 
-    for (const line of [matchedLine, selfScoredLine]) {
-      expect(line).toMatch(
-        /^- anchor scoring: (MATCHED — every arm scored at vpToWin=\d+|\*\*SELF-SCORED)/,
-      );
-      // No profile label anywhere on the line — the cuts are a NUMBER, not a name.
-      for (const spec of SWEEP_PROFILES) {
-        expect(line).not.toContain(spec.label);
-      }
-    }
+    const shape =
+      /^- anchor scoring: (MATCHED — every arm scored at vpToWin=\d+|\*\*SELF-SCORED \(CONFOUNDED\)\*\* — each arm scored at its own vpToWin)$/;
+    expect(matchedLine).toMatch(shape);
+    expect(selfScoredLine).toMatch(shape);
   });
 });

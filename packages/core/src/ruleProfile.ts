@@ -147,12 +147,16 @@ export interface CatchUpProfile {
    * in the final standings. Off on every shipping preset.
    *
    * **S2.2.6 measurement note:** this is an INFORMATION-HIDING mechanic —
-   * its value is social (you cannot see whom to gang up on), not
-   * mechanical. A bot cohort that reads full `GameState` cannot measure a
-   * social effect at ANY sample size (the bots see the hidden VP anyway; only
-   * a human player's view is actually restricted). The balance-sim's earlier
-   * "hiddenVp measurably HURTS comebacks" finding was an artifact of a
-   * confounded metric and was retracted in S2.2.5a; do not infer from this
+   * its value is that OPPONENTS cannot see who is about to win and so cannot
+   * coordinate against them, not a mechanical rule change. `@skervik/bots`'
+   * heuristic bots never read hidden VP either (every VP read goes through
+   * `computePublicVictoryPoints`, `eval/features.ts:184`), so a bot cohort is
+   * symmetrically blind to what this flag hides — but that is not why the
+   * effect is unmeasurable. It is unmeasurable because our bots never
+   * coordinate against a leader at all, visible or not, so there is no
+   * collusion channel for hiding information to disrupt. The balance-sim's
+   * earlier "hiddenVp measurably HURTS comebacks" finding was an artifact of
+   * a confounded metric and was retracted in S2.2.5a; do not infer from this
    * flag's placement in `CatchUpProfile` that enabling it helps OR hurts
    * trailing players — that question is not answerable by this harness.
    */
@@ -259,16 +263,24 @@ export function validateRuleProfile(profile: RuleProfile): void {
   // G1 — `validate.ts`'s event-storm cadence computes
   // `(sevensRolled + 1) % eventTilesInterval`; at `interval: 0` that is
   // `NaN === 0`, which is always `false` — the mechanic silently never
-  // fires. No crash, no error, just a permanently dead flag. Checked
-  // unconditionally (not only while `eventTiles` is on): the value is
-  // nonsensical at 0 regardless of whether the flag is currently enabled,
-  // and would silently break the moment someone flips it on without
-  // touching this field.
-  if (profile.catchUp.eventTilesInterval < 1) {
+  // fires. The real invariant is "the cadence CAN fire", which is
+  // `Number.isInteger(v) && v >= 1`, not merely `v >= 1`: `NaN < 1` and
+  // `Infinity < 1` are BOTH `false`, so a bare `< 1` check lets both slip
+  // through, and `(s + 1) % NaN`/`(s + 1) % Infinity` are never `0` either —
+  // the exact permanently-dead-flag defect this guard exists to catch.
+  // Checked unconditionally (not only while `eventTiles` is on): the value
+  // is nonsensical regardless of whether the flag is currently enabled, and
+  // would silently break the moment someone flips it on without touching
+  // this field.
+  if (
+    !Number.isInteger(profile.catchUp.eventTilesInterval) ||
+    profile.catchUp.eventTilesInterval < 1
+  ) {
     throw new Error(
-      `Rule profile "${profile.id}": catchUp.eventTilesInterval must be >= 1 ` +
-        `(got ${profile.catchUp.eventTilesInterval}) — 0 makes the event-storm ` +
-        'cadence check permanently false, a silently dead flag.',
+      `Rule profile "${profile.id}": catchUp.eventTilesInterval must be an ` +
+        `integer >= 1 (got ${profile.catchUp.eventTilesInterval}) — a non-integer ` +
+        'or non-positive value makes the event-storm cadence check permanently ' +
+        'false, a silently dead flag.',
     );
   }
   // G2 — `reduce.ts`'s `spendPovertyToken` has exactly ONE call site, gated
