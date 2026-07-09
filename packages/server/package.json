@@ -26,6 +26,6 @@
     "@colyseus/sdk": "^0.17.43",
     "@colyseus/testing": "^0.17.11",
     "tsup": "^8",
-    "typescript": "^5"
+    "typescript": "^7"
   }
 }
