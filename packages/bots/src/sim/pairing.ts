@@ -4,6 +4,7 @@
 // percentages can look similar (or different) by coincidence; this asks the
 // statistically sharper question: on how many INDIVIDUAL seeds did the two
 // profiles actually disagree, and in which direction?
+import { chiSquarePValue1df } from './metrics.js';
 import type { ProfileSweepResult } from './sweep.js';
 
 export interface DiscordantPairs {
@@ -24,6 +25,8 @@ export interface DiscordantPairs {
    * signal either way).
    */
   readonly mcNemarChiSquare: number;
+  /** Two-sided p-value for {@link mcNemarChiSquare} (1 df). `1` when there are no discordant pairs. */
+  readonly pValue: number;
 }
 
 /** Compares `profile` against `baseline` (normally Classic) index-by-index over their shared seed order. */
@@ -64,14 +67,23 @@ export function computeDiscordantPairs(
     profileOnlyComeback,
     baselineOnlyComeback,
     mcNemarChiSquare,
+    pValue: chiSquarePValue1df(mcNemarChiSquare),
   };
 }
 
-/** Compares every OTHER result in `results` against the FIRST one (Classic, by `SWEEP_PROFILES` order). */
+/**
+ * Compares every OTHER result in `results` against the one labelled
+ * `'classic'` (falling back to the first entry if Classic isn't present in a
+ * filtered run) — label-based, not index-based, so a `--profiles` subset run
+ * (e.g. just `classic` + one candidate) still finds the right baseline
+ * regardless of array order.
+ */
 export function computeAllDiscordantPairs(
   results: readonly ProfileSweepResult[],
 ): readonly DiscordantPairs[] {
-  const baseline = results[0];
+  const baseline = results.find((r) => r.label === 'classic') ?? results[0];
   if (!baseline) return [];
-  return results.slice(1).map((profile) => computeDiscordantPairs(baseline, profile));
+  return results
+    .filter((r) => r !== baseline)
+    .map((profile) => computeDiscordantPairs(baseline, profile));
 }

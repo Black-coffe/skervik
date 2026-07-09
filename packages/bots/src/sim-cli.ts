@@ -23,9 +23,30 @@ function parseSeedsArg(argv: readonly string[]): number {
   return n;
 }
 
+/**
+ * `--profiles a,b,c` restricts the sweep to a subset of `SWEEP_PROFILES` by
+ * label (e.g. a pre-registered single profile-vs-Classic comparison at a
+ * larger seed count, without paying for all ten profiles). Absent = every
+ * profile, the original behavior.
+ */
+function parseProfilesArg(argv: readonly string[]): readonly string[] | undefined {
+  const idx = argv.indexOf('--profiles');
+  if (idx === -1) return undefined;
+  const raw = argv[idx + 1];
+  if (!raw) {
+    throw new Error('--profiles requires a comma-separated list of profile labels');
+  }
+  return raw
+    .split(',')
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+}
+
 function main(): void {
-  const seeds = parseSeedsArg(process.argv.slice(2));
-  const results = runSweep(seeds);
+  const argv = process.argv.slice(2);
+  const seeds = parseSeedsArg(argv);
+  const profileLabels = parseProfilesArg(argv);
+  const results = runSweep(seeds, profileLabels);
   const report = buildReport(seeds, results);
 
   process.stdout.write(formatMarkdownTable(report));

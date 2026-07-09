@@ -21,6 +21,8 @@ import {
   median,
   midpointPublicVp,
   percentile,
+  type ProportionInterval,
+  wilsonInterval,
 } from './metrics.js';
 import { type ProfileSweepSpec, SWEEP_PROFILES } from './profiles.js';
 
@@ -78,6 +80,8 @@ export interface ProfileSweepResult {
   readonly maxTurns: number;
   /** Share of COMPLETED matches where the midpoint-last-place player(s) included the winner. */
   readonly comebackRate: number;
+  /** 95% Wilson score interval on {@link comebackRate} (over `completed`, `n` = completed). */
+  readonly comebackRateCI: ProportionInterval;
   readonly meanFinalVpGap: number;
   /** Win share by seat index (0..3), over completed matches. */
   readonly seatWinRate: readonly number[];
@@ -202,6 +206,7 @@ export function runSweepForProfile(
     p90Turns: percentile(turnsList, 90),
     maxTurns: turnsList.length > 0 ? Math.max(...turnsList) : 0,
     comebackRate: completed > 0 ? comebacks / completed : 0,
+    comebackRateCI: wilsonInterval(comebacks, completed),
     meanFinalVpGap: mean(vpGaps),
     seatWinRate: seatWins.map((w) => (completed > 0 ? w / completed : 0)),
     eventTilesInterval: profile.catchUp.eventTilesInterval,
@@ -213,8 +218,22 @@ export function runSweepForProfile(
   };
 }
 
-/** Runs every {@link SWEEP_PROFILES} entry over the SAME `n`-seed set. */
-export function runSweep(n: number): readonly ProfileSweepResult[] {
+/**
+ * Runs every {@link SWEEP_PROFILES} entry over the SAME `n`-seed set — or, if
+ * `profileLabels` is given, only the entries whose `label` is in that list
+ * (order-preserving, so `'classic'` stays the McNemar baseline in
+ * `pairing.ts` regardless of which subset is requested). Lets a caller
+ * pre-register a SINGLE profile-vs-Classic comparison at a larger seed count
+ * without paying for all ten profiles (e.g. `runSweep(5000, ['classic',
+ * 'friendlyRobberTest'])`).
+ */
+export function runSweep(
+  n: number,
+  profileLabels?: readonly string[],
+): readonly ProfileSweepResult[] {
   const seeds = sweepSeeds(n);
-  return SWEEP_PROFILES.map((spec) => runSweepForProfile(spec, seeds));
+  const specs = profileLabels
+    ? SWEEP_PROFILES.filter((spec) => profileLabels.includes(spec.label))
+    : SWEEP_PROFILES;
+  return specs.map((spec) => runSweepForProfile(spec, seeds));
 }

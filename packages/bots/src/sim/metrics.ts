@@ -84,3 +84,61 @@ export function mean(xs: readonly number[]): number {
   if (xs.length === 0) return 0;
   return xs.reduce((a, b) => a + b, 0) / xs.length;
 }
+
+/**
+ * Standard normal CDF via the Abramowitz & Stegun 7.1.26 rational
+ * approximation (max error < 7.5e-8) — no external stats library needed for
+ * the McNemar p-value / Wilson interval below.
+ */
+export function normalCdf(z: number): number {
+  const sign = z < 0 ? -1 : 1;
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t +
+      0.254829592) *
+      t *
+      Math.exp(-x * x);
+  return 0.5 * (1 + sign * y);
+}
+
+/**
+ * Two-sided p-value for a 1-degree-of-freedom chi-square statistic. Exact
+ * given {@link normalCdf}'s approximation: a chi-square(1) variate is Z², so
+ * `P(chi2_1 > x) = P(|Z| > sqrt(x)) = 2 * (1 - Phi(sqrt(x)))` — this is what
+ * a McNemar continuity-corrected chi-square statistic is tested against.
+ */
+export function chiSquarePValue1df(chiSquare: number): number {
+  if (chiSquare <= 0) return 1;
+  return 2 * (1 - normalCdf(Math.sqrt(chiSquare)));
+}
+
+export interface ProportionInterval {
+  readonly point: number;
+  readonly low: number;
+  readonly high: number;
+}
+
+/**
+ * Wilson score interval for a binomial proportion — preferred over the plain
+ * Wald interval (`p ± z*sqrt(p(1-p)/n)`) because it stays inside [0,1] and
+ * is more accurate at the modest n / non-central p this sim reports at.
+ */
+export function wilsonInterval(
+  successes: number,
+  n: number,
+  z = 1.96,
+): ProportionInterval {
+  if (n === 0) return { point: 0, low: 0, high: 0 };
+  const p = successes / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const center = (p + z2 / (2 * n)) / denom;
+  const halfwidth = (z * Math.sqrt((p * (1 - p)) / n + z2 / (4 * n * n))) / denom;
+  return {
+    point: p,
+    low: Math.max(0, center - halfwidth),
+    high: Math.min(1, center + halfwidth),
+  };
+}

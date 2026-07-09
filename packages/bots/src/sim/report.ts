@@ -79,14 +79,14 @@ export function formatMarkdownTable(report: SweepReport): string {
   for (const note of report.notes) lines.push(`- note: ${note}`);
   lines.push('');
   lines.push(
-    '| profile | n | median turns | p90 turns | comeback% | mean final VP gap | seat win% (1/2/3/4) | eventTilesInterval |',
+    '| profile | n | median turns | p90 turns | comeback% [95% CI] | mean final VP gap | seat win% (1/2/3/4) | eventTilesInterval |',
   );
   lines.push('|---|---|---|---|---|---|---|---|');
   for (const r of report.results) {
     lines.push(
       `| ${r.label} | ${r.n} | ${r.medianTurns.toFixed(1)} | ${r.p90Turns.toFixed(1)} | ` +
-        `${pct(r.comebackRate)} | ${r.meanFinalVpGap.toFixed(2)} | ${seatWinCol(r.seatWinRate)} | ` +
-        `${r.eventTilesInterval} |`,
+        `${pct(r.comebackRate)} [${pct(r.comebackRateCI.low)}-${pct(r.comebackRateCI.high)}] | ` +
+        `${r.meanFinalVpGap.toFixed(2)} | ${seatWinCol(r.seatWinRate)} | ${r.eventTilesInterval} |`,
     );
   }
   lines.push('');
@@ -139,17 +139,19 @@ export function formatMarkdownTable(report: SweepReport): string {
       'comeback that Classic, on that exact seed, did NOT (profileOnly) — and vice versa ' +
       '(baselineOnly). n counts only seeds where BOTH sides completed. chiSquare is the ' +
       'continuity-corrected McNemar statistic on the discordant pairs (1 df; compare ' +
-      'against 3.841 for p<0.05 two-sided).',
+      'against 3.841 for p<0.05 two-sided); pValue is the exact two-sided p for that ' +
+      'statistic.',
   );
   lines.push('');
   lines.push(
-    '| profile | n | bothComeback | neitherComeback | profileOnly | baselineOnly | chiSquare |',
+    '| profile | n | bothComeback | neitherComeback | profileOnly | baselineOnly | chiSquare | pValue |',
   );
-  lines.push('|---|---|---|---|---|---|---|');
+  lines.push('|---|---|---|---|---|---|---|---|');
   for (const d of report.discordantPairs) {
     lines.push(
       `| ${d.profileLabel} | ${d.n} | ${d.bothComeback} | ${d.neitherComeback} | ` +
-        `${d.profileOnlyComeback} | ${d.baselineOnlyComeback} | ${d.mcNemarChiSquare.toFixed(2)} |`,
+        `${d.profileOnlyComeback} | ${d.baselineOnlyComeback} | ${d.mcNemarChiSquare.toFixed(2)} | ` +
+        `${d.pValue.toFixed(4)} |`,
     );
   }
   lines.push('');
