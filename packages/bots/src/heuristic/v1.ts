@@ -58,6 +58,7 @@ import {
   countOwned,
   distanceOk,
   isOpenSettlementSite,
+  povertyDiscountRate,
   RESOURCES,
   TOPO,
   touchesOwnNetwork,
@@ -253,10 +254,14 @@ function purposefulRoads(
 /**
  * A bank trade that moves one step toward affording `cost` (mirror of v0's
  * `bankTradeToward`, profile-aware): for a still-needed resource the bank can
- * supply, give the biggest surplus resource at its resolved rate. `null` when no
- * such trade exists. Profile-aware bank pool (`production.bankPerResource`).
+ * supply, give the biggest surplus resource at its resolved rate — or, since
+ * S2.4.4, the `robinHood` discounted rate when {@link povertyDiscountRate}
+ * says one is legal and cheaper. `null` when no such trade exists.
+ * Profile-aware bank pool (`production.bankPerResource`). Exported (rather
+ * than module-local) so its behavior can be unit-tested directly, independent
+ * of which candidate `mainCandidates` happens to score highest.
  */
-function bankTradeToward(
+export function bankTradeToward(
   state: GameState,
   playerId: PlayerId,
   cost: Readonly<Record<ResourceType, number>>,
@@ -278,11 +283,18 @@ function bankTradeToward(
       }
     }
     if (best !== null) {
+      // S2.4.4: a TRAILING player holding a poverty token proposes the
+      // discounted robinHood rate instead of its natural rate, whenever the
+      // discount is actually cheaper (never worth a token for a rate the
+      // player already has for free via a port) — see `povertyDiscountRate`'s
+      // docstring. `null` on every shipping preset (robinHood:false), so this
+      // is a no-op there — byte-identical to the pre-S2.4.4 proposal.
+      const discountRate = povertyDiscountRate(state, playerId, best.give);
       return {
         type: 'intent.bankTrade',
         playerId,
         give: best.give,
-        count: best.rate,
+        count: discountRate ?? best.rate,
         get: need,
       };
     }
