@@ -3,6 +3,7 @@
 // the payload — AC5 requires two runs at the same seed count to be
 // BYTE-IDENTICAL, so nothing here may vary run-to-run other than the results
 // themselves).
+import { computeAllDiscordantPairs, type DiscordantPairs } from './pairing.js';
 import {
   type ProfileSweepResult,
   SWEEP_BOT_DIFFICULTY,
@@ -25,6 +26,8 @@ export interface SweepReport {
   readonly excludedProfiles: readonly string[];
   readonly notes: readonly string[];
   readonly results: readonly ProfileSweepResult[];
+  /** Each non-Classic profile's paired, per-seed comeback comparison against Classic (team-lead diagnostic). */
+  readonly discordantPairs: readonly DiscordantPairs[];
 }
 
 export const SWEEP_NOTES: readonly string[] = [
@@ -50,6 +53,7 @@ export function buildReport(
     ],
     notes: SWEEP_NOTES,
     results,
+    discordantPairs: computeAllDiscordantPairs(results),
   };
 }
 
@@ -102,5 +106,53 @@ export function formatMarkdownTable(report: SweepReport): string {
     lines.push('No stalled seeds across any profile.');
     lines.push('');
   }
+
+  lines.push('## Poverty-token diagnostics (grant vs. spend)');
+  lines.push('');
+  lines.push(
+    'poverty.tokensGranted EVENTS proves a token was GRANTED. It does NOT prove one was ' +
+      'ever SPENT — the only spend path is a bank.trade carrying povertyDiscount:true ' +
+      '(validate.ts:1993-2002, reduce.ts:729). If discountTrades is 0 while grantedEvents ' +
+      'is >0, the benefit half of the mechanic never ran for this cohort.',
+  );
+  lines.push('');
+  lines.push(
+    '| profile | grantedEvents | grantedTotal (token-units) | discountTrades | tokensAtEnd histogram (players × completed matches) |',
+  );
+  lines.push('|---|---|---|---|---|');
+  for (const r of report.results) {
+    const histogram = Object.entries(r.povertyTokensAtEndHistogram)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([tokens, count]) => `${tokens}:${count}`)
+      .join(', ');
+    lines.push(
+      `| ${r.label} | ${r.povertyTokensGrantedEvents} | ${r.povertyTokensGrantedTotal} | ` +
+        `${r.povertyDiscountTrades} | ${histogram || '(no completed seeds)'} |`,
+    );
+  }
+  lines.push('');
+
+  lines.push('## Discordant-pair comparison vs. Classic (McNemar-style, per-seed)');
+  lines.push('');
+  lines.push(
+    'For each profile, on the SAME seed set: how many seeds did the profile win a ' +
+      'comeback that Classic, on that exact seed, did NOT (profileOnly) — and vice versa ' +
+      '(baselineOnly). n counts only seeds where BOTH sides completed. chiSquare is the ' +
+      'continuity-corrected McNemar statistic on the discordant pairs (1 df; compare ' +
+      'against 3.841 for p<0.05 two-sided).',
+  );
+  lines.push('');
+  lines.push(
+    '| profile | n | bothComeback | neitherComeback | profileOnly | baselineOnly | chiSquare |',
+  );
+  lines.push('|---|---|---|---|---|---|---|');
+  for (const d of report.discordantPairs) {
+    lines.push(
+      `| ${d.profileLabel} | ${d.n} | ${d.bothComeback} | ${d.neitherComeback} | ` +
+        `${d.profileOnlyComeback} | ${d.baselineOnlyComeback} | ${d.mcNemarChiSquare.toFixed(2)} |`,
+    );
+  }
+  lines.push('');
+
   return lines.join('\n');
 }

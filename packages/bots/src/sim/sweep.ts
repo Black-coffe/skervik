@@ -82,6 +82,35 @@ export interface ProfileSweepResult {
   /** Win share by seat index (0..3), over completed matches. */
   readonly seatWinRate: readonly number[];
   readonly eventTilesInterval: number;
+  /**
+   * Per-seed comeback outcome, ALIGNED WITH the sweep's own seed order (same
+   * index as the shared seed list) — `null` for a stalled seed. Feeds the
+   * paired (McNemar-style) discordant-pair comparison against Classic
+   * (`pairing.ts`) — a marginal comebackRate delta alone can't tell whether
+   * two profiles disagree on the SAME seeds or merely have the same rate by
+   * coincidence.
+   */
+  readonly comebackBySeed: ReadonlyArray<boolean | null>;
+  /**
+   * Robin-Hood/poverty-token diagnostics (team-lead-requested, post-hoc):
+   * total `poverty.tokensGranted` EVENTS across completed seeds, the total
+   * token-units those events granted (sum of `grants` values — an event can
+   * grant >1 player a token at once), and the total `bank.trade` events
+   * carrying `povertyDiscount: true` (the ONLY way a granted token is ever
+   * spent, `reduce.ts:729`). If `povertyDiscountTrades` is 0 while
+   * `povertyTokensGrantedEvents` is >0, the grant half of the mechanic ran
+   * but the spend half never did.
+   */
+  readonly povertyTokensGrantedEvents: number;
+  readonly povertyTokensGrantedTotal: number;
+  readonly povertyDiscountTrades: number;
+  /**
+   * Histogram of `povertyTokens` held per (player, completed-match) instance
+   * at `phase:'finished'` — key is the token count as a string, value is how
+   * many (player, match) pairs ended holding that many. A player who never
+   * received a grant counts as holding `0`.
+   */
+  readonly povertyTokensAtEndHistogram: Readonly<Record<string, number>>;
 }
 
 /** Runs one profile's sweep over the shared `seeds` set. */
@@ -93,8 +122,13 @@ export function runSweepForProfile(
   const stalledSeeds: Seed[] = [];
   const vpGaps: number[] = [];
   const seatWins = SWEEP_PLAYER_IDS.map(() => 0);
+  const comebackBySeed: Array<boolean | null> = [];
   let comebacks = 0;
   let completed = 0;
+  let povertyTokensGrantedEvents = 0;
+  let povertyTokensGrantedTotal = 0;
+  let povertyDiscountTrades = 0;
+  const povertyTokensAtEndHistogram: Record<string, number> = {};
 
   for (const seed of seeds) {
     let result: SimResult;
@@ -108,17 +142,34 @@ export function runSweepForProfile(
     } catch {
       // Non-termination (cap hit) or a deadlock — reported below, never dropped silently.
       stalledSeeds.push(seed);
+      comebackBySeed.push(null);
       continue;
     }
 
     completed += 1;
     turnsList.push(result.turns);
 
+    for (const event of result.events) {
+      if (event.type === 'poverty.tokensGranted') {
+        povertyTokensGrantedEvents += 1;
+        for (const amount of Object.values(event.grants)) {
+          povertyTokensGrantedTotal += amount;
+        }
+      } else if (event.type === 'bank.trade' && event.povertyDiscount === true) {
+        povertyDiscountTrades += 1;
+      }
+    }
+    for (const id of SWEEP_PLAYER_IDS) {
+      const held = String(result.finalState.povertyTokens?.[id] ?? 0);
+      povertyTokensAtEndHistogram[held] = (povertyTokensAtEndHistogram[held] ?? 0) + 1;
+    }
+
     const midpoint = midpointPublicVp(result.events, result.finalState, SWEEP_PLAYER_IDS);
     const trailingAtMidpoint = lastPlacePlayers(midpoint, SWEEP_PLAYER_IDS);
-    if (result.winnerId !== null && trailingAtMidpoint.includes(result.winnerId)) {
-      comebacks += 1;
-    }
+    const isComeback =
+      result.winnerId !== null && trailingAtMidpoint.includes(result.winnerId);
+    if (isComeback) comebacks += 1;
+    comebackBySeed.push(isComeback);
 
     const finalVps = SWEEP_PLAYER_IDS.map((id) =>
       computePublicVictoryPoints(result.finalState, id),
@@ -154,6 +205,11 @@ export function runSweepForProfile(
     meanFinalVpGap: mean(vpGaps),
     seatWinRate: seatWins.map((w) => (completed > 0 ? w / completed : 0)),
     eventTilesInterval: profile.catchUp.eventTilesInterval,
+    comebackBySeed,
+    povertyTokensGrantedEvents,
+    povertyTokensGrantedTotal,
+    povertyDiscountTrades,
+    povertyTokensAtEndHistogram,
   };
 }
 

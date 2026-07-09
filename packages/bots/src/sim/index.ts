@@ -11,6 +11,11 @@ export {
   midpointPublicVp,
   percentile,
 } from './metrics.js';
+export {
+  computeAllDiscordantPairs,
+  computeDiscordantPairs,
+  type DiscordantPairs,
+} from './pairing.js';
 export { type ProfileSweepSpec, SWEEP_PROFILES } from './profiles.js';
 export {
   buildReport,
