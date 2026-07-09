@@ -9,13 +9,16 @@ export {
   type LengthSplit,
   splitByMedianTurns,
 } from './lengthSplit.js';
+// `lastPlacePlayers` is `@deprecated` (S2.2.5a — the confounded rule) and
+// deliberately NOT re-exported here (S2.2.6 lead-review nit): its only
+// consumer, `metrics.test.ts`, imports it directly from `./metrics.js`,
+// making the deprecation structural rather than just a comment.
 export {
   type AnchorSnapshot,
   anchorSnapshot,
   type AnchorThresholds,
   anchorThresholds,
   chiSquarePValue1df,
-  lastPlacePlayers,
   mean,
   median,
   midpointPublicVp,

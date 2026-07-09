@@ -145,6 +145,20 @@ export interface CatchUpProfile {
    * (S2.2.3) — the threshold reads PUBLIC VP only, so a stockpiled hidden VP
    * card can't spring a surprise win. Hidden VP is still revealed and counted
    * in the final standings. Off on every shipping preset.
+   *
+   * **S2.2.6 measurement note:** this is an INFORMATION-HIDING mechanic —
+   * its value is that OPPONENTS cannot see who is about to win and so cannot
+   * coordinate against them, not a mechanical rule change. `@skervik/bots`'
+   * heuristic bots never read hidden VP either (every VP read goes through
+   * `computePublicVictoryPoints`, `eval/features.ts:184`), so a bot cohort is
+   * symmetrically blind to what this flag hides — but that is not why the
+   * effect is unmeasurable. It is unmeasurable because our bots never
+   * coordinate against a leader at all, visible or not, so there is no
+   * collusion channel for hiding information to disrupt. The balance-sim's
+   * earlier "hiddenVp measurably HURTS comebacks" finding was an artifact of
+   * a confounded metric and was retracted in S2.2.5a; do not infer from this
+   * flag's placement in `CatchUpProfile` that enabling it helps OR hurts
+   * trailing players — that question is not answerable by this harness.
    */
   readonly hiddenVp: boolean;
   /**
@@ -232,6 +246,70 @@ export interface RuleProfile {
    * value, documented tunable — calibrate against 2p telemetry in M3.
    */
   readonly neutralSettlements?: number;
+}
+
+/**
+ * Three load-bearing coherence checks (S2.2.6), each proven against
+ * `validate.ts`/`reduce.ts` by reading the code, not by sampling — throws on
+ * the first violation. Run ONCE per registry entry at MODULE INITIALIZATION
+ * (see the loop below {@link PROFILE_REGISTRY}), never from
+ * `loadRuleProfile` — that resolves a FROZEN constant on every
+ * `reduce`/`validate` call, and a registry entry cannot change between
+ * calls, so re-checking there would cost cycles on every event and catch
+ * nothing new. An incoherent profile must fail loudly at import, not at
+ * turn 200 of a live match.
+ */
+export function validateRuleProfile(profile: RuleProfile): void {
+  // G1 — `validate.ts`'s event-storm cadence computes
+  // `(sevensRolled + 1) % eventTilesInterval`; at `interval: 0` that is
+  // `NaN === 0`, which is always `false` — the mechanic silently never
+  // fires. The real invariant is "the cadence CAN fire", which is
+  // `Number.isInteger(v) && v >= 1`, not merely `v >= 1`: `NaN < 1` and
+  // `Infinity < 1` are BOTH `false`, so a bare `< 1` check lets both slip
+  // through, and `(s + 1) % NaN`/`(s + 1) % Infinity` are never `0` either —
+  // the exact permanently-dead-flag defect this guard exists to catch.
+  // Checked unconditionally (not only while `eventTiles` is on): the value
+  // is nonsensical regardless of whether the flag is currently enabled, and
+  // would silently break the moment someone flips it on without touching
+  // this field.
+  if (
+    !Number.isInteger(profile.catchUp.eventTilesInterval) ||
+    profile.catchUp.eventTilesInterval < 1
+  ) {
+    throw new Error(
+      `Rule profile "${profile.id}": catchUp.eventTilesInterval must be an ` +
+        `integer >= 1 (got ${profile.catchUp.eventTilesInterval}) — a non-integer ` +
+        'or non-positive value makes the event-storm cadence check permanently ' +
+        'false, a silently dead flag.',
+    );
+  }
+  // G2 — `reduce.ts`'s `spendPovertyToken` has exactly ONE call site, gated
+  // on `event.povertyDiscount`, which `validate.ts` can only set behind a
+  // short-circuiting `profile.catchUp.robinHood &&`. With `robinHood:false`,
+  // any poverty token `eventTiles` grants can never be spent by any player.
+  if (profile.catchUp.eventTiles && !profile.catchUp.robinHood) {
+    throw new Error(
+      `Rule profile "${profile.id}": catchUp.eventTiles requires ` +
+        'catchUp.robinHood — eventTiles grants poverty tokens, and only the ' +
+        'robinHood-gated bank-trade discount can ever spend one.',
+    );
+  }
+  // G3 — the discount must beat the universal bank rate or it is a
+  // surcharge, not a catch-up mechanic. It need NOT beat a 2:1 port: there
+  // `bestBankRate` already returns the port's rate, `intent.count` matches
+  // it, the normal (non-discount) path handles the trade, and no token is
+  // spent — harmless. So only the upper bound against `baseRate` is a real
+  // invariant; asserting anything more would reject a valid config.
+  if (
+    profile.catchUp.robinHoodExchangeRate < 1 ||
+    profile.catchUp.robinHoodExchangeRate >= profile.bankTrade.baseRate
+  ) {
+    throw new Error(
+      `Rule profile "${profile.id}": catchUp.robinHoodExchangeRate must be ` +
+        `in [1, ${profile.bankTrade.baseRate}) (the bank's base rate), got ` +
+        `${profile.catchUp.robinHoodExchangeRate}.`,
+    );
+  }
 }
 
 /**
@@ -364,9 +442,9 @@ export const CLASSIC_PROFILE: RuleProfile = {
     hiddenVp: false,
     // Byte-frozen off (S2.2.4) — Balanced/Blitz/twoPlayer inherit both via their
     // `...CLASSIC_PROFILE` spread; liveness proven by the internal
-    // EVENT_TILES/EVENT_TILES_ROBIN_HOOD test profiles below. Off → storms
-    // never advance `sevensRolled` or emit an extra `poverty.tokensGranted`,
-    // so the roll's event batch stays byte-identical to M1.
+    // EVENT_TILES_ROBIN_HOOD test profile below. Off → storms never advance
+    // `sevensRolled` or emit an extra `poverty.tokensGranted`, so the roll's
+    // event batch stays byte-identical to M1.
     eventTiles: false,
     eventTilesInterval: 3,
   },
@@ -391,10 +469,19 @@ export const CLASSIC_PROFILE: RuleProfile = {
 };
 
 /**
- * Balanced — Classic with the `balanced_deck` randomness FLAG set. The
- * number-deck draw mechanic that replaces dice is S2.1.2; here only the flag is
- * live, so play is byte-identical to Classic until that story lands. (Later
- * knobs activated by their own stories: the balanced deck itself — S2.1.2.)
+ * Balanced — Classic with `randomness: 'balanced_deck'` (S2.1.2): number
+ * production draws WITHOUT REPLACEMENT from the 36-outcome 2d6 deck instead
+ * of an independent roll each turn, reducing DICE VARIANCE (a run of the
+ * same number, or a long drought of a resource, is structurally impossible
+ * within one 36-draw cycle).
+ *
+ * **S2.2.6 honesty note:** the S2.2.5/S2.2.5a balance-sim, once its
+ * comeback metric was corrected for the `vpToWin`-confound, found NO
+ * measured effect on leader runaway for Balanced vs. Classic (both share
+ * `vpToWin: 10`, so the sim's matched-cut contrast is clean; there is
+ * simply no signal). Dice variance and runaway-leader are two DIFFERENT
+ * pains with two different cures — Balanced answers the first, not the
+ * second. Do not describe or market Balanced as a catch-up mode.
  */
 export const BALANCED_PROFILE: RuleProfile = {
   ...CLASSIC_PROFILE,
@@ -404,11 +491,19 @@ export const BALANCED_PROFILE: RuleProfile = {
 };
 
 /**
- * Blitz — Classic with a lower victory threshold (`vpToWin: 8`) for a shorter
- * game. `vpToWin` is a knob the engine ALREADY consumes, so this is live
- * config: a Blitz match ends earlier. (Later knobs activated by their own
- * stories: adaptive board/duration — S2.1.3.) Blitz also runs TIGHTER turn
+ * Blitz — Classic with a lower victory threshold (`vpToWin: 8`) for a
+ * shorter game. `vpToWin` is a knob the engine ALREADY consumes, so this is
+ * live config: a Blitz match ends earlier. Blitz also runs TIGHTER turn
  * timers (S2.1.4): roughly half Classic's windows for a faster game.
+ *
+ * **S2.2.6 honesty note:** the balance-sim's bot harness is ACTION-CAPPED,
+ * not wall-clocked, so Blitz's turn timers have never been exercised by any
+ * measurement — the sim's Blitz numbers isolate `vpToWin: 8` alone. Separately,
+ * the corrected matched-cut comeback metric shows Blitz has FEWER comebacks
+ * than Classic in every trailing-count stratum (a shorter race mechanically
+ * favours whoever is already ahead when the clock, i.e. `vpToWin`, runs out
+ * sooner) — Blitz is a pace lever, not a catch-up lever, and should not be
+ * described as one.
  */
 export const BLITZ_PROFILE: RuleProfile = {
   ...CLASSIC_PROFILE,
@@ -589,33 +684,19 @@ export const FINAL_ROUND_HIDDEN_VP_TEST_PROFILE: RuleProfile = {
 };
 
 /**
- * INTERNAL, NON-SHIPPING profile ids used ONLY to prove the S2.2.4
+ * INTERNAL, NON-SHIPPING profile id used ONLY to prove the S2.2.4
  * `eventTiles` catch-up path in tests — deliberately absent from
  * {@link RuleProfileId} (and the protocol's `profileId` enum), so no client
- * can select them. No shipping preset enables `eventTiles` yet (assigning
+ * can select it. No shipping preset enables `eventTiles` yet (assigning
  * catch-up flags to specific presets is a batched product decision now that
  * all four E2.2 mechanics exist), yet the flag's live behavior still needs
  * coverage — the S2.1.5/S2.2.1/S2.2.2/S2.2.3 precedent of proving a knob via
- * a distinct profile.
+ * a distinct profile. There is deliberately no `eventTiles`-alone fixture
+ * (S2.2.6, guard G2): `eventTiles:true` with `robinHood:false` grants
+ * poverty tokens nobody can ever spend, so `validateRuleProfile` rejects it
+ * — this fixture always pairs the two flags.
  */
-export const EVENT_TILES_TEST_PROFILE_ID = '__event_tiles_test__';
 export const EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID = '__event_tiles_robin_hood_test__';
-
-/**
- * Classic in every rule value EXCEPT `catchUp.eventTiles: true` (interval 2,
- * for a short cadence in tests) — the internal fixture behind
- * {@link EVENT_TILES_TEST_PROFILE_ID}. Its `.id` stays `'classic'` (inherited
- * via the spread; {@link RuleProfileId} has no test member) — the registry
- * key, not `.id`, is what resolves it.
- */
-export const EVENT_TILES_TEST_PROFILE: RuleProfile = {
-  ...CLASSIC_PROFILE,
-  catchUp: {
-    ...CLASSIC_PROFILE.catchUp,
-    eventTiles: true,
-    eventTilesInterval: 2,
-  },
-};
 
 /**
  * Classic in every rule value EXCEPT BOTH `catchUp.eventTiles: true`
@@ -635,47 +716,6 @@ export const EVENT_TILES_ROBIN_HOOD_TEST_PROFILE: RuleProfile = {
 };
 
 /**
- * INTERNAL, NON-SHIPPING profile ids used ONLY to measure a `vpToWin: 9`
- * threshold for S2.2.5's pre-registered H3 comparison — deliberately absent
- * from {@link RuleProfileId} (and the protocol's `profileId` enum), so no
- * client can select them. The owner has NOT yet decided whether Balanced
- * ships with a lowered VP threshold; that decision is conditional on H3's
- * result (S2.2.6). This is MEASUREMENT SCAFFOLDING introduced for S2.2.5 H3
- * — remove it, or promote it into a real preset, in S2.2.6 (Law 2: no dead
- * config surviving by accident).
- */
-export const VP9_TEST_PROFILE_ID = '__vp9_test__';
-export const BALANCED_VP9_TEST_PROFILE_ID = '__balanced_vp9_test__';
-
-/**
- * Classic in every rule value EXCEPT `victory.vpToWin: 9` — the internal
- * fixture behind {@link VP9_TEST_PROFILE_ID}. Its `.id` stays `'classic'`
- * (inherited via the spread; {@link RuleProfileId} has no test member) — the
- * registry key, not `.id`, is what resolves it.
- */
-export const VP9_TEST_PROFILE: RuleProfile = {
-  ...CLASSIC_PROFILE,
-  victory: {
-    ...CLASSIC_PROFILE.victory,
-    vpToWin: 9,
-  },
-};
-
-/**
- * Balanced (`randomness: 'balanced_deck'`) with `victory.vpToWin: 9` — the
- * actual H3 candidate preset (owner-proposed: Balanced = balanced_deck + a
- * lowered VP threshold, conditional on this measurement). Its `.id` stays
- * `'balanced'` (inherited via the spread) — the registry key resolves it.
- */
-export const BALANCED_VP9_TEST_PROFILE: RuleProfile = {
-  ...BALANCED_PROFILE,
-  victory: {
-    ...BALANCED_PROFILE.victory,
-    vpToWin: 9,
-  },
-};
-
-/**
  * The profile registry: the shipping presets plus the internal
  * parallel-trade and friendly-robber test profiles. Keyed by `string` (not
  * {@link RuleProfileId}) so the non-shipping test ids have a home without
@@ -690,10 +730,7 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
   [FINAL_ROUND_TEST_PROFILE_ID]: FINAL_ROUND_TEST_PROFILE,
   [HIDDEN_VP_TEST_PROFILE_ID]: HIDDEN_VP_TEST_PROFILE,
   [FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID]: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE,
-  [EVENT_TILES_TEST_PROFILE_ID]: EVENT_TILES_TEST_PROFILE,
   [EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID]: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE,
-  [VP9_TEST_PROFILE_ID]: VP9_TEST_PROFILE,
-  [BALANCED_VP9_TEST_PROFILE_ID]: BALANCED_VP9_TEST_PROFILE,
 };
 
 /**
@@ -704,7 +741,10 @@ const PROFILE_REGISTRY: Readonly<Record<string, RuleProfile>> = {
  * profiles, not selectable modes: they must NEVER be added to
  * {@link RuleProfileId} and must NEVER reach a lobby or the protocol's
  * `profileId` enum — only {@link loadRuleProfile} (a server/sim-internal
- * resolver) accepts them.
+ * resolver) accepts them. `vp9`/`balancedVp9` (S2.2.5 H3 measurement
+ * scaffolding) and the `eventTiles`-alone fixture (superseded by guard G2,
+ * S2.2.6) were removed with the measurement they served — see
+ * `S2.2.6-honest-presets-and-guards.md`.
  */
 export const EXPERIMENTAL_PROFILE_IDS = {
   parallelTrade: PARALLEL_TRADE_TEST_PROFILE_ID,
@@ -713,10 +753,7 @@ export const EXPERIMENTAL_PROFILE_IDS = {
   finalRound: FINAL_ROUND_TEST_PROFILE_ID,
   hiddenVp: HIDDEN_VP_TEST_PROFILE_ID,
   finalRoundHiddenVp: FINAL_ROUND_HIDDEN_VP_TEST_PROFILE_ID,
-  eventTiles: EVENT_TILES_TEST_PROFILE_ID,
   eventTilesRobinHood: EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID,
-  vp9: VP9_TEST_PROFILE_ID,
-  balancedVp9: BALANCED_VP9_TEST_PROFILE_ID,
 } as const;
 
 /** A measurement-only profile id from {@link EXPERIMENTAL_PROFILE_IDS} — never a {@link RuleProfileId}. */
@@ -741,4 +778,13 @@ export function loadRuleProfile(id: RuleProfileId | ExperimentalProfileId): Rule
     throw new Error(`Unknown rule profile id: ${String(id)}`);
   }
   return profile;
+}
+
+// S2.2.6 — run every guard over every registry entry ONCE, at module
+// initialization. `PROFILE_REGISTRY` is fully built by this point (every
+// `const` above has been evaluated), so this is the entire registry, not a
+// subset. An incoherent profile throws HERE, at import time, rather than
+// silently shipping a dead flag.
+for (const profile of Object.values(PROFILE_REGISTRY)) {
+  validateRuleProfile(profile);
 }

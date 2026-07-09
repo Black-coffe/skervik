@@ -17,11 +17,15 @@ export interface ProfileSweepSpec {
 }
 
 /**
- * The twelve profiles to sweep (story table): the ten of the original S2.2.5
- * set plus the two `vp9` measurement fixtures added for H3 (`f05605e`).
- * `twoPlayer` is DELIBERATELY excluded — it needs `neutralSettlements` phantom
- * placement, a different player count, and a different genesis path (out of
- * scope, Law 3).
+ * The nine profiles to sweep (S2.2.6: down from the original S2.2.5 set of
+ * ten plus the two `vp9` H3 measurement fixtures, twelve total). Removed
+ * here: `vp9`/`balancedVp9` (S2.2.5 H3 scaffolding, retired with the
+ * measurement it served — see `S2.2.6-honest-presets-and-guards.md`) and the
+ * `eventTiles`-alone fixture (`eventTiles:true` with `robinHood:false` is now
+ * rejected by `validateRuleProfile`'s guard G2 — a grant nobody could ever
+ * spend). `twoPlayer` is DELIBERATELY excluded — it needs `neutralSettlements`
+ * phantom placement, a different player count, and a different genesis path
+ * (out of scope, Law 3).
  */
 export const SWEEP_PROFILES: readonly ProfileSweepSpec[] = [
   { id: 'classic', label: 'classic', isolates: 'baseline' },
@@ -57,25 +61,8 @@ export const SWEEP_PROFILES: readonly ProfileSweepSpec[] = [
     isolates: 'catchUp: finalRound + hiddenVp',
   },
   {
-    id: EXPERIMENTAL_PROFILE_IDS.eventTiles,
-    label: 'eventTilesTest',
-    isolates:
-      'catchUp: eventTiles (interval 2 — test profile, NOT the preset interval 3)',
-  },
-  {
     id: EXPERIMENTAL_PROFILE_IDS.eventTilesRobinHood,
     label: 'eventTilesRobinHoodTest',
     isolates: 'catchUp: eventTiles + robinHood (interval 2)',
-  },
-  {
-    id: EXPERIMENTAL_PROFILE_IDS.vp9,
-    label: '__vp9_test__',
-    isolates: 'victory.vpToWin: 9 (S2.2.5 H3 measurement profile)',
-  },
-  {
-    id: EXPERIMENTAL_PROFILE_IDS.balancedVp9,
-    label: '__balanced_vp9_test__',
-    isolates:
-      "randomness: 'balanced_deck' + victory.vpToWin: 9 (S2.2.5 H3 candidate preset)",
   },
 ];

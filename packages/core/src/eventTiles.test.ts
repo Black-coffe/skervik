@@ -2,18 +2,23 @@
 // poverty-token boost on a SUBSET of 7-rolls, REUSING the S2.2.2 machinery
 // verbatim — `computePovertyGrants`, the `poverty.tokensGranted` event/reducer,
 // the shared `povertyTokens` pool + `robinHoodTokenCap`). Exercises the cadence
-// (`sevensRolled` counter -> `eventStorm` check via `EVENT_TILES_TEST_PROFILE`,
-// interval 2), grant-to-trailing-only + the shared cap, the both-on shared pool
-// (`EVENT_TILES_ROBIN_HOOD_TEST_PROFILE`), the forced-roll no-hang guarantee,
-// and the `eventTiles:false` byte-freeze — the S2.1.5/S2.2.1/S2.2.2/S2.2.3
-// liveness-proof precedent: both flags stay off on every shipping preset.
+// (`sevensRolled` counter -> `eventStorm` check via
+// `EVENT_TILES_ROBIN_HOOD_TEST_PROFILE`, interval 2), grant-to-trailing-only +
+// the shared cap, the shared-pool tests below, the forced-roll no-hang
+// guarantee, and the `eventTiles:false` byte-freeze — the
+// S2.1.5/S2.2.1/S2.2.2/S2.2.3 liveness-proof precedent: both flags stay off on
+// every shipping preset. There is no `eventTiles`-alone fixture (S2.2.6,
+// guard G2): `eventTiles:true` with `robinHood:false` grants poverty tokens
+// nobody can ever spend, so `validateRuleProfile` rejects that combination —
+// every test below uses the combined fixture, which does not change the
+// GRANT assertions (the storm-cadence grant path is not gated on `robinHood`;
+// only SPENDING a token is).
 
 import { describe, expect, it } from 'vitest';
 
 import { reduce } from './reduce.js';
 import {
   EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID,
-  EVENT_TILES_TEST_PROFILE_ID,
   type RuleProfileId,
 } from './ruleProfile.js';
 import type {
@@ -29,7 +34,6 @@ import { validate } from './validate.js';
 // Passed as `validate`'s 4th param only, never stored in state (A1).
 const SEED = 'skervik-robber-seed-2';
 
-const EVENT_TILES = EVENT_TILES_TEST_PROFILE_ID as RuleProfileId; // eventTilesInterval: 2
 const EVENT_TILES_ROBIN_HOOD = EVENT_TILES_ROBIN_HOOD_TEST_PROFILE_ID as RuleProfileId; // both on, interval 2
 
 function makePlayer(id: string, resources: Record<string, number> = {}): PlayerState {
@@ -50,7 +54,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     matchId: 'match-event-tiles-1',
     phase: 'roll',
     turn: 1,
-    profileId: EVENT_TILES,
+    profileId: EVENT_TILES_ROBIN_HOOD,
     currentPlayerId: 'player-1',
     players: [makePlayer('player-1'), makePlayer('player-2'), makePlayer('player-3')],
     eventIndex: 0, // resolves to total 7 with SEED (verified below)

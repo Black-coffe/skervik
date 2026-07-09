@@ -14,7 +14,7 @@ import {
 } from './index.js';
 
 describe('balance-sim sweep — shape & determinism (S2.2.5, low seed count)', () => {
-  it('runs all twelve configured profiles and returns one result per profile', () => {
+  it('runs all nine configured profiles and returns one result per profile', () => {
     const results = runSweep(2);
     expect(results).toHaveLength(SWEEP_PROFILES.length);
     expect(results.map((r) => r.label)).toEqual(SWEEP_PROFILES.map((p) => p.label));
@@ -213,5 +213,40 @@ describe('buildReport — labels the scoring mode instead of hiding it', () => {
       buildReport(2, runSweep(2, ['classic', 'blitz'], { selfScored: true })),
     );
     expect(selfScored).toContain('SELF-SCORED (CONFOUNDED)');
+  });
+
+  /**
+   * S2.2.6 lead-review nit 4 (round 2): the round-1 version of this test
+   * still enumerated the names a defect might use (`SWEEP_PROFILES` labels,
+   * via an UN-anchored regex) instead of forbidding the shape. The reviewer
+   * defeated it twice: appending `(the Classic baseline cuts)` slipped past
+   * the `not.toContain` loop because it is case-sensitive and
+   * `CLASSIC_PROFILE.name` is `'Classic'`, not `'classic'`; appending `(the
+   * twoPlayer baseline cuts)` slipped past because `twoPlayer` is a REAL
+   * `RuleProfileId` deliberately excluded from `SWEEP_PROFILES`, so the loop
+   * never checked it. Both mutations left all 72 tests green. The fix is an
+   * end-anchored (`$`) regex matching the ENTIRE line — nothing can be
+   * appended, so no enumeration of "known bad names" is needed at all.
+   */
+  it('the anchor-scoring line is EXACTLY one of two shapes, end to end (bug-class guard)', () => {
+    const anchorScoringLine = (report: ReturnType<typeof buildReport>): string => {
+      const line = formatMarkdownTable(report)
+        .split('\n')
+        .find((l) => l.startsWith('- anchor scoring:'));
+      if (line === undefined) throw new Error('no anchor-scoring line in the report');
+      return line;
+    };
+
+    const matchedLine = anchorScoringLine(
+      buildReport(2, runSweep(2, ['classic', 'blitz'])),
+    );
+    const selfScoredLine = anchorScoringLine(
+      buildReport(2, runSweep(2, ['classic', 'blitz'], { selfScored: true })),
+    );
+
+    const shape =
+      /^- anchor scoring: (MATCHED — every arm scored at vpToWin=\d+|\*\*SELF-SCORED \(CONFOUNDED\)\*\* — each arm scored at its own vpToWin)$/;
+    expect(matchedLine).toMatch(shape);
+    expect(selfScoredLine).toMatch(shape);
   });
 });
