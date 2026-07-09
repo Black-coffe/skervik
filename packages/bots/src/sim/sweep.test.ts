@@ -14,7 +14,7 @@ import {
 } from './index.js';
 
 describe('balance-sim sweep — shape & determinism (S2.2.5, low seed count)', () => {
-  it('runs all twelve configured profiles and returns one result per profile', () => {
+  it('runs all nine configured profiles and returns one result per profile', () => {
     const results = runSweep(2);
     expect(results).toHaveLength(SWEEP_PROFILES.length);
     expect(results.map((r) => r.label)).toEqual(SWEEP_PROFILES.map((p) => p.label));

@@ -60,14 +60,14 @@ describe('balance-sim profile liveness (S2.2.5)', () => {
     expect(fired).toBe(true);
   });
 
-  it('eventTilesTest produces finalState.sevensRolled > 0 (advances ONLY under eventTiles:true)', () => {
+  it('eventTilesRobinHoodTest produces finalState.sevensRolled > 0 (advances ONLY under eventTiles:true)', () => {
     let fired = false;
     for (const seed of FORCING_SEEDS) {
       const { finalState } = simulateMatch({
         seed,
         playerIds: PLAYER_IDS,
         bots: hardField(seed),
-        profileId: EXPERIMENTAL_PROFILE_IDS.eventTiles,
+        profileId: EXPERIMENTAL_PROFILE_IDS.eventTilesRobinHood,
       });
       if ((finalState.sevensRolled ?? 0) > 0) {
         fired = true;

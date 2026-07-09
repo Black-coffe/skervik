@@ -473,7 +473,7 @@ function vpToWinOfLabel(label: string): number {
  * (order-preserving, so `'classic'` stays the McNemar baseline in
  * `pairing.ts` regardless of which subset is requested). Lets a caller
  * pre-register a SINGLE profile-vs-Classic comparison at a larger seed count
- * without paying for all twelve profiles (e.g. `runSweep(5000, ['classic',
+ * without paying for all nine profiles (e.g. `runSweep(5000, ['classic',
  * 'friendlyRobberTest'])`). `'classic'` must be in any requested subset —
  * `pairing.ts` throws without it rather than silently re-baselining (S2.2.5a,
  * reviewer finding S-2).

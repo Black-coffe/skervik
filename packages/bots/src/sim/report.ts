@@ -50,7 +50,7 @@ export interface SweepReport {
 
 export const SWEEP_NOTES: readonly string[] = [
   "Blitz's turn timers are inert in the sim (action-count cap, not wall clock) — only vpToWin:8 is measured here.",
-  'eventTilesTest/eventTilesRobinHoodTest run at eventTilesInterval:2 (the test-profile value) — the shipping presets would use interval:3; the measured effect does not transfer unchanged.',
+  'eventTilesRobinHoodTest runs at eventTilesInterval:2 (the test-profile value) — the shipping presets would use interval:3; the measured effect does not transfer unchanged. There is no eventTiles-alone profile (S2.2.6, guard G2): eventTiles:true with robinHood:false grants poverty tokens nobody could ever spend, so validateRuleProfile rejects that combination now.',
   'All metrics read PUBLIC VP only (computePublicVictoryPoints) — never hidden VP, so hiddenVp-profile numbers stay comparable to every other row.',
   'A stalled seed is EXCLUDED from turns/comeback/VP-gap/seat-win stats for that profile but is always listed under stalledSeeds — never silently dropped.',
   'S2.2.5a: the comeback metric was REPLACED. The old rule ("winner among the players tied for last at ceil(finalTurn/2)") scaled with the size of the midpoint tie-set, and a lower vpToWin enlarges that tie-set — so the metric moved with the treatment. Every comeback number produced under seedSalt `balance-sim-salt` is void.',
