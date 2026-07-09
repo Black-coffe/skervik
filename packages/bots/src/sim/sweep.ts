@@ -90,16 +90,30 @@ export interface ProfileSweepResult {
   readonly medianTurns: number;
   readonly p90Turns: number;
   readonly maxTurns: number;
-  /** This profile's `victory.vpToWin` — the treatment variable H2′/H3′ vary. */
+  /** This profile's OWN `victory.vpToWin` — the treatment variable H2′/H3′ vary. */
   readonly vpToWin: number;
-  /** `ceil(vpToWin/2)` — the leader public VP that defines the anchor turn `T*`. */
+  /**
+   * The `vpToWin` whose cuts this arm's anchor was actually SCORED at — the
+   * baseline's by default, this profile's own only under `selfScored`.
+   *
+   * S2.2.5a-follow-up: this is the difference between a controlled contrast and
+   * an artifact. `ceil(V/2)` is 4 for `blitz` and 5 for `classic`, so an arm
+   * scored at its own cuts is measured at a DIFFERENT point of the very same
+   * game (the v1 bot is `vpToWin`-blind, so the event prefix is byte-identical
+   * until someone wins). Blitz's `T*` then lands ~17 turns earlier, fewer VP
+   * have accrued, more players sit below the deficit cutoff, and the marginal
+   * comeback rate rises with no change in catch-up dynamics at all — χ²=627 of
+   * pure anchor placement. Scored at a SHARED `scoredAtVpToWin`, the trailing
+   * sets coincide on 4996/4996 seeds and the effect reverses.
+   */
+  readonly scoredAtVpToWin: number;
+  /** `ceil(scoredAtVpToWin/2)` — the leader public VP that defines the anchor turn `T*`. */
   readonly anchorVp: number;
-  /** `ceil(vpToWin/4)` — the deficit behind the leader at `T*` that makes a player "trailing". */
+  /** `ceil(scoredAtVpToWin/4)` — the deficit behind the leader at `T*` that makes a player "trailing". */
   readonly deficitThreshold: number;
   /**
    * PRIMARY OUTCOME (S2.2.5a): share of COMPLETED matches in which the winner
-   * was TRAILING at the anchor turn `T*` — both the anchor and the deficit
-   * scale with `vpToWin`, so the metric does not move with the treatment.
+   * was TRAILING at the anchor turn `T*`.
    *
    * Matches with ZERO trailing players stay in this denominator and can never
    * be in the numerator (see {@link zeroTrailingMatches}); the audit fields
@@ -206,17 +220,26 @@ export interface ProfileSweepResult {
   readonly povertyTokensAtEndHistogram: Readonly<Record<string, number>>;
 }
 
-/** Runs one profile's sweep over the shared `seeds` set. */
+/**
+ * Runs one profile's sweep over the shared `seeds` set, scoring its anchor at
+ * `scoreAtVpToWin`'s cuts.
+ *
+ * `scoreAtVpToWin` is REQUIRED and explicit rather than defaulted to the
+ * profile's own `vpToWin`: an arm that scores itself cannot be compared to an
+ * arm scored differently, and making the caller name the cuts is what stops
+ * that from happening silently. {@link runSweep} supplies the baseline's.
+ */
 export function runSweepForProfile(
   spec: ProfileSweepSpec,
   seeds: readonly Seed[],
+  scoreAtVpToWin: number,
 ): ProfileSweepResult {
   // Cast: `ProfileSweepSpec.id` is untyped `string` (shipping ids + measurement
   // ids share one field) — the registry key, not the type, is what resolves it
   // (same precedent as every internal test profile's `X as RuleProfileId`).
   const profile = loadRuleProfile(spec.id as RuleProfileId | ExperimentalProfileId);
   const { vpToWin } = profile.victory;
-  const { anchorVp, deficitThreshold } = anchorThresholds(vpToWin);
+  const { anchorVp, deficitThreshold } = anchorThresholds(scoreAtVpToWin);
 
   const turnsList: number[] = [];
   const anchorTurns: number[] = [];
@@ -293,7 +316,9 @@ export function runSweepForProfile(
     }
 
     // PRIMARY (S2.2.5a): was the winner trailing at the VP-relative anchor `T*`?
-    const anchor = anchorSnapshot(result.events, SWEEP_PLAYER_IDS, vpToWin);
+    // Scored at `scoreAtVpToWin`, NOT at this profile's own `vpToWin` — see
+    // `ProfileSweepResult.scoredAtVpToWin`.
+    const anchor = anchorSnapshot(result.events, SWEEP_PLAYER_IDS, scoreAtVpToWin);
     if (anchor === null) {
       // The leader never reached ceil(V/2) PUBLIC VP — only reachable if hidden
       // VP carried the win. Counted, never silently folded into the numerator.
@@ -373,6 +398,7 @@ export function runSweepForProfile(
     p90Turns: percentile(turnsList, 90),
     maxTurns: turnsList.length > 0 ? Math.max(...turnsList) : 0,
     vpToWin,
+    scoredAtVpToWin: scoreAtVpToWin,
     anchorVp,
     deficitThreshold,
     comebackRate: anchoredMatches > 0 ? comebacks / anchoredMatches : 0,
@@ -404,6 +430,43 @@ export function runSweepForProfile(
   };
 }
 
+/** The paired comparison's baseline. Every arm is scored at THIS profile's cuts by default. */
+export const SWEEP_BASELINE_LABEL = 'classic';
+
+export interface SweepOptions {
+  /**
+   * Score every arm's anchor at this profile's `victory.vpToWin`. Defaults to
+   * {@link SWEEP_BASELINE_LABEL} — the baseline every arm is compared against.
+   */
+  readonly scoreAtLabel?: string;
+  /**
+   * Opt IN to letting each arm score itself at its own `vpToWin`.
+   *
+   * This is the CONFOUNDED variant, and it is deliberately the one you have to
+   * ask for. It reproduces the S2.2.5a artifact: `blitz` scored at `ceil(8/2)=4`
+   * is measured ~17 turns earlier in the very same game than `classic` scored at
+   * `ceil(10/2)=5`, and its comeback rate inflates from 11.3% to 34.8% with no
+   * change in catch-up dynamics. It is retained ONLY so the story file's
+   * demonstration of the artifact is reproducible from committed code.
+   * `pairing.ts` refuses to McNemar arms whose cuts differ unless the caller
+   * also passes `allowMismatchedCuts`.
+   */
+  readonly selfScored?: boolean;
+}
+
+/** Resolves the `vpToWin` whose cuts a given profile label scores at. */
+function vpToWinOfLabel(label: string): number {
+  const spec = SWEEP_PROFILES.find((s) => s.label === label);
+  if (!spec) {
+    throw new Error(
+      `Unknown --score-at profile label '${label}'. Known labels: ` +
+        `${SWEEP_PROFILES.map((s) => s.label).join(', ')}.`,
+    );
+  }
+  return loadRuleProfile(spec.id as RuleProfileId | ExperimentalProfileId).victory
+    .vpToWin;
+}
+
 /**
  * Runs every {@link SWEEP_PROFILES} entry over the SAME `n`-seed set — or, if
  * `profileLabels` is given, only the entries whose `label` is in that list
@@ -414,14 +477,30 @@ export function runSweepForProfile(
  * 'friendlyRobberTest'])`). `'classic'` must be in any requested subset —
  * `pairing.ts` throws without it rather than silently re-baselining (S2.2.5a,
  * reviewer finding S-2).
+ *
+ * **Every arm is scored at the BASELINE's cuts by default** (S2.2.5a-follow-up):
+ * a between-profile comeback contrast is only valid when both arms are measured
+ * at the same point of the race, and the safe thing is the default thing. Pass
+ * `{ selfScored: true }` to let each arm score itself — the confounded variant.
  */
 export function runSweep(
   n: number,
   profileLabels?: readonly string[],
+  options: SweepOptions = {},
 ): readonly ProfileSweepResult[] {
   const seeds = sweepSeeds(n);
   const specs = profileLabels
     ? SWEEP_PROFILES.filter((spec) => profileLabels.includes(spec.label))
     : SWEEP_PROFILES;
-  return specs.map((spec) => runSweepForProfile(spec, seeds));
+  const scoreAtVpToWin = vpToWinOfLabel(options.scoreAtLabel ?? SWEEP_BASELINE_LABEL);
+  return specs.map((spec) =>
+    runSweepForProfile(
+      spec,
+      seeds,
+      options.selfScored
+        ? loadRuleProfile(spec.id as RuleProfileId | ExperimentalProfileId).victory
+            .vpToWin
+        : scoreAtVpToWin,
+    ),
+  );
 }

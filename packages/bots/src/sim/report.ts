@@ -7,6 +7,7 @@ import { computeAllLengthSplits, type LengthSplit } from './lengthSplit.js';
 import {
   computeAllDiscordantPairs,
   type DiscordantPairs,
+  PRIMARY_OUTCOME,
   SENSITIVITY_OUTCOME,
 } from './pairing.js';
 import {
@@ -26,6 +27,10 @@ export interface SweepReport {
   readonly comebackMetric: string;
   /** The SENSITIVITY comeback definition — the old anchor, with ties dropped from the denominator. */
   readonly sensitivityMetric: string;
+  /** The `vpToWin` whose anchor cuts EVERY arm was scored at, or `null` for a self-scored run. */
+  readonly scoredAtVpToWin: number | null;
+  /** `true` when each arm scored itself — the CONFOUNDED variant; `discordantPairs` then report anchor placement. */
+  readonly selfScored: boolean;
   readonly excludedProfiles: readonly string[];
   readonly notes: readonly string[];
   readonly results: readonly ProfileSweepResult[];
@@ -51,28 +56,46 @@ export const SWEEP_NOTES: readonly string[] = [
   'S2.2.5a: the comeback metric was REPLACED. The old rule ("winner among the players tied for last at ceil(finalTurn/2)") scaled with the size of the midpoint tie-set, and a lower vpToWin enlarges that tie-set — so the metric moved with the treatment. Every comeback number produced under seedSalt `balance-sim-salt` is void.',
   "Read the confound audit BEFORE the headline: if the within-stratum comeback rates agree across profiles and only the trailing-count WEIGHTS differ, the headline difference is an artifact and no verdict may be drawn. Under a null, stratum k's rate is k/4.",
   'pValue is APPROXIMATE (Abramowitz & Stegun 7.1.26 normal CDF, |err|<7.5e-8) and is printed as "<1e-6" below that clamp — deep-tail digits from this approximation are float-grid noise, and it underflows to exactly 0 for chiSquare > ~70.',
+  'LIMITATION: the v1 bot is vpToWin-blind, so classic/blitz/vp9 share a byte-identical event prefix on a shared seed. That is what makes the matched-cut contrast clean — and it means only ONE channel was measured: "the same game, stopped earlier", which mechanically favours whoever leads. A human at vpToWin:8 races. The strategy-adaptation channel is invisible to this harness at ANY sample size.',
 ];
+
+/** Appended to {@link SWEEP_NOTES} only for a `selfScored` run — its pairs are confounded by construction. */
+export const SELF_SCORED_WARNING =
+  'SELF-SCORED RUN: each arm scored its anchor at its OWN vpToWin, so arms with different vpToWin were measured at different points of the same game. The discordantPairs below report ANCHOR PLACEMENT, not catch-up, and must not be cited as a comeback effect. This mode exists only to reproduce the S2.2.5a artifact (blitz chiSquare=627.34, which REVERSES to "fewer comebacks" when both arms are scored at classic\'s cuts).';
 
 export function buildReport(
   seeds: number,
   results: readonly ProfileSweepResult[],
 ): SweepReport {
+  // A run is self-scored iff its arms disagree about the cuts they were scored
+  // at. `pairing.ts` then reports anchor placement rather than catch-up, so the
+  // escape hatch is opened HERE, once, and labelled in the output.
+  const cuts = new Set(results.map((r) => r.scoredAtVpToWin));
+  const selfScored = cuts.size > 1;
+  const pairOptions = { allowMismatchedCuts: selfScored };
+
   return {
     seeds,
     seedSalt: SWEEP_SEED_SALT,
     botDifficulty: SWEEP_BOT_DIFFICULTY,
     seatCount: SWEEP_PLAYER_IDS.length,
     comebackMetric:
-      "PRIMARY: the winner was TRAILING at the anchor turn T* — the first turn at which the leader reaches ceil(V/2) public VP, where V = the profile's victory.vpToWin. A player is trailing iff leaderVp - publicVp(p) >= ceil(V/4). Both cuts scale with V, so the metric is invariant to the treatment; a four-way tie has NOBODY trailing and cannot be a comeback.",
+      "PRIMARY: the winner was TRAILING at the anchor turn T* — the first turn at which the leader reaches ceil(V/2) public VP, where V = scoredAtVpToWin. A player is trailing iff leaderVp - publicVp(p) >= ceil(V/4). EVERY arm is scored at the SAME V (the classic baseline's) unless selfScored, because ceil(V/2) is 4 for blitz and 5 for classic — an arm scored at its own V is measured at a different point of the same game. A four-way tie has NOBODY trailing and cannot be a comeback.",
     sensitivityMetric:
-      'SENSITIVITY: the winner was the UNIQUE last-place player at the old, endogenous midpoint turn ceil(finalTurn/2). Ties are DROPPED from the denominator (counted as sensitivityTiesDropped), never credited to every tied player. If this disagrees with the primary outcome, the anchor still leaks the treatment and NEITHER may be reported as a verdict.',
+      'SENSITIVITY: the winner was the UNIQUE last-place player at the old, endogenous midpoint turn ceil(finalTurn/2). Ties are DROPPED from the denominator (counted as sensitivityTiesDropped), never credited to every tied player. This check conditions on tie-freeness, a POST-TREATMENT variable the treatment moves, so it is not a valid causal contrast and cannot arbitrate a disagreement with the primary outcome.',
+    scoredAtVpToWin: selfScored ? null : (results[0]?.scoredAtVpToWin ?? null),
+    selfScored,
     excludedProfiles: [
       'twoPlayer (needs neutralSettlements phantom placement + a different player count/genesis path — out of scope, Law 3)',
     ],
-    notes: SWEEP_NOTES,
+    notes: selfScored ? [...SWEEP_NOTES, SELF_SCORED_WARNING] : SWEEP_NOTES,
     results,
-    discordantPairs: computeAllDiscordantPairs(results),
-    sensitivityDiscordantPairs: computeAllDiscordantPairs(results, SENSITIVITY_OUTCOME),
+    discordantPairs: computeAllDiscordantPairs(results, PRIMARY_OUTCOME, pairOptions),
+    sensitivityDiscordantPairs: computeAllDiscordantPairs(
+      results,
+      SENSITIVITY_OUTCOME,
+      pairOptions,
+    ),
     lengthSplits: computeAllLengthSplits(results),
   };
 }
@@ -103,18 +126,25 @@ export function formatMarkdownTable(report: SweepReport): string {
   lines.push(`- seed-derivation salt: \`${report.seedSalt}\``);
   lines.push(`- bot difficulty (all seats): \`${report.botDifficulty}\``);
   lines.push(`- seat count: ${report.seatCount}`);
+  lines.push(
+    `- anchor scoring: ${
+      report.selfScored
+        ? '**SELF-SCORED (CONFOUNDED)** — each arm scored at its own vpToWin'
+        : `every arm scored at vpToWin=${report.scoredAtVpToWin} (the \`classic\` baseline's cuts)`
+    }`,
+  );
   lines.push(`- comeback metric: ${report.comebackMetric}`);
   lines.push(`- sensitivity metric: ${report.sensitivityMetric}`);
   lines.push(`- excluded: ${report.excludedProfiles.join('; ')}`);
   for (const note of report.notes) lines.push(`- note: ${note}`);
   lines.push('');
   lines.push(
-    '| profile | n | vpToWin | anchor VP | deficit | median turns | p90 turns | comeback% [95% CI] | sensitivity% [95% CI] (n, ties dropped) | mean final VP gap | seat win% (1/2/3/4) | eventTilesInterval |',
+    '| profile | n | own vpToWin | scored at | anchor VP | deficit | median turns | p90 turns | comeback% [95% CI] | sensitivity% [95% CI] (n, ties dropped) | mean final VP gap | seat win% (1/2/3/4) | eventTilesInterval |',
   );
-  lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
+  lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const r of report.results) {
     lines.push(
-      `| ${r.label} | ${r.n} | ${r.vpToWin} | ${r.anchorVp} | >=${r.deficitThreshold} | ` +
+      `| ${r.label} | ${r.n} | ${r.vpToWin} | ${r.scoredAtVpToWin} | ${r.anchorVp} | >=${r.deficitThreshold} | ` +
         `${r.medianTurns.toFixed(1)} | ${r.p90Turns.toFixed(1)} | ` +
         `${pct(r.comebackRate)} [${pct(r.comebackRateCI.low)}-${pct(r.comebackRateCI.high)}] | ` +
         `${pct(r.sensitivityComebackRate)} [${pct(r.sensitivityComebackRateCI.low)}-${pct(r.sensitivityComebackRateCI.high)}] ` +

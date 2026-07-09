@@ -21,6 +21,7 @@ function fixture(
     p90Turns: 0,
     maxTurns: 0,
     vpToWin: 10,
+    scoredAtVpToWin: 10,
     anchorVp: 5,
     deficitThreshold: 3,
     comebackRate: 0,

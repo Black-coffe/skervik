@@ -43,11 +43,34 @@ function parseProfilesArg(argv: readonly string[]): readonly string[] | undefine
     .filter((label) => label.length > 0);
 }
 
+/**
+ * `--score-at <label>` scores EVERY arm's anchor at that profile's `vpToWin`
+ * (default: `classic`, the paired-comparison baseline). `--self-scored` instead
+ * lets each arm score itself — the CONFOUNDED variant, which reports anchor
+ * placement rather than catch-up, and which exists only to reproduce the
+ * S2.2.5a artifact from committed code. The safe thing is the default thing.
+ */
+function parseScoringArgs(argv: readonly string[]): {
+  scoreAtLabel?: string;
+  selfScored: boolean;
+} {
+  const selfScored = argv.includes('--self-scored');
+  const idx = argv.indexOf('--score-at');
+  if (idx === -1) return { selfScored };
+  const raw = argv[idx + 1];
+  if (!raw)
+    throw new Error('--score-at requires a profile label (e.g. --score-at classic)');
+  if (selfScored) {
+    throw new Error('--score-at and --self-scored are mutually exclusive: pick one.');
+  }
+  return { scoreAtLabel: raw, selfScored };
+}
+
 function main(): void {
   const argv = process.argv.slice(2);
   const seeds = parseSeedsArg(argv);
   const profileLabels = parseProfilesArg(argv);
-  const results = runSweep(seeds, profileLabels);
+  const results = runSweep(seeds, profileLabels, parseScoringArgs(argv));
   const report = buildReport(seeds, results);
 
   process.stdout.write(formatMarkdownTable(report));

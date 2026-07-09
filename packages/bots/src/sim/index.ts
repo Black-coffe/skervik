@@ -31,6 +31,7 @@ export {
   computeDiscordantPairs,
   type DiscordantPairs,
   type PairedOutcome,
+  type PairingOptions,
   PRIMARY_OUTCOME,
   SENSITIVITY_OUTCOME,
 } from './pairing.js';
@@ -38,6 +39,7 @@ export { type ProfileSweepSpec, SWEEP_PROFILES } from './profiles.js';
 export {
   buildReport,
   formatMarkdownTable,
+  SELF_SCORED_WARNING,
   SWEEP_NOTES,
   type SweepReport,
 } from './report.js';
@@ -45,8 +47,10 @@ export {
   type ProfileSweepResult,
   runSweep,
   runSweepForProfile,
+  SWEEP_BASELINE_LABEL,
   SWEEP_BOT_DIFFICULTY,
   SWEEP_PLAYER_IDS,
   SWEEP_SEED_SALT,
+  type SweepOptions,
   sweepSeeds,
 } from './sweep.js';

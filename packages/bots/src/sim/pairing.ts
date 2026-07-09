@@ -87,6 +87,19 @@ export function computeDiscordantPairs(
   };
 }
 
+export interface PairingOptions {
+  /**
+   * Permit a paired comparison between arms scored at DIFFERENT anchor cuts.
+   *
+   * Off by default, and it should stay off. Two arms scored at different
+   * `scoredAtVpToWin` are measured at different points of the game, so their
+   * McNemar statistic reflects anchor placement, not catch-up. The escape hatch
+   * exists only so the story file can reproduce the S2.2.5a artifact
+   * (`blitz` self-scored: χ²=627.34) from committed code.
+   */
+  readonly allowMismatchedCuts?: boolean;
+}
+
 /**
  * Compares every OTHER result in `results` against the one labelled
  * `'classic'` — label-based, not index-based, so a `--profiles` subset run
@@ -97,10 +110,18 @@ export function computeDiscordantPairs(
  * The old `?? results[0]` fallback silently re-baselined a subset run against
  * whichever profile happened to sort first, labelling the output `vs. Classic`
  * while comparing something else entirely — a wrong number that looks right.
+ *
+ * ALSO THROWS when an arm was scored at different anchor cuts from the baseline
+ * (S2.2.5a-follow-up). That is the confound that produced this story's headline
+ * artifact: an arm allowed to score itself is measured at its own point of the
+ * race, so the comparison answers "where was the instrument placed?" rather than
+ * "does this profile aid a trailing player?". Pass `allowMismatchedCuts` to
+ * override, deliberately and visibly.
  */
 export function computeAllDiscordantPairs(
   results: readonly ProfileSweepResult[],
   outcome: PairedOutcome = PRIMARY_OUTCOME,
+  options: PairingOptions = {},
 ): readonly DiscordantPairs[] {
   if (results.length === 0) return [];
   const baseline = results.find((r) => r.label === 'classic');
@@ -112,7 +133,25 @@ export function computeAllDiscordantPairs(
         'comparison the report claims to print.',
     );
   }
-  return results
-    .filter((r) => r !== baseline)
-    .map((profile) => computeDiscordantPairs(baseline, profile, outcome));
+
+  const others = results.filter((r) => r !== baseline);
+  if (!options.allowMismatchedCuts) {
+    const mismatched = others.filter(
+      (r) => r.scoredAtVpToWin !== baseline.scoredAtVpToWin,
+    );
+    if (mismatched.length > 0) {
+      throw new Error(
+        `computeAllDiscordantPairs refuses to pair arms scored at different anchor cuts: ` +
+          `baseline '${baseline.label}' was scored at vpToWin=${baseline.scoredAtVpToWin}, but ` +
+          `${mismatched.map((r) => `'${r.label}' at vpToWin=${r.scoredAtVpToWin}`).join(', ')}. ` +
+          'An arm scored at its own vpToWin is measured at a different point of the same ' +
+          'game, so the McNemar statistic reports anchor placement, not catch-up (S2.2.5a: ' +
+          "blitz self-scored gives chiSquare=627.34; scored at classic's cuts the effect " +
+          'REVERSES). Drop `selfScored`, or pass `allowMismatchedCuts` if you are ' +
+          'deliberately reproducing the artifact.',
+      );
+    }
+  }
+
+  return others.map((profile) => computeDiscordantPairs(baseline, profile, outcome));
 }
