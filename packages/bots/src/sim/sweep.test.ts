@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildReport,
   computeAllDiscordantPairs,
+  formatMarkdownTable,
   runSweep,
   SELF_SCORED_WARNING,
   SWEEP_PROFILES,
@@ -189,5 +190,28 @@ describe('buildReport — labels the scoring mode instead of hiding it', () => {
     expect(report.scoredAtVpToWin).toBeNull();
     expect(report.notes).toContain(SELF_SCORED_WARNING);
     expect(report.discordantPairs).toHaveLength(1);
+  });
+
+  // The header once hard-coded "the `classic` baseline's cuts", so `--score-at
+  // blitz` printed vpToWin=8 while still crediting classic. A header that names
+  // a profile it did not use is exactly the class of error this story exists to
+  // stamp out, so it now reports the CUTS and nothing else.
+  it('the markdown header reports the cuts actually used, never a hard-coded profile', () => {
+    const retargeted = formatMarkdownTable(
+      buildReport(2, runSweep(2, ['classic', 'blitz'], { scoreAtLabel: 'blitz' })),
+    );
+    expect(retargeted).toContain(
+      'anchor scoring: MATCHED — every arm scored at vpToWin=8',
+    );
+
+    const matched = formatMarkdownTable(
+      buildReport(2, runSweep(2, ['classic', 'blitz'])),
+    );
+    expect(matched).toContain('anchor scoring: MATCHED — every arm scored at vpToWin=10');
+
+    const selfScored = formatMarkdownTable(
+      buildReport(2, runSweep(2, ['classic', 'blitz'], { selfScored: true })),
+    );
+    expect(selfScored).toContain('SELF-SCORED (CONFOUNDED)');
   });
 });

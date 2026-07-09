@@ -130,7 +130,7 @@ export function formatMarkdownTable(report: SweepReport): string {
     `- anchor scoring: ${
       report.selfScored
         ? '**SELF-SCORED (CONFOUNDED)** — each arm scored at its own vpToWin'
-        : `every arm scored at vpToWin=${report.scoredAtVpToWin} (the \`classic\` baseline's cuts)`
+        : `MATCHED — every arm scored at vpToWin=${report.scoredAtVpToWin}`
     }`,
   );
   lines.push(`- comeback metric: ${report.comebackMetric}`);
