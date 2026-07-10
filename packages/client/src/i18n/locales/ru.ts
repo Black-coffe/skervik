@@ -160,4 +160,22 @@ export const ru: Messages = {
     other: '{count} бота',
   },
   'lobby.startButton': 'Начать партию',
+  // --- Приватные партии по коду / ссылке-приглашению (S2.5.3) ---
+  'lobby.joinModeLabel': 'Способ входа',
+  'a11y.joinModeSelector': 'Выбор способа входа',
+  'lobby.joinMode.quickMatch.name': 'Быстрый поиск',
+  'lobby.joinMode.quickMatch.description': 'Присоединиться к любой открытой партии.',
+  'lobby.joinMode.createPrivate.name': 'Создать приватную',
+  'lobby.joinMode.createPrivate.description':
+    'Начать партию, в которую смогут войти только друзья по приглашению.',
+  'lobby.joinMode.joinByCode.name': 'По коду',
+  'lobby.joinMode.joinByCode.description':
+    'Введите код приглашения друга, чтобы войти прямо в его партию.',
+  'lobby.roomCodeLabel': 'Код приглашения',
+  'a11y.roomCodeInput': 'Поле ввода кода приглашения',
+  'lobby.inviteLabel': 'Поделитесь этим с командой',
+  'lobby.inviteHint':
+    'Любой, у кого есть эта ссылка, сможет войти, пока партия не заполнится — это приглашение, а не пароль.',
+  'lobby.copyLink': 'Скопировать ссылку',
+  'lobby.copied': 'Скопировано!',
 };

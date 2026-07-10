@@ -131,7 +131,12 @@ describe('dispatchIntent — the S1.6.4→S1.6.5 stub seam', () => {
   it('when connected, dispatchIntent forwards the intent to the net layer', () => {
     const sendIntent = vi.fn();
     useUiStore.setState({
-      connection: { sessionId: 'seat-x', sendIntent, disconnect: vi.fn() },
+      connection: {
+        sessionId: 'seat-x',
+        roomId: 'room-x',
+        sendIntent,
+        disconnect: vi.fn(),
+      },
     });
     const intent = { type: 'intent.cancelTrade', playerId: 'player-1' } as const;
     useUiStore.getState().dispatchIntent(intent);

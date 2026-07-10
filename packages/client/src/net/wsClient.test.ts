@@ -26,6 +26,7 @@ import {
   connect,
   DEFAULT_RECONNECT_BACKOFF_MS,
   DEFAULT_RECONNECT_MAX_ATTEMPTS,
+  type JoinMode,
   type ReconnectCapability,
   type RoomLike,
   type WsClientCallbacks,
@@ -35,14 +36,21 @@ import {
 // constructor so the resume-first / fresh-join branches drive against fake
 // `reconnect`/`joinOrCreate` promises instead of a real socket. `vi.hoisted`
 // so the mock functions exist before `vi.mock`'s factory runs (hoisting).
-const { mockReconnect, mockJoinOrCreate } = vi.hoisted(() => ({
+const { mockReconnect, mockJoinOrCreate, mockCreate, mockJoinById } = vi.hoisted(() => ({
   mockReconnect: vi.fn(),
   mockJoinOrCreate: vi.fn(),
+  mockCreate: vi.fn(),
+  mockJoinById: vi.fn(),
 }));
 
 vi.mock('@colyseus/sdk', () => ({
   Client: vi.fn().mockImplementation(function MockClient() {
-    return { reconnect: mockReconnect, joinOrCreate: mockJoinOrCreate };
+    return {
+      reconnect: mockReconnect,
+      joinOrCreate: mockJoinOrCreate,
+      create: mockCreate,
+      joinById: mockJoinById,
+    };
   }),
 }));
 
@@ -256,6 +264,13 @@ describe('attachRoom — the returned handle', () => {
     expect(handle.sessionId).toBe('seat-abc');
     handle.disconnect();
     expect(room.left).toBe(true);
+  });
+
+  it('exposes the room id (S2.5.3 — the shareable invite code for a private host)', () => {
+    const room = new MockRoom();
+    room.roomId = 'room-xyz';
+    const handle = attachRoom(room, makeCallbacks().callbacks);
+    expect(handle.roomId).toBe('room-xyz');
   });
 });
 
@@ -524,4 +539,121 @@ describe('connect — lobby selection forwarding (S2.5.4)', () => {
     expect(mockReconnect).toHaveBeenCalledTimes(1);
     expect(mockJoinOrCreate).not.toHaveBeenCalled();
   });
+});
+
+// S2.5.3 — private rooms by code / invite link. Three explicit fresh-join
+// branches selected by `JoinMode`; the resume-first branch (S2.3.2a) stays
+// ahead of all of them, unaffected.
+describe('connect — join mode (S2.5.3: quick match / create private / join by code)', () => {
+  beforeEach(() => {
+    mockReconnect.mockReset();
+    mockJoinOrCreate.mockReset();
+    mockCreate.mockReset();
+    mockJoinById.mockReset();
+  });
+
+  it('no joinMode (or explicit quickMatch) calls joinOrCreate — create/joinById are never invoked (unchanged M1/M2 default, criterion 4)', async () => {
+    const freshRoom = new MockRoom();
+    mockJoinOrCreate.mockResolvedValue(freshRoom);
+
+    const harness = makeCallbacks();
+    await connect('ws://test', harness.callbacks, undefined, undefined, {
+      kind: 'quickMatch',
+    });
+
+    expect(mockJoinOrCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockJoinById).not.toHaveBeenCalled();
+  });
+
+  it('[forcing] joinMode:createPrivate calls client.create with isPrivate:true in the wire options — joinOrCreate/joinById are never invoked', async () => {
+    const hostRoom = new MockRoom();
+    hostRoom.roomId = 'room-private-1';
+    mockCreate.mockResolvedValue(hostRoom);
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks, undefined, undefined, {
+      kind: 'createPrivate',
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      'skervik_game',
+      expect.objectContaining({ isPrivate: true }),
+    );
+    expect(mockJoinOrCreate).not.toHaveBeenCalled();
+    expect(mockJoinById).not.toHaveBeenCalled();
+    // The host reads this back as the shareable code/link (criterion 5's producer half).
+    expect(handle?.roomId).toBe('room-private-1');
+  });
+
+  it('[forcing] joinMode:joinByCode calls client.joinById(roomId, options) — never joinOrCreate/create, and the resulting handle carries the SAME roomId', async () => {
+    const friendRoom = new MockRoom();
+    friendRoom.roomId = 'room-private-1';
+    mockJoinById.mockResolvedValue(friendRoom);
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks, undefined, undefined, {
+      kind: 'joinByCode',
+      roomId: 'room-private-1',
+    });
+
+    expect(mockJoinById).toHaveBeenCalledWith(
+      'room-private-1',
+      expect.objectContaining({ protocolVersion: expect.any(String) }),
+    );
+    expect(mockJoinOrCreate).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(handle?.roomId).toBe('room-private-1');
+  });
+
+  it('a wrong/expired code rejects cleanly — connect() returns null, nothing throws', async () => {
+    mockJoinById.mockRejectedValue(new Error('room not found'));
+
+    const harness = makeCallbacks();
+    const handle = await connect('ws://test', harness.callbacks, undefined, undefined, {
+      kind: 'joinByCode',
+      roomId: 'does-not-exist',
+    });
+
+    expect(handle).toBeNull();
+    expect(harness.onConnectionChange).toHaveBeenLastCalledWith('error', null);
+  });
+
+  it.each<JoinMode>([
+    { kind: 'createPrivate' },
+    { kind: 'joinByCode', roomId: 'some-other-room' },
+  ])(
+    '[forcing] resume-first precedence: a live reconnect pointer wins over joinMode %o — reconnect(token) is called, create/joinById/joinOrCreate are never invoked',
+    async (joinMode) => {
+      // Fresh pointer+token EVERY case: `attachRoom` re-persists the resumed
+      // room's OWN token on success, so a shared/reused pointer across cases
+      // would silently observe the PRIOR case's re-persisted token instead of
+      // this case's, masking exactly the regression this test exists to catch.
+      persistCurrentRoomId('room-cold-resume');
+      persistReconnectionToken('room-cold-resume', 'saved-token');
+      mockReconnect.mockReset();
+      mockCreate.mockReset();
+      mockJoinById.mockReset();
+      mockJoinOrCreate.mockReset();
+
+      const resumedRoom = new MockRoom();
+      resumedRoom.roomId = 'room-cold-resume';
+      mockReconnect.mockResolvedValue(resumedRoom);
+
+      const harness = makeCallbacks();
+      const handle = await connect(
+        'ws://test',
+        harness.callbacks,
+        undefined,
+        undefined,
+        joinMode,
+      );
+
+      expect(mockReconnect).toHaveBeenCalledWith('saved-token');
+      expect(handle?.roomId).toBe('room-cold-resume'); // resumed, NOT the requested code
+      expect(mockCreate).not.toHaveBeenCalled();
+      expect(mockJoinById).not.toHaveBeenCalled();
+      expect(mockJoinOrCreate).not.toHaveBeenCalled();
+    },
+  );
 });

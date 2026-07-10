@@ -470,8 +470,18 @@ describe('JoinOptionsSchema (the FULL strict wire allow-list, security follow-up
       profileId: 'blitz',
       bots: [{ difficulty: 'medium' }],
       reconnectGraceSeconds: 300,
+      isPrivate: true,
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it('[forcing] a wire create carrying isPrivate:true is accepted, not rejected by the .strict() allow-list (S2.5.3 — this test fails if isPrivate is not added to JoinLobbySelectionSchema)', () => {
+    const parsed = JoinOptionsSchema.safeParse({
+      protocolVersion: PROTOCOL_VERSION,
+      isPrivate: true,
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isPrivate).toBe(true);
   });
 
   it('[forcing] rejects a `seed` key — the exact field GameRoom.onCreate would otherwise trust straight off the wire (commit-reveal break)', () => {

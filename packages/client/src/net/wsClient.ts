@@ -57,6 +57,12 @@ export interface WsClientCallbacks {
 export interface WsClientHandle {
   /** The joined seat id (`room.sessionId`) — the real `myPlayerId`. */
   readonly sessionId: string;
+  /**
+   * The room's own id (S2.5.3) — for a `createPrivate` join, this IS the
+   * shareable invite code/link (`?room=<roomId>`, owner decision: no bespoke
+   * code registry). Present for every join, not just private ones.
+   */
+  readonly roomId: string;
   /** Send a `PlayerIntent` as the `{ v:1, type:'intent', payload }` envelope. */
   readonly sendIntent: (intent: PlayerIntent) => void;
   /** Cleanly leave the room (a consented disconnect). */
@@ -231,6 +237,9 @@ export function attachRoom(
     get sessionId() {
       return activeRoom.sessionId;
     },
+    get roomId() {
+      return activeRoom.roomId;
+    },
     sendIntent: (intent) => {
       const envelope: IntentMessage = { v: 1, type: 'intent', payload: intent };
       activeRoom.send('intent', envelope);
@@ -269,6 +278,22 @@ export interface LobbyJoinFields {
 }
 
 /**
+ * How a FRESH join reaches the room (S2.5.3) — orthogonal to the resume-first
+ * branch below (which always wins when a live reconnect pointer exists, and
+ * never reads this at all). Omitted/`quickMatch` is the M1/M2 default:
+ * `joinOrCreate` into any open public room, byte-unchanged (criterion 4).
+ *  • `createPrivate` — `client.create(...)` (always a FRESH room, never an
+ *    existing one) with `isPrivate:true` added to the wire options; the
+ *    host reads the resulting `WsClientHandle.roomId` as the invite code.
+ *  • `joinByCode` — `client.joinById(roomId, ...)`, reaching that EXACT room
+ *    (public or private) regardless of matchmaking listing.
+ */
+export type JoinMode =
+  | { readonly kind: 'quickMatch' }
+  | { readonly kind: 'createPrivate' }
+  | { readonly kind: 'joinByCode'; readonly roomId: string };
+
+/**
  * Connect to the authoritative room. On a COLD load (a page reload, not the
  * in-tab drop S2.3.2 handles) this first tries to RESUME a held seat: if the
  * current-room pointer + a matching token were persisted by a prior join
@@ -278,12 +303,15 @@ export interface LobbyJoinFields {
  * join (sync handlers + `ReconnectCapability` apply identically), and the
  * server's existing reclaim/resync unicast (S2.3.2) delivers a fresh
  * `state.snapshot` that folds the board back to consistent — no server change.
- * `lobby` is INTENTIONALLY never read in this branch (S2.5.4): resuming a held
- * seat must never re-apply a lobby pick.
+ * `lobby`/`joinMode` are INTENTIONALLY never read in this branch (S2.5.4,
+ * S2.5.3): resuming a held seat must never re-apply a lobby pick or a
+ * different join mode.
  * On failure (expired token / grace ran out) the pointer+token are cleared
- * and this falls through to a fresh `joinOrCreate` with the protocol-version
- * handshake (plus optional guest {@link GuestJoinFields} and lobby
- * {@link LobbyJoinFields} selection, S2.5.4). A rejected `joinOrCreate` is
+ * and this falls through to a FRESH join with the protocol-version handshake
+ * (plus optional guest {@link GuestJoinFields} and lobby {@link
+ * LobbyJoinFields} selection, S2.5.4) — via one of three EXPLICIT branches
+ * selected by {@link JoinMode} (S2.5.3): `joinOrCreate` (default), `create`
+ * (private host), or `joinById` (join by code). A rejected join is
  * interpreted by {@link parseJoinError} into a `version-mismatch` (with
  * versions) or a generic `error`, and returns `null` so the caller keeps its
  * fallback (dev-fixture) view. Never throws.
@@ -293,6 +321,7 @@ export async function connect(
   callbacks: WsClientCallbacks,
   guest?: GuestJoinFields,
   lobby?: LobbyJoinFields,
+  joinMode?: JoinMode,
 ): Promise<WsClientHandle | null> {
   callbacks.onConnectionChange('connecting');
   const client = new Client(url);
@@ -329,13 +358,25 @@ export async function connect(
   }
 
   try {
-    const room = await client.joinOrCreate(GAME_ROOM_NAME, {
+    const options = {
       protocolVersion: PROTOCOL_VERSION,
       ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
       ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
       ...(lobby?.profileId !== undefined ? { profileId: lobby.profileId } : {}),
       ...(lobby?.bots !== undefined ? { bots: lobby.bots } : {}),
-    });
+    };
+
+    // Three explicit branches (S2.5.3) — never a shared fallthrough, so each
+    // mode's exact SDK call stays auditable at a glance.
+    let room: unknown;
+    if (joinMode?.kind === 'createPrivate') {
+      room = await client.create(GAME_ROOM_NAME, { ...options, isPrivate: true });
+    } else if (joinMode?.kind === 'joinByCode') {
+      room = await client.joinById(joinMode.roomId, options);
+    } else {
+      room = await client.joinOrCreate(GAME_ROOM_NAME, options);
+    }
+
     const handle = attachRoom(
       room as unknown as RoomLike,
       callbacks,

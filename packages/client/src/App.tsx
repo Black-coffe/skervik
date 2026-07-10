@@ -8,11 +8,15 @@
 import { GameScreen } from './hud/GameScreen.js';
 import { LobbyScreen } from './lobby/LobbyScreen.js';
 import { useLobbyStore } from './lobby/lobbyStore.js';
-import type { LobbyJoinFields } from './net/wsClient.js';
+import type { JoinMode, LobbyJoinFields } from './net/wsClient.js';
 
 export interface AppProps {
-  /** Fires once, when the lobby's Start button is pressed (never on a resume). */
-  readonly onStart: (selection: LobbyJoinFields) => void;
+  /**
+   * Fires once, when the lobby's Start button is pressed (never on a resume
+   * or an invite-link cold load, S2.3.2a/S2.5.3). `joinMode` (S2.5.3) selects
+   * quick match / create private / join by code.
+   */
+  readonly onStart: (selection: LobbyJoinFields, joinMode: JoinMode) => void;
 }
 
 export function App({ onStart }: AppProps) {

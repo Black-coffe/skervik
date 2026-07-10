@@ -663,6 +663,13 @@ export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
  * human. `reconnectGraceSeconds`, if present, is floored to the ≥120s "no
  * karmic bans" product-law minimum by `onAuth` before the room ever reads it
  * (discharges the S2.3.1 nit) — never trusted as-is.
+ *
+ * `isPrivate` (S2.5.3): a host's `client.create(...)` may request the room be
+ * excluded from `joinOrCreate`/listing (`GameRoom.onCreate` → `this.setPrivate`).
+ * A plain boolean, no new server state — the invite "code" is the room's own
+ * `roomId` (owner decision, S2.5.3 story doc); this flag is the ONLY wire
+ * surface that privacy needs. Absent/false is the M1/M2 default: every room
+ * stays publicly matchable, byte-unchanged for every existing join.
  */
 export const JoinLobbySelectionSchema = z.object({
   profileId: ShippingProfileIdSchema.optional(),
@@ -671,6 +678,7 @@ export const JoinLobbySelectionSchema = z.object({
     .max(3)
     .optional(),
   reconnectGraceSeconds: z.number().positive().optional(),
+  isPrivate: z.boolean().optional(),
 });
 export type JoinLobbySelection = z.infer<typeof JoinLobbySelectionSchema>;
 

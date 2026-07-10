@@ -135,6 +135,21 @@ export const TRANSLATION_KEYS = [
   'a11y.botCountSelector',
   'lobby.botCount',
   'lobby.startButton',
+  // --- Private rooms by code / invite link (S2.5.3) ---
+  'lobby.joinModeLabel',
+  'a11y.joinModeSelector',
+  'lobby.joinMode.quickMatch.name',
+  'lobby.joinMode.quickMatch.description',
+  'lobby.joinMode.createPrivate.name',
+  'lobby.joinMode.createPrivate.description',
+  'lobby.joinMode.joinByCode.name',
+  'lobby.joinMode.joinByCode.description',
+  'lobby.roomCodeLabel',
+  'a11y.roomCodeInput',
+  'lobby.inviteLabel',
+  'lobby.inviteHint',
+  'lobby.copyLink',
+  'lobby.copied',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

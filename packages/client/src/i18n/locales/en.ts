@@ -148,4 +148,22 @@ export const en: Messages = {
     other: '{count} bots',
   },
   'lobby.startButton': 'Start match',
+  // --- Private rooms by code / invite link (S2.5.3) ---
+  'lobby.joinModeLabel': 'Join mode',
+  'a11y.joinModeSelector': 'Join mode selector',
+  'lobby.joinMode.quickMatch.name': 'Quick match',
+  'lobby.joinMode.quickMatch.description': 'Join any open public match.',
+  'lobby.joinMode.createPrivate.name': 'Create private',
+  'lobby.joinMode.createPrivate.description':
+    'Start a match only your friends can join, by invite.',
+  'lobby.joinMode.joinByCode.name': 'Join by code',
+  'lobby.joinMode.joinByCode.description':
+    "Enter a friend's invite code to join their match directly.",
+  'lobby.roomCodeLabel': 'Invite code',
+  'a11y.roomCodeInput': 'Invite code input',
+  'lobby.inviteLabel': 'Share this with your crew',
+  'lobby.inviteHint':
+    "Anyone with this link can join until the match fills — it's an invite, not a password.",
+  'lobby.copyLink': 'Copy link',
+  'lobby.copied': 'Copied!',
 };

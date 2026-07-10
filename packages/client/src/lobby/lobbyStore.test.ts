@@ -1,17 +1,32 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { MAX_LOBBY_BOTS, selectLobbySelection, useLobbyStore } from './lobbyStore.js';
+import {
+  deriveLobbyViewState,
+  MAX_LOBBY_BOTS,
+  selectJoinMode,
+  selectLobbySelection,
+  shouldStartAfterConnect,
+  useLobbyStore,
+} from './lobbyStore.js';
 
 // Reset the shared module-level store before each test (mirrors hud/store.test.ts).
 beforeEach(() => {
-  useLobbyStore.setState({ profileId: 'classic', botCount: 0, started: false });
+  useLobbyStore.setState({
+    profileId: 'classic',
+    botCount: 0,
+    joinMode: 'quickMatch',
+    roomCode: '',
+    started: false,
+  });
 });
 
 describe('useLobbyStore — initial state', () => {
-  it('defaults to classic, zero bots, not started', () => {
+  it('defaults to classic, zero bots, quick match, not started', () => {
     const state = useLobbyStore.getState();
     expect(state.profileId).toBe('classic');
     expect(state.botCount).toBe(0);
+    expect(state.joinMode).toBe('quickMatch');
+    expect(state.roomCode).toBe('');
     expect(state.started).toBe(false);
   });
 });
@@ -58,5 +73,128 @@ describe('selectLobbySelection', () => {
   it('produces an empty bots array at botCount:0', () => {
     const selection = selectLobbySelection(useLobbyStore.getState());
     expect(selection.bots).toEqual([]);
+  });
+});
+
+describe('setJoinMode / setRoomCode (S2.5.3)', () => {
+  it('replaces the held joinMode', () => {
+    useLobbyStore.getState().setJoinMode('createPrivate');
+    expect(useLobbyStore.getState().joinMode).toBe('createPrivate');
+  });
+
+  it('replaces the held roomCode', () => {
+    useLobbyStore.getState().setRoomCode('abc123xyz');
+    expect(useLobbyStore.getState().roomCode).toBe('abc123xyz');
+  });
+});
+
+describe('selectJoinMode (S2.5.3)', () => {
+  it('defaults to quickMatch', () => {
+    expect(selectJoinMode(useLobbyStore.getState())).toEqual({ kind: 'quickMatch' });
+  });
+
+  it('[forcing] createPrivate produces { kind: "createPrivate" } — no roomId leaks in from a stale roomCode', () => {
+    useLobbyStore.setState({ joinMode: 'createPrivate', roomCode: 'leftover-code' });
+    expect(selectJoinMode(useLobbyStore.getState())).toEqual({ kind: 'createPrivate' });
+  });
+
+  it('[forcing] joinByCode carries the trimmed roomCode as roomId', () => {
+    useLobbyStore.setState({ joinMode: 'joinByCode', roomCode: '  room-42  ' });
+    expect(selectJoinMode(useLobbyStore.getState())).toEqual({
+      kind: 'joinByCode',
+      roomId: 'room-42',
+    });
+  });
+});
+
+describe('shouldStartAfterConnect (S2.5.4a) — the Start-button transition decision, pure', () => {
+  const HANDLE = {
+    sessionId: 's1',
+    roomId: 'r1',
+    sendIntent: () => {},
+    disconnect: () => {},
+  };
+
+  it('[forcing] a live handle + quickMatch returns true', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'quickMatch' })).toBe(true);
+  });
+
+  it('[forcing] null (failed connect) returns false, even for quickMatch', () => {
+    expect(shouldStartAfterConnect(null, { kind: 'quickMatch' })).toBe(false);
+  });
+
+  it('[forcing] a live handle + createPrivate returns false — the host must stay on LobbyScreen to see the invite link (S2.5.3)', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'createPrivate' })).toBe(false);
+  });
+
+  it('[forcing] a live handle + joinByCode returns false — no live gameState yet, GameScreen would render blank', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'joinByCode', roomId: 'r1' })).toBe(
+      false,
+    );
+  });
+
+  it('an undefined joinMode (the cold-load resume shape) returns false', () => {
+    expect(shouldStartAfterConnect(HANDLE, undefined)).toBe(false);
+  });
+});
+
+describe('deriveLobbyViewState (S2.5.3) — LobbyScreen conditional sections, pure', () => {
+  it('quickMatch (default): shows the rule selectors, no invite, Start enabled', () => {
+    const view = deriveLobbyViewState({ joinMode: 'quickMatch', roomCode: '' }, null);
+    expect(view).toEqual({
+      showRuleSelectors: true,
+      showInvite: false,
+      startDisabled: false,
+    });
+  });
+
+  it('[forcing] joinByCode hides the rule selectors regardless of roomCode', () => {
+    const empty = deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: '' }, null);
+    const filled = deriveLobbyViewState(
+      { joinMode: 'joinByCode', roomCode: 'room-1' },
+      null,
+    );
+    expect(empty.showRuleSelectors).toBe(false);
+    expect(filled.showRuleSelectors).toBe(false);
+  });
+
+  it('[forcing] joinByCode disables Start while roomCode is empty/whitespace-only, enables it once non-empty', () => {
+    expect(
+      deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: '' }, null).startDisabled,
+    ).toBe(true);
+    expect(
+      deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: '   ' }, null)
+        .startDisabled,
+    ).toBe(true);
+    expect(
+      deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: 'r1' }, null)
+        .startDisabled,
+    ).toBe(false);
+  });
+
+  it('quickMatch/createPrivate never disable Start, regardless of roomCode', () => {
+    expect(
+      deriveLobbyViewState({ joinMode: 'quickMatch', roomCode: '' }, null).startDisabled,
+    ).toBe(false);
+    expect(
+      deriveLobbyViewState({ joinMode: 'createPrivate', roomCode: '' }, null)
+        .startDisabled,
+    ).toBe(false);
+  });
+
+  it('[forcing] the invite section shows ONLY for createPrivate AND an actual connected roomId — never for quickMatch/joinByCode, never before connecting', () => {
+    expect(
+      deriveLobbyViewState({ joinMode: 'createPrivate', roomCode: '' }, null).showInvite,
+    ).toBe(false); // not yet connected
+    expect(
+      deriveLobbyViewState({ joinMode: 'createPrivate', roomCode: '' }, 'room-1')
+        .showInvite,
+    ).toBe(true);
+    expect(
+      deriveLobbyViewState({ joinMode: 'quickMatch', roomCode: '' }, 'room-1').showInvite,
+    ).toBe(false);
+    expect(
+      deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: '' }, 'room-1').showInvite,
+    ).toBe(false);
   });
 });
