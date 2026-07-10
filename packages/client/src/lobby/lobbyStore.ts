@@ -78,15 +78,27 @@ export function selectJoinMode(state: LobbyStore): JoinMode {
 
 /**
  * Whether a Start-initiated `connect()` attempt should flip the lobby to the
- * game screen (S2.5.4a) — bound to the terminal observable (a live handle),
- * NOT to the click itself: `connect()` never throws, it resolves `null` on
- * any failure (expired resume, rejected join, absent server), and a failed
- * attempt must leave the user on `<LobbyScreen>` rather than a blank
- * `<GameScreen>`. Pure so the decision is directly unit-testable without a
- * React render (mirrors {@link deriveLobbyViewState}).
+ * game screen (S2.5.4a) — bound to TWO terminal observables, not the click
+ * itself: a live handle (`connect()` never throws; `null` means a failed
+ * attempt — expired resume, rejected join, absent server — and must leave
+ * the user on `<LobbyScreen>` rather than a blank `<GameScreen>`), AND the
+ * quick-match join mode specifically. `App.tsx` renders `<GameScreen>` XOR
+ * `<LobbyScreen>`, so flipping `started` unmounts `<LobbyScreen>` — exactly
+ * where S2.5.3 renders the just-created invite link for a `createPrivate`
+ * host (`deriveLobbyViewState`'s `showInvite`) once connected, and a private
+ * room / `joinByCode` join has no live `gameState` yet (no seats-full
+ * auto-start), so `<GameScreen>` would render blank. Quick match auto-starts
+ * once bot seats fill, so `gameState` arrives immediately and `<GameScreen>`
+ * is correct right away. The `createPrivate`/`joinByCode` transition belongs
+ * to the ready-up / match-started work (S2.5.2), out of scope here. Pure so
+ * the decision is directly unit-testable without a React render (mirrors
+ * {@link deriveLobbyViewState}).
  */
-export function shouldStartAfterConnect(handle: WsClientHandle | null): boolean {
-  return handle !== null;
+export function shouldStartAfterConnect(
+  handle: WsClientHandle | null,
+  joinMode: JoinMode | undefined,
+): boolean {
+  return handle !== null && joinMode?.kind === 'quickMatch';
 }
 
 export interface LobbyViewState {

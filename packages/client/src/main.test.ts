@@ -63,6 +63,22 @@ describe('startConnection — Start button transition (S2.5.4a)', () => {
     expect(useUiStore.getState().connection).toBeNull();
   });
 
+  it('[forcing] regression guard: a createPrivate Start with a LIVE handle does NOT flip started — the host must stay on LobbyScreen to see the invite link S2.5.3 renders there (deriveLobbyViewState.showInvite)', async () => {
+    mockConnect.mockResolvedValue(FAKE_HANDLE);
+    await startConnection({ profileId: 'classic', bots: [] }, { kind: 'createPrivate' });
+    expect(useLobbyStore.getState().started).toBe(false);
+    expect(useUiStore.getState().connection).toEqual(FAKE_HANDLE);
+  });
+
+  it('[forcing] regression guard: a joinByCode Start with a LIVE handle does NOT flip started — no live gameState yet, GameScreen would render blank', async () => {
+    mockConnect.mockResolvedValue(FAKE_HANDLE);
+    await startConnection(
+      { profileId: 'classic', bots: [] },
+      { kind: 'joinByCode', roomId: 'room-1' },
+    );
+    expect(useLobbyStore.getState().started).toBe(false);
+  });
+
   it('criterion 3: a resume-style call (no lobbySelection) does not itself flip started, and does not throw when started is already true', async () => {
     mockConnect.mockResolvedValue(FAKE_HANDLE);
     useLobbyStore.getState().start(); // mirrors main.tsx's synchronous resume flip, before startConnection() runs

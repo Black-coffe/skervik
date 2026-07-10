@@ -50,9 +50,11 @@ function hasResumablePointer(): boolean {
  * from the lobby's Start button (`selectLobbySelection` never returns
  * `undefined`) — the two cold-load callers below always omit it. On that
  * Start-initiated path, `started` flips ONLY once `connect()` resolves a live
- * handle ({@link shouldStartAfterConnect}) — never synchronously on click,
- * never before the promise settles, so a failed connect leaves the user on
- * `<LobbyScreen>` instead of a blank `<GameScreen>`.
+ * handle AND the join mode is `quickMatch` ({@link shouldStartAfterConnect})
+ * — never synchronously on click, never before the promise settles, so a
+ * failed connect leaves the user on `<LobbyScreen>` instead of a blank
+ * `<GameScreen>`. `createPrivate`/`joinByCode` deliberately do NOT flip here
+ * (S2.5.4a narrowing) — see {@link shouldStartAfterConnect}'s docstring.
  */
 export async function startConnection(
   lobbySelection?: LobbyJoinFields,
@@ -75,7 +77,7 @@ export async function startConnection(
     joinMode,
   );
   useUiStore.getState().setConnection(handle);
-  if (lobbySelection !== undefined && shouldStartAfterConnect(handle)) {
+  if (lobbySelection !== undefined && shouldStartAfterConnect(handle, joinMode)) {
     useLobbyStore.getState().start();
   }
 }

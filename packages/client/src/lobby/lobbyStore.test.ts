@@ -108,19 +108,33 @@ describe('selectJoinMode (S2.5.3)', () => {
 });
 
 describe('shouldStartAfterConnect (S2.5.4a) — the Start-button transition decision, pure', () => {
-  it('[forcing] a live handle returns true', () => {
-    expect(
-      shouldStartAfterConnect({
-        sessionId: 's1',
-        roomId: 'r1',
-        sendIntent: () => {},
-        disconnect: () => {},
-      }),
-    ).toBe(true);
+  const HANDLE = {
+    sessionId: 's1',
+    roomId: 'r1',
+    sendIntent: () => {},
+    disconnect: () => {},
+  };
+
+  it('[forcing] a live handle + quickMatch returns true', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'quickMatch' })).toBe(true);
   });
 
-  it('[forcing] null (failed connect) returns false', () => {
-    expect(shouldStartAfterConnect(null)).toBe(false);
+  it('[forcing] null (failed connect) returns false, even for quickMatch', () => {
+    expect(shouldStartAfterConnect(null, { kind: 'quickMatch' })).toBe(false);
+  });
+
+  it('[forcing] a live handle + createPrivate returns false — the host must stay on LobbyScreen to see the invite link (S2.5.3)', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'createPrivate' })).toBe(false);
+  });
+
+  it('[forcing] a live handle + joinByCode returns false — no live gameState yet, GameScreen would render blank', () => {
+    expect(shouldStartAfterConnect(HANDLE, { kind: 'joinByCode', roomId: 'r1' })).toBe(
+      false,
+    );
+  });
+
+  it('an undefined joinMode (the cold-load resume shape) returns false', () => {
+    expect(shouldStartAfterConnect(HANDLE, undefined)).toBe(false);
   });
 });
 
