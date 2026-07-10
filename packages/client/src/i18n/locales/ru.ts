@@ -178,4 +178,7 @@ export const ru: Messages = {
     'Любой, у кого есть эта ссылка, сможет войти, пока партия не заполнится — это приглашение, а не пароль.',
   'lobby.copyLink': 'Скопировать ссылку',
   'lobby.copied': 'Скопировано!',
+  'lobby.beginMatchButton': 'Начать игру',
+  'lobby.waitingForHost': 'Ожидаем, когда хост начнёт партию…',
+  'lobby.waitingForPlayers': 'Ожидаем ещё игроков…',
 };

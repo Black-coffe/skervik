@@ -38,8 +38,18 @@ import {
 } from './reconnectToken.js';
 
 export interface WsClientCallbacks {
-  /** A joining/late-join `state.snapshot` — seed `gameState` and the real seat id. */
-  readonly onSnapshot: (state: GameState, myPlayerId: PlayerId) => void;
+  /**
+   * A joining/late-join `state.snapshot` — seed `gameState` and the real seat
+   * id. `isHost`/`isPrivate` (S2.5.2) are the transport-only host/manual-start
+   * signals carried as siblings of the snapshot's `payload` — see
+   * {@link StateSnapshotMessage}'s doc.
+   */
+  readonly onSnapshot: (
+    state: GameState,
+    myPlayerId: PlayerId,
+    isHost: boolean,
+    isPrivate: boolean,
+  ) => void;
   /** A broadcast `event.batch` — fold through core `reduce` (ADR-0009 Fork 1). */
   readonly onBatch: (events: readonly GameEvent[]) => void;
   /** A private `intent.rejected` — a `validate` refusal (turn/afford/phase/trade…). */
@@ -65,6 +75,13 @@ export interface WsClientHandle {
   readonly roomId: string;
   /** Send a `PlayerIntent` as the `{ v:1, type:'intent', payload }` envelope. */
   readonly sendIntent: (intent: PlayerIntent) => void;
+  /**
+   * Host-only manual match start (S2.5.2) — sends the bare `startMatch`
+   * control message. A no-op wire call for a non-host sender or a non-private
+   * room: the server (`GameRoom#handleStartMatch`) silently ignores it in
+   * either case, so this never needs a reply/reject channel.
+   */
+  readonly startMatch: () => void;
   /** Cleanly leave the room (a consented disconnect). */
   readonly disconnect: () => void;
 }
@@ -156,7 +173,12 @@ export function attachRoom(
         warnDrop('state.snapshot', parsed.error);
         return;
       }
-      callbacks.onSnapshot(parsed.data.payload as GameState, r.sessionId as PlayerId);
+      callbacks.onSnapshot(
+        parsed.data.payload as GameState,
+        r.sessionId as PlayerId,
+        parsed.data.isHost,
+        parsed.data.isPrivate,
+      );
     });
 
     r.onMessage('event.batch', (message) => {
@@ -243,6 +265,9 @@ export function attachRoom(
     sendIntent: (intent) => {
       const envelope: IntentMessage = { v: 1, type: 'intent', payload: intent };
       activeRoom.send('intent', envelope);
+    },
+    startMatch: () => {
+      activeRoom.send('startMatch', {});
     },
     disconnect: () => {
       activeRoom.leave(true);

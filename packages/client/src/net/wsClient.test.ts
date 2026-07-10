@@ -126,7 +126,15 @@ class MockRoom implements RoomLike {
 }
 
 function makeCallbacks() {
-  const onSnapshot = vi.fn<(state: GameState, myPlayerId: PlayerId) => void>();
+  const onSnapshot =
+    vi.fn<
+      (
+        state: GameState,
+        myPlayerId: PlayerId,
+        isHost: boolean,
+        isPrivate: boolean,
+      ) => void
+    >();
   const onBatch = vi.fn<(events: readonly GameEvent[]) => void>();
   const onReject = vi.fn<(reason: RejectReason) => void>();
   const onError = vi.fn<() => void>();
@@ -146,6 +154,8 @@ const snapshotEnvelope: StateSnapshotMessage = {
   v: 1,
   type: 'state.snapshot',
   payload: devFixtureState,
+  isHost: true,
+  isPrivate: false,
 };
 
 const batchEnvelope: EventBatchMessage = {
@@ -189,10 +199,15 @@ describe('attachRoom — inbound message wiring', () => {
     attachRoom(room, harness.callbacks);
   });
 
-  it('routes state.snapshot to onSnapshot with the payload + the seat id', () => {
+  it('routes state.snapshot to onSnapshot with the payload + the seat id + the host/private signals (S2.5.2)', () => {
     room.emit('state.snapshot', snapshotEnvelope);
     expect(harness.onSnapshot).toHaveBeenCalledTimes(1);
-    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, 'seat-abc');
+    expect(harness.onSnapshot).toHaveBeenCalledWith(
+      devFixtureState,
+      'seat-abc',
+      true,
+      false,
+    );
   });
 
   it('routes event.batch to onBatch with the exact events array', () => {
@@ -258,6 +273,13 @@ describe('attachRoom — the returned handle', () => {
     ]);
   });
 
+  it('[forcing] startMatch sends the bare startMatch control message (S2.5.2)', () => {
+    const room = new MockRoom();
+    const handle = attachRoom(room, makeCallbacks().callbacks);
+    handle.startMatch();
+    expect(room.sent).toEqual([{ type: 'startMatch', message: {} }]);
+  });
+
   it('exposes the seat id and leaves consented on disconnect', () => {
     const room = new MockRoom();
     const handle = attachRoom(room, makeCallbacks().callbacks);
@@ -289,7 +311,12 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     expect(readCurrentRoomId()).toBe(room.roomId);
 
     room.emit('state.snapshot', snapshotEnvelope);
-    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, room.sessionId);
+    expect(harness.onSnapshot).toHaveBeenCalledWith(
+      devFixtureState,
+      room.sessionId,
+      true,
+      false,
+    );
   });
 
   it('an unexpected drop calls reconnect(token) with the persisted token; on resolve it re-wires the new room synchronously (a snapshot folds) and status goes reconnecting → connected', async () => {
@@ -317,7 +344,12 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     // to fold this message (proves the resync race is won, Key decision 5).
     expect(reconnectedRoom.hasHandler('state.snapshot')).toBe(true);
     reconnectedRoom.emit('state.snapshot', snapshotEnvelope);
-    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, 'seat-abc-2');
+    expect(harness.onSnapshot).toHaveBeenCalledWith(
+      devFixtureState,
+      'seat-abc-2',
+      true,
+      false,
+    );
 
     // The ORIGINAL handle now indirects through the reconnected room — a
     // caller that stashed it once (the store) never needs a fresh handle.
@@ -440,7 +472,12 @@ describe('connect — resume on a cold load (S2.3.2a)', () => {
 
     // Wired through the real attachRoom path — a `state.snapshot` folds.
     resumedRoom.emit('state.snapshot', snapshotEnvelope);
-    expect(harness.onSnapshot).toHaveBeenCalledWith(devFixtureState, 'seat-resumed');
+    expect(harness.onSnapshot).toHaveBeenCalledWith(
+      devFixtureState,
+      'seat-resumed',
+      true,
+      false,
+    );
   });
 
   it('cold-load fallback: an expired token (reconnect rejects) clears the pointer+token and falls through to joinOrCreate', async () => {

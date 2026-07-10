@@ -5,7 +5,7 @@ import {
   MAX_LOBBY_BOTS,
   selectJoinMode,
   selectLobbySelection,
-  shouldStartAfterConnect,
+  shouldMarkConnected,
   useLobbyStore,
 } from './lobbyStore.js';
 
@@ -107,44 +107,34 @@ describe('selectJoinMode (S2.5.3)', () => {
   });
 });
 
-describe('shouldStartAfterConnect (S2.5.4a) — the Start-button transition decision, pure', () => {
+describe('shouldMarkConnected (S2.5.2, replaces S2.5.4a shouldStartAfterConnect) — the connected-flag decision, pure', () => {
   const HANDLE = {
     sessionId: 's1',
     roomId: 'r1',
     sendIntent: () => {},
+    startMatch: () => {},
     disconnect: () => {},
   };
 
-  it('[forcing] a live handle + quickMatch returns true', () => {
-    expect(shouldStartAfterConnect(HANDLE, { kind: 'quickMatch' })).toBe(true);
+  it('[forcing] a live handle returns true — for EVERY join mode now (S2.5.2 unifies the transition; the GameScreen-vs-waiting decision moved to shouldShowGame(phase))', () => {
+    expect(shouldMarkConnected(HANDLE)).toBe(true);
   });
 
-  it('[forcing] null (failed connect) returns false, even for quickMatch', () => {
-    expect(shouldStartAfterConnect(null, { kind: 'quickMatch' })).toBe(false);
-  });
-
-  it('[forcing] a live handle + createPrivate returns false — the host must stay on LobbyScreen to see the invite link (S2.5.3)', () => {
-    expect(shouldStartAfterConnect(HANDLE, { kind: 'createPrivate' })).toBe(false);
-  });
-
-  it('[forcing] a live handle + joinByCode returns false — no live gameState yet, GameScreen would render blank', () => {
-    expect(shouldStartAfterConnect(HANDLE, { kind: 'joinByCode', roomId: 'r1' })).toBe(
-      false,
-    );
-  });
-
-  it('an undefined joinMode (the cold-load resume shape) returns false', () => {
-    expect(shouldStartAfterConnect(HANDLE, undefined)).toBe(false);
+  it('[forcing] null (failed connect) returns false — regardless of join mode, the user stays on LobbyScreen', () => {
+    expect(shouldMarkConnected(null)).toBe(false);
   });
 });
 
 describe('deriveLobbyViewState (S2.5.3) — LobbyScreen conditional sections, pure', () => {
-  it('quickMatch (default): shows the rule selectors, no invite, Start enabled', () => {
+  it('quickMatch (default), not yet connected: shows the rule selectors, no invite, Start enabled, no waiting/start-match sections', () => {
     const view = deriveLobbyViewState({ joinMode: 'quickMatch', roomCode: '' }, null);
     expect(view).toEqual({
       showRuleSelectors: true,
       showInvite: false,
       startDisabled: false,
+      showStartMatchButton: false,
+      showWaitingForHost: false,
+      showWaitingForPlayers: false,
     });
   });
 
@@ -196,5 +186,64 @@ describe('deriveLobbyViewState (S2.5.3) — LobbyScreen conditional sections, pu
     expect(
       deriveLobbyViewState({ joinMode: 'joinByCode', roomCode: '' }, 'room-1').showInvite,
     ).toBe(false);
+  });
+
+  // --- S2.5.2: host-only Start / waiting sections -----------------------
+
+  it('[forcing] not connected: none of the host/waiting sections show, regardless of host/private', () => {
+    const view = deriveLobbyViewState({ joinMode: 'createPrivate', roomCode: '' }, null, {
+      isHost: true,
+      isPrivate: true,
+    });
+    expect(view.showStartMatchButton).toBe(false);
+    expect(view.showWaitingForHost).toBe(false);
+    expect(view.showWaitingForPlayers).toBe(false);
+  });
+
+  it('[forcing] connected host of a private room: shows the Start-match button, nothing else', () => {
+    const view = deriveLobbyViewState(
+      { joinMode: 'createPrivate', roomCode: '' },
+      'room-1',
+      { isHost: true, isPrivate: true },
+    );
+    expect(view.showStartMatchButton).toBe(true);
+    expect(view.showWaitingForHost).toBe(false);
+    expect(view.showWaitingForPlayers).toBe(false);
+  });
+
+  it('[forcing] connected non-host joiner of a private room: shows "waiting for host", never the Start-match button', () => {
+    const view = deriveLobbyViewState(
+      { joinMode: 'joinByCode', roomCode: 'r1' },
+      'room-1',
+      { isHost: false, isPrivate: true },
+    );
+    expect(view.showStartMatchButton).toBe(false);
+    expect(view.showWaitingForHost).toBe(true);
+    expect(view.showWaitingForPlayers).toBe(false);
+  });
+
+  it('[forcing] connected to a non-private (quick match) room: shows "waiting for players" — never the Start-match button, even for the seat-0 "host"', () => {
+    const asHost = deriveLobbyViewState(
+      { joinMode: 'quickMatch', roomCode: '' },
+      'room-1',
+      { isHost: true, isPrivate: false },
+    );
+    expect(asHost.showStartMatchButton).toBe(false);
+    expect(asHost.showWaitingForPlayers).toBe(true);
+
+    const asJoiner = deriveLobbyViewState(
+      { joinMode: 'quickMatch', roomCode: '' },
+      'room-1',
+      { isHost: false, isPrivate: false },
+    );
+    expect(asJoiner.showStartMatchButton).toBe(false);
+    expect(asJoiner.showWaitingForPlayers).toBe(true);
+  });
+
+  it('omitting the host arg defaults to "not host, not private" (every pre-S2.5.2 call site keeps working)', () => {
+    const view = deriveLobbyViewState({ joinMode: 'quickMatch', roomCode: '' }, 'room-1');
+    expect(view.showStartMatchButton).toBe(false);
+    expect(view.showWaitingForHost).toBe(false);
+    expect(view.showWaitingForPlayers).toBe(true);
   });
 });

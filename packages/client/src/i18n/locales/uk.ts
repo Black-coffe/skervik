@@ -177,4 +177,7 @@ export const uk: Messages = {
     'Будь-хто з цим посиланням зможе увійти, поки партія не заповниться — це запрошення, а не пароль.',
   'lobby.copyLink': 'Скопіювати посилання',
   'lobby.copied': 'Скопійовано!',
+  'lobby.beginMatchButton': 'Розпочати гру',
+  'lobby.waitingForHost': 'Очікуємо, поки хост розпочне партію…',
+  'lobby.waitingForPlayers': 'Очікуємо ще гравців…',
 };
