@@ -269,6 +269,17 @@ export const PlayerIntentSchema = z.discriminatedUnion('type', [
   BankTradeIntentSchema,
 ]);
 
+/**
+ * The four SHIPPING rule-profile ids (S2.1.1..S2.1.6) — deliberately a local
+ * literal, not imported from `@skervik/core`'s `SHIPPING_PROFILE_IDS`: that
+ * export is a plain `readonly RuleProfileId[]`, not the `[string, ...string[]]`
+ * tuple shape `z.enum` needs, and this file already re-derives wire-only
+ * shapes locally (see the intent schemas above). Reused below by both the
+ * OUTBOUND `match.started` event payload and the INBOUND `JoinLobbySelectionSchema`
+ * (S2.5.4) so the two never drift apart.
+ */
+const ShippingProfileIdSchema = z.enum(['classic', 'balanced', 'blitz', 'twoPlayer']);
+
 // --- outbound event payload variants ---------------------------------------
 
 const MatchStartedEventSchema = z.object({
@@ -279,7 +290,7 @@ const MatchStartedEventSchema = z.object({
   playerIds: z.array(z.string()),
   // S2.1.1: the match's rule profile. Optional + append-compatible — a
   // pre-S2.1.1 emit without it still validates and folds to Classic.
-  profileId: z.enum(['classic', 'balanced', 'blitz', 'twoPlayer']).optional(),
+  profileId: ShippingProfileIdSchema.optional(),
 });
 const BoardGeneratedEventSchema = z.object({
   type: z.literal('board.generated'),
@@ -631,6 +642,37 @@ export const ConnectOptionsSchema = z.object({
   displayName: z.string().optional(),
 });
 export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
+
+/**
+ * Client → server WIRE-CONTROLLABLE lobby selection (S2.5.4: preset + bot
+ * fill), validated as a SIBLING of {@link ConnectOptionsSchema} — not merged
+ * into it — so a bad lobby selection is never misreported as a
+ * `PROTOCOL_VERSION_MISMATCH` (`GameRoom.onAuth` checks both, independently,
+ * and rejects with a distinct reason).
+ *
+ * 🔴 Security requirement: `@skervik/core`'s `PROFILE_REGISTRY` is keyed by
+ * `string` and additionally resolves SIX measurement-only profile ids
+ * (`EXPERIMENTAL_PROFILE_IDS`) that must never be reachable from a client. This
+ * is the explicit allow-list — `profileId` accepts ONLY the four SHIPPING ids
+ * (`ShippingProfileIdSchema`); an experimental or unknown id fails `safeParse`,
+ * so it can never reach `onCreate`/`loadRuleProfile`.
+ *
+ * `bots` reuses the EXISTING `GameRoomOptions.bots` shape (`{difficulty}` per
+ * seat) — no new bot machinery — capped at 3 so a wire join can never request
+ * more bots than a 4-seat Classic room can ever seat around at least one
+ * human. `reconnectGraceSeconds`, if present, is floored to the ≥120s "no
+ * karmic bans" product-law minimum by `onAuth` before the room ever reads it
+ * (discharges the S2.3.1 nit) — never trusted as-is.
+ */
+export const JoinLobbySelectionSchema = z.object({
+  profileId: ShippingProfileIdSchema.optional(),
+  bots: z
+    .array(z.object({ difficulty: z.enum(['easy', 'medium', 'hard']) }))
+    .max(3)
+    .optional(),
+  reconnectGraceSeconds: z.number().positive().optional(),
+});
+export type JoinLobbySelection = z.infer<typeof JoinLobbySelectionSchema>;
 
 /**
  * Server → a version-incompatible client: the typed `error.version` rejection

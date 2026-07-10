@@ -31,6 +31,7 @@ import {
   ConnectOptionsSchema,
   type EventBatchMessage,
   isCompatibleProtocolVersion,
+  JoinLobbySelectionSchema,
   PROTOCOL_VERSION,
   type RejectMessage,
   type StateSnapshotMessage,
@@ -107,6 +108,15 @@ export interface TurnTimerScheduler {
  * message body), not in this numeric code.
  */
 const PROTOCOL_VERSION_MISMATCH_CODE = 4001;
+
+/**
+ * The transport-level `ServerError.code` for a rejected WIRE lobby selection
+ * (S2.5.4 security requirement): a `profileId` outside the shipping allow-list
+ * or a malformed `bots` roster. Distinct from {@link PROTOCOL_VERSION_MISMATCH_CODE}
+ * so this is never misreported to the client as a version problem — same
+ * WebSocket application-reserved range (4000-4999).
+ */
+const INVALID_LOBBY_SELECTION_CODE = 4002;
 
 export interface GameRoomOptions {
   readonly maxSeats?: number;
@@ -613,6 +623,20 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * `ServerMessageSchema` to render a precise "update required" prompt.
    * A compatible client returns `true` and proceeds to the unchanged
    * `onJoin`/seat/`state.snapshot` path.
+   *
+   * S2.5.4 security requirement: `@skervik/core`'s `PROFILE_REGISTRY` is keyed
+   * by `string` and resolves six measurement-only profiles in addition to the
+   * four shipping presets (`EXPERIMENTAL_PROFILE_IDS`); `onCreate` trusts
+   * `options?.profileId`/`options?.bots` at the TypeScript type level ONLY —
+   * there is no runtime check there. This is where the check actually lives:
+   * `JoinLobbySelectionSchema.safeParse` is the explicit allow-list (an
+   * experimental or unknown `profileId`, or a malformed `bots` roster, fails
+   * to parse), and colyseus 0.17's `joinOrCreate` AWAITS `onAuth` to fully
+   * resolve before it ever calls `onCreate` with this SAME client-supplied
+   * options object (verified against `@colyseus/core`'s `MatchMaker.ts`) — so
+   * a rejection here means `onCreate`/`loadRuleProfile` never sees the bad
+   * value at all; the room is never created, the join promise just rejects
+   * (nothing crashes).
    */
   override onAuth(_client: Client, options: unknown): boolean {
     const parsed = ConnectOptionsSchema.safeParse(options);
@@ -632,6 +656,38 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       };
       throw new ServerError(PROTOCOL_VERSION_MISMATCH_CODE, JSON.stringify(message));
     }
+
+    const lobby = JoinLobbySelectionSchema.safeParse(options);
+    if (!lobby.success) {
+      // A plain string message (not the `error.version` JSON envelope) — the
+      // client's `parseJoinError` already degrades anything that isn't a
+      // valid `error.version` payload to a generic `error` status, so no
+      // client-side change was needed to correctly NOT report this as a
+      // version mismatch.
+      throw new ServerError(INVALID_LOBBY_SELECTION_CODE, 'invalid lobby selection');
+    }
+
+    // Grace floor (discharges the S2.3.1 nit): a WIRE-supplied
+    // `reconnectGraceSeconds` override can never undercut the ≥120s "no
+    // karmic bans" product law (CLAUDE.md). Mutated IN PLACE on the raw
+    // `options` object — colyseus reuses this EXACT reference for the
+    // room-creating client's later `onCreate` call, so this is the only seam
+    // available to sanitize a value before the room ever reads it. The
+    // internal `GameRoomOptions.reconnectGraceSeconds` test seam (S2.3.1)
+    // never reaches `onAuth` at all — `@colyseus/testing`'s `createRoom()`
+    // bypasses every matchmaker entry point that calls it — so this can NEVER
+    // clamp a test's deliberately tiny fast-expiry value.
+    if (
+      lobby.data.reconnectGraceSeconds !== undefined &&
+      options !== null &&
+      typeof options === 'object'
+    ) {
+      (options as { reconnectGraceSeconds?: number }).reconnectGraceSeconds = Math.max(
+        DEFAULT_RECONNECT_GRACE_SECONDS,
+        lobby.data.reconnectGraceSeconds,
+      );
+    }
+
     return true;
   }
 
@@ -645,7 +701,31 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       isBot: false,
       botDifficulty: '',
     });
-    this.state.seats.push(seat);
+
+    // S2.5.4 (discharges an S2.4.3 lead-review nit): bot seats are minted
+    // synchronously at genesis (`onCreate`), before any human ever joins — so
+    // the FIRST human to join a bot-pre-seeded room would otherwise always
+    // land at the LAST `seatIndex`, never the snake-draft's first pick.
+    // `#startMatch` builds `playerOrder` by mapping `this.state.seats` in
+    // ARRAY order, so unshifting the human to the front (and renumbering the
+    // bots after it) is what actually moves them into the first placement,
+    // not just a cosmetic `seatIndex` swap. Only applies when EVERY seat
+    // minted so far is a bot (this is that first human join) — a room with no
+    // bots (the M1 default) or any join after the first human is unaffected,
+    // and a PURE bot-vs-bot room (no human ever joins) never reaches `onJoin`
+    // at all, so its genesis seat order stays exactly as `onCreate` left it.
+    const allExistingSeatsAreBots =
+      this.state.seats.length > 0 && this.state.seats.every((s) => s.isBot);
+    if (allExistingSeatsAreBots) {
+      seat.seatIndex = 0;
+      this.state.seats.unshift(seat);
+      this.state.seats.forEach((s, i) => {
+        s.seatIndex = i;
+      });
+    } else {
+      seat.seatIndex = this.state.seats.length;
+      this.state.seats.push(seat);
+    }
 
     this.#sendSnapshot(client);
 

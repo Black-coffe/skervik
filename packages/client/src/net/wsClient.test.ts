@@ -462,3 +462,66 @@ describe('connect — resume on a cold load (S2.3.2a)', () => {
     expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
   });
 });
+
+// S2.5.4 — the lobby's preset + bot-fill pick rides `joinOrCreate`'s options
+// on a FRESH join, and is NEVER re-applied on a resume (the resume-first
+// branch calls `client.reconnect(token)`, which takes no options at all).
+describe('connect — lobby selection forwarding (S2.5.4)', () => {
+  beforeEach(() => {
+    mockReconnect.mockReset();
+    mockJoinOrCreate.mockReset();
+  });
+
+  it('[forcing] a fresh join forwards lobby.profileId + lobby.bots into joinOrCreate options', async () => {
+    const freshRoom = new MockRoom();
+    mockJoinOrCreate.mockResolvedValue(freshRoom);
+
+    const harness = makeCallbacks();
+    await connect('ws://test', harness.callbacks, undefined, {
+      profileId: 'blitz',
+      bots: [{ difficulty: 'medium' }, { difficulty: 'medium' }],
+    });
+
+    expect(mockJoinOrCreate).toHaveBeenCalledWith(
+      'skervik_game',
+      expect.objectContaining({
+        profileId: 'blitz',
+        bots: [{ difficulty: 'medium' }, { difficulty: 'medium' }],
+      }),
+    );
+  });
+
+  it('omits profileId/bots from joinOrCreate options when no lobby selection is given (unchanged M1 default)', async () => {
+    const freshRoom = new MockRoom();
+    mockJoinOrCreate.mockResolvedValue(freshRoom);
+
+    const harness = makeCallbacks();
+    await connect('ws://test', harness.callbacks);
+
+    const [, options] = mockJoinOrCreate.mock.calls[0] as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(options).not.toHaveProperty('profileId');
+    expect(options).not.toHaveProperty('bots');
+  });
+
+  it('[forcing] a resumable cold load NEVER re-applies a lobby selection — reconnect(token) is called with only the token, joinOrCreate is never invoked', async () => {
+    persistCurrentRoomId('room-cold-lobby');
+    persistReconnectionToken('room-cold-lobby', 'saved-token');
+
+    const resumedRoom = new MockRoom();
+    resumedRoom.roomId = 'room-cold-lobby';
+    mockReconnect.mockResolvedValue(resumedRoom);
+
+    const harness = makeCallbacks();
+    await connect('ws://test', harness.callbacks, undefined, {
+      profileId: 'blitz',
+      bots: [{ difficulty: 'hard' }],
+    });
+
+    expect(mockReconnect).toHaveBeenCalledWith('saved-token');
+    expect(mockReconnect).toHaveBeenCalledTimes(1);
+    expect(mockJoinOrCreate).not.toHaveBeenCalled();
+  });
+});

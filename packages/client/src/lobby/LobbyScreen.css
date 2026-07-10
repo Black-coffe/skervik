@@ -1,0 +1,144 @@
+/* LobbyScreen (S2.5.4) — DESIGN.md §1 "Instruments" register: calm, exact,
+   flat fills + 1px --line borders (no gradients, §2.4), radius 4/8px (§4).
+   Selection state is never color-only (§10 a11y) — the active option also
+   gets a checkmark glyph (presets) or bold weight (bot count), not just a
+   border-color change. */
+
+.lobby-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-abyss);
+  color: var(--ink);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.lobby-screen__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: min(560px, calc(100vw - 32px));
+  padding: 32px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.lobby-screen__title {
+  margin: 0;
+  font-family: 'PT Serif', Georgia, serif;
+  font-size: 1.45rem;
+  font-weight: 600;
+}
+
+.lobby-screen__section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lobby-screen__label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.lobby-screen__presets {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.lobby-screen__preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 44px;
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lobby-screen__preset:hover {
+  background: var(--surface-2);
+}
+
+.lobby-screen__preset:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lobby-screen__preset[data-active='true'] {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary), transparent 90%);
+}
+
+.lobby-screen__preset-mark {
+  display: inline-block;
+  min-width: 1em;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.lobby-screen__preset-name {
+  font-weight: 600;
+}
+
+.lobby-screen__preset-description {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.lobby-screen__bot-count {
+  display: flex;
+  gap: 8px;
+}
+
+.lobby-screen__bot-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-feature-settings: 'tnum';
+  cursor: pointer;
+  transition: background-color 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.lobby-screen__bot-option:hover {
+  background: var(--surface-2);
+}
+
+.lobby-screen__bot-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.lobby-screen__bot-option[data-active='true'] {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary), transparent 90%);
+  font-weight: 600;
+}
+
+.lobby-screen__start {
+  align-self: flex-start;
+}
+
+@media (max-width: 480px) {
+  .lobby-screen__presets {
+    grid-template-columns: 1fr;
+  }
+}
