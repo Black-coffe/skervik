@@ -225,6 +225,17 @@ export interface GameRoomOptions {
    * a future lobby (E2.5) can override it per match.
    */
   readonly botFillDifficulty?: Difficulty;
+  /**
+   * Private-room flag (S2.5.3). When `true`, {@link onCreate} calls Colyseus's
+   * own `this.setPrivate(true)` — the room is excluded from `joinOrCreate`'s
+   * matchmaking listing, so only a client that already has this room's
+   * `roomId` (the invite "code", owner decision — no bespoke code registry)
+   * can reach it, via `client.joinById`. Defaults to `false`/absent: every
+   * existing room stays publicly matchable, byte-unchanged. Privacy here is
+   * "unguessable-enough for play with a friend," not a security boundary —
+   * anyone holding the roomId can join until the room fills.
+   */
+  readonly isPrivate?: boolean;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -371,12 +382,22 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #botActionsThisTurn = 0;
   #botActionsTrackedTurn = -1;
 
-  override onCreate(options?: GameRoomOptions): void {
+  override async onCreate(options?: GameRoomOptions): Promise<void> {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
     // The match's rule profile (S2.1.1/S2.1.6) — Classic by default (production
     // has no lobby mode selection yet, S2.5.4); a `twoPlayer` room places
     // neutral blockers at genesis (`#startMatch`). Byte-unchanged for the default.
     this.#profileId = options?.profileId ?? 'classic';
+    // Private rooms (S2.5.3): excludes this room from `joinOrCreate`'s listing
+    // so only a `client.joinById(roomId)` holding this room's own id can reach
+    // it. `onCreate` is now `async` (colyseus's `MatchMaker` already awaits its
+    // returned promise regardless — verified against `MatchMaker.mjs`) so this
+    // resolves before any join can observe the room, closing the theoretical
+    // race a fire-and-forget `void setPrivate(...)` would leave open. Absent
+    // for every existing room (production default `false`) — byte-unchanged.
+    if (options?.isPrivate) {
+      await this.setPrivate(true);
+    }
     // Persist wiring (S1.4.4b): an explicit `sink` wins (tests inject in-memory);
     // otherwise `matchesDir` (production) selects the durable ndjson writer keyed
     // to this room's id; with neither, the in-memory default keeps dev/test runs

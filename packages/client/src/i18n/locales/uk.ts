@@ -159,4 +159,22 @@ export const uk: Messages = {
     other: '{count} боти',
   },
   'lobby.startButton': 'Почати партію',
+  // --- Приватні партії за кодом / посиланням-запрошенням (S2.5.3) ---
+  'lobby.joinModeLabel': 'Спосіб входу',
+  'a11y.joinModeSelector': 'Вибір способу входу',
+  'lobby.joinMode.quickMatch.name': 'Швидкий пошук',
+  'lobby.joinMode.quickMatch.description': 'Приєднатися до будь-якої відкритої партії.',
+  'lobby.joinMode.createPrivate.name': 'Створити приватну',
+  'lobby.joinMode.createPrivate.description':
+    'Почати партію, до якої зможуть увійти лише друзі за запрошенням.',
+  'lobby.joinMode.joinByCode.name': 'За кодом',
+  'lobby.joinMode.joinByCode.description':
+    'Введіть код запрошення друга, щоб увійти просто до його партії.',
+  'lobby.roomCodeLabel': 'Код запрошення',
+  'a11y.roomCodeInput': 'Поле введення коду запрошення',
+  'lobby.inviteLabel': 'Поділіться цим з командою',
+  'lobby.inviteHint':
+    'Будь-хто з цим посиланням зможе увійти, поки партія не заповниться — це запрошення, а не пароль.',
+  'lobby.copyLink': 'Скопіювати посилання',
+  'lobby.copied': 'Скопійовано!',
 };

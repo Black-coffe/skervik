@@ -12,9 +12,10 @@ import { App } from './App.js';
 import { useUiStore } from './hud/store.js';
 import { I18nProvider } from './i18n/index.js';
 import { useLobbyStore } from './lobby/lobbyStore.js';
+import { resolveColdLoadAction } from './net/coldLoadAction.js';
 import { fetchGuest } from './net/guestAuth.js';
 import { readCurrentRoomId, readReconnectionToken } from './net/reconnectToken.js';
-import { connect, type LobbyJoinFields } from './net/wsClient.js';
+import { connect, type JoinMode, type LobbyJoinFields } from './net/wsClient.js';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('No #root element found in index.html');
@@ -40,13 +41,18 @@ function hasResumablePointer(): boolean {
 /**
  * Fetches an anonymous guest identity (S1.7.1, display-only) then connects
  * (S1.6.5). `lobbySelection`, when given, is forwarded to `connect()`'s
- * `lobby` argument — which, by construction, only reaches a FRESH
- * `joinOrCreate` (S2.5.4): `connect()`'s resume-first branch never reads it.
- * Every callback routes straight into the store. A failed/absent server
- * (guest fetch OR join) just leaves the dev-fixture view rendered — a live
- * connection is NEVER a hard requirement to render (key decision 4).
+ * `lobby` argument — which, by construction, only reaches a FRESH join
+ * (S2.5.4): `connect()`'s resume-first branch never reads it. `joinMode`
+ * (S2.5.3) selects which fresh-join SDK call `connect()` makes; omitted, it
+ * defaults to `quickMatch` (unchanged M1/M2 behavior). Every callback routes
+ * straight into the store. A failed/absent server (guest fetch OR join) just
+ * leaves the dev-fixture view rendered — a live connection is NEVER a hard
+ * requirement to render (key decision 4).
  */
-async function startConnection(lobbySelection?: LobbyJoinFields): Promise<void> {
+async function startConnection(
+  lobbySelection?: LobbyJoinFields,
+  joinMode?: JoinMode,
+): Promise<void> {
   const guest = await fetchGuest(API_URL);
   const handle = await connect(
     WS_URL,
@@ -61,21 +67,34 @@ async function startConnection(lobbySelection?: LobbyJoinFields): Promise<void> 
     },
     guest ?? undefined,
     lobbySelection,
+    joinMode,
   );
   useUiStore.getState().setConnection(handle);
 }
 
 // Resolved BEFORE the first render (not in an effect) so a resumable cold
-// load never flashes the lobby screen before switching to the game screen.
-const resuming = hasResumablePointer();
-if (resuming) useLobbyStore.getState().start();
+// load, or a cold load carrying an invite-link `?room=` code (S2.5.3), never
+// flashes the lobby screen before switching away from it. Resume ALWAYS wins
+// over an invite-link code (`resolveColdLoadAction`'s precedence, criterion 5).
+const coldLoadAction = resolveColdLoadAction({
+  resumable: hasResumablePointer(),
+  search: window.location.search,
+});
+if (coldLoadAction.kind !== 'lobby') useLobbyStore.getState().start();
 
 createRoot(rootEl).render(
   <StrictMode>
     <I18nProvider>
-      <App onStart={(selection) => void startConnection(selection)} />
+      <App onStart={(selection, joinMode) => void startConnection(selection, joinMode)} />
     </I18nProvider>
   </StrictMode>,
 );
 
-if (resuming) void startConnection();
+if (coldLoadAction.kind === 'resume') {
+  void startConnection();
+} else if (coldLoadAction.kind === 'joinByCode') {
+  void startConnection(undefined, {
+    kind: 'joinByCode',
+    roomId: coldLoadAction.roomId,
+  });
+}
