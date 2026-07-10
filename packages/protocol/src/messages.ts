@@ -675,6 +675,43 @@ export const JoinLobbySelectionSchema = z.object({
 export type JoinLobbySelection = z.infer<typeof JoinLobbySelectionSchema>;
 
 /**
+ * 🔴 The FULL wire-permitted join contract (security follow-up to S2.5.4,
+ * `[[room-options-are-client-input]]`): {@link ConnectOptionsSchema}'s shape
+ * extended with {@link JoinLobbySelectionSchema}'s, then `.strict()` — ANY key
+ * outside this union fails the parse, instead of being silently ignored (zod's
+ * default `.object()` behavior) or silently stripped.
+ *
+ * This is what stands between a hand-rolled client and every OTHER
+ * `GameRoomOptions` field `GameRoom.onCreate` reads directly off the raw join
+ * options with NO runtime check of its own — most seriously `seed`
+ * (`this.#seed = options?.seed ?? generateSeed()`): a client that could smuggle
+ * its own `seed` through would know every future die roll, and commit-reveal
+ * would still "verify" (the server honestly reveals whatever seed it was
+ * handed) — the exact reputational failure provably-fair RNG exists to
+ * prevent. Also blocks `maxSeats` (shrink/inflate the table), `botActionCap`,
+ * `botFillDifficulty`, and any FUTURE `GameRoomOptions` field.
+ *
+ * ALLOW-LIST + `.strict()`, deliberately, over a deny-list of forbidden keys:
+ * a deny-list silently fails open the next time someone adds a
+ * `GameRoomOptions` field and forgets to list it there; an allow-list is safe
+ * by default (a new field is excluded unless someone explicitly widens THIS
+ * schema), and `.strict()` makes the omission LOUD (a hard rejection) rather
+ * than a silent, hard-to-notice strip.
+ *
+ * Only ever checked in `GameRoom.onAuth` — the ONE path a real client's
+ * `joinOrCreate`/`join`/`create`/`joinById` options flow through
+ * (`@colyseus/core`'s `MatchMaker.ts`, verified against 0.17.44). The
+ * trusted-internal path every existing server test uses
+ * (`matchMaker.createRoom` / `@colyseus/testing`'s `createRoom()`) calls
+ * `onCreate` directly and bypasses `onAuth` entirely, so `seed`/`maxSeats`/etc.
+ * stay reachable there, unaffected by this schema.
+ */
+export const JoinOptionsSchema = ConnectOptionsSchema.extend(
+  JoinLobbySelectionSchema.shape,
+).strict();
+export type JoinOptions = z.infer<typeof JoinOptionsSchema>;
+
+/**
  * Server → a version-incompatible client: the typed `error.version` rejection
  * (see {@link VersionErrorMessage}). Carried as the JSON body of the Colyseus
  * `ServerError` thrown from `onAuth`, and a recognized variant of

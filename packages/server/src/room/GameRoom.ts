@@ -32,6 +32,7 @@ import {
   type EventBatchMessage,
   isCompatibleProtocolVersion,
   JoinLobbySelectionSchema,
+  JoinOptionsSchema,
   PROTOCOL_VERSION,
   type RejectMessage,
   type StateSnapshotMessage,
@@ -117,6 +118,18 @@ const PROTOCOL_VERSION_MISMATCH_CODE = 4001;
  * WebSocket application-reserved range (4000-4999).
  */
 const INVALID_LOBBY_SELECTION_CODE = 4002;
+
+/**
+ * The transport-level `ServerError.code` for a join options object carrying a
+ * key OUTSIDE the full wire allow-list (`JoinOptionsSchema`, security
+ * follow-up to S2.5.4 — `[[room-options-are-client-input]]`): e.g. `seed`,
+ * `maxSeats`, `botActionCap`, `botFillDifficulty`, or any other
+ * internal-only {@link GameRoomOptions} field. Distinct from both codes above
+ * so this specific "you sent a field you must never send" reason survives the
+ * transport, even though the client only ever treats any non-`error.version`
+ * message as a generic connection error today.
+ */
+const INVALID_JOIN_OPTIONS_CODE = 4003;
 
 export interface GameRoomOptions {
   readonly maxSeats?: number;
@@ -637,6 +650,20 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * a rejection here means `onCreate`/`loadRuleProfile` never sees the bad
    * value at all; the room is never created, the join promise just rejects
    * (nothing crashes).
+   *
+   * 🔴 Security follow-up (`[[room-options-are-client-input]]`): `onCreate`
+   * reads MANY MORE `GameRoomOptions` fields directly off this SAME raw
+   * options object with no runtime check of its own — most seriously `seed`
+   * (`this.#seed = options?.seed ?? generateSeed()`), also `maxSeats`,
+   * `botActionCap`, `botFillDifficulty`. A client that could smuggle its own
+   * `seed` through would know every future die roll while commit-reveal still
+   * "verifies" (the server honestly reveals whatever seed it was handed) —
+   * the exact reputational failure provably-fair RNG exists to prevent.
+   * `JoinOptionsSchema.safeParse` (STRICT — see its own doc) is the final gate:
+   * ANY key outside the full wire allow-list fails the whole join, not just
+   * that field silently dropped. Checked LAST (after the two schemas above
+   * already gave their own specific rejections for a bad version/lobby pick)
+   * so a legitimately-shaped-but-extended payload gets this SPECIFIC reason.
    */
   override onAuth(_client: Client, options: unknown): boolean {
     const parsed = ConnectOptionsSchema.safeParse(options);
@@ -665,6 +692,10 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       // client-side change was needed to correctly NOT report this as a
       // version mismatch.
       throw new ServerError(INVALID_LOBBY_SELECTION_CODE, 'invalid lobby selection');
+    }
+
+    if (!JoinOptionsSchema.safeParse(options).success) {
+      throw new ServerError(INVALID_JOIN_OPTIONS_CODE, 'unrecognized join option');
     }
 
     // Grace floor (discharges the S2.3.1 nit): a WIRE-supplied
