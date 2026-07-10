@@ -467,8 +467,15 @@ function leaderPublicVp(state: GameState): number {
  * least `robinHoodVpGap` below the leader's public VP. Uses
  * {@link computePublicVictoryPoints} — a trailing player holding a hidden VP
  * card is STILL trailing (no leak), the same discipline as {@link isStealable}.
+ *
+ * Exported (S2.4.4) so `@skervik/bots`'s `povertyDiscountRate` can propose a
+ * discounted trade under the SAME trailing definition `validate` enforces,
+ * rather than a second, possibly-diverging copy. PUBLIC VP only, always — a
+ * bot reading this can never observe hidden state, so `hiddenVp`'s
+ * unmeasurability-by-the-bot claim (`docs/wiki/rule-profiles.md`) is
+ * unaffected by this export.
  */
-function isTrailing(state: GameState, playerId: PlayerId): boolean {
+export function isTrailing(state: GameState, playerId: PlayerId): boolean {
   const { catchUp } = loadRuleProfile(state.profileId ?? 'classic');
   return (
     computePublicVictoryPoints(state, playerId) <=

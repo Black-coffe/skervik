@@ -18,6 +18,7 @@ import {
   findTile,
   findVertex,
   type GameState,
+  isTrailing,
   loadRuleProfile,
   type PlayerId,
   type PortContent,
@@ -182,6 +183,41 @@ export function bestBankRate(
  */
 export function vpProximity(state: GameState, playerId: PlayerId): number {
   return computePublicVictoryPoints(state, playerId);
+}
+
+/**
+ * S2.4.4 — the discounted bank-trade rate a TRAILING player holding a poverty
+ * token may use for `give`, or `null` when no discounted trade is worth
+ * proposing (the caller should fall back to {@link bestBankRate}). Mirrors
+ * `validate.ts`'s discount legality EXACTLY (`profile.catchUp.robinHood &&
+ * intent.count === robinHoodExchangeRate && povertyTokens>=1 &&
+ * isTrailing`), plus one thing a PROPOSER must check that a legality gate
+ * does not: the discount is only worth spending a token on when it is
+ * STRICTLY CHEAPER than the rate the player already has for free — a 2:1
+ * port beats a 2:1 `robinHoodExchangeRate` at no cost, and G3/S2.2.6 only
+ * guarantees `robinHoodExchangeRate < bankTrade.baseRate`, never anything
+ * about a port rate. A token is finite and capped
+ * (`catchUp.robinHoodTokenCap`), so v1 spends it GREEDILY whenever it is
+ * legal and strictly cheaper — a hoarding heuristic is a speculative
+ * optimisation this story deliberately does not build.
+ *
+ * Lives in `eval/`, not `heuristic/v1.ts`'s decision loop, so the M4
+ * assist-mode advisor can consume the SAME evaluation to hint "you can trade
+ * at X:1 right now" (owner directive 2026-07-07 — bot and advisor share one
+ * brain).
+ */
+export function povertyDiscountRate(
+  state: GameState,
+  playerId: PlayerId,
+  give: ResourceType,
+): number | null {
+  const profile = loadRuleProfile(state.profileId ?? 'classic');
+  if (!profile.catchUp.robinHood) return null;
+  if ((state.povertyTokens?.[playerId] ?? 0) < 1) return null;
+  const discountRate = profile.catchUp.robinHoodExchangeRate;
+  if (discountRate >= bestBankRate(state, playerId, give)) return null;
+  if (!isTrailing(state, playerId)) return null;
+  return discountRate;
 }
 
 // --- Shared board-geometry legality (mirrors the FROZEN v0 helpers) ----------
