@@ -35,6 +35,25 @@ export interface StateSnapshotMessage {
   readonly v: 1;
   readonly type: 'state.snapshot';
   readonly payload: PublicGameState;
+  /**
+   * S2.5.2: `true` when the RECEIVING client is this room's host (the private
+   * room's creator — seat 0). Transport-only, sibling to `payload` — never a
+   * `GameState` field (host/ready/lock are session concerns, not game rules).
+   * Recomputed on every snapshot send (join AND every reconnect/reclaim
+   * unicast), so a reloaded host regains its "Start match" affordance without
+   * depending on any client-remembered join mode. Meaningless once the match
+   * has left `'lobby'` — harmless to keep echoing.
+   */
+  readonly isHost: boolean;
+  /**
+   * S2.5.2: `true` when this room is manual-start only (created with
+   * `isPrivate:true`) rather than auto-starting once its seats fill. Lets a
+   * client render the correct "Start match" (host) / "waiting for host"
+   * (joiner) vs. "waiting for players" (quick match) view without depending
+   * on its own remembered join mode — same transport-only, reload-safe
+   * discipline as `isHost`.
+   */
+  readonly isPrivate: boolean;
 }
 
 /**
@@ -602,6 +621,10 @@ export const StateSnapshotEnvelopeSchema = z.object({
   v: EnvelopeVersionSchema,
   type: z.literal('state.snapshot'),
   payload: PublicGameStateSchema,
+  // S2.5.2: transport-only host/manual-start signals — see
+  // {@link StateSnapshotMessage}'s doc; never part of `PublicGameStateSchema`.
+  isHost: z.boolean(),
+  isPrivate: z.boolean(),
 });
 /**
  * Server → the sender: a `validate` rejection. `reason` is left a plain string

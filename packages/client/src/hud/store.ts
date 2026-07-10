@@ -63,6 +63,19 @@ export interface UiStore {
   readonly pendingSeal: PendingSeal | null;
   /** The current dismissable failure notice, if any (§7.6). */
   readonly notice: UiNotice | null;
+  /**
+   * S2.5.2: `true` when I am this room's host (seat 0 / the private room's
+   * creator) — a transport-only signal folded from `state.snapshot`'s
+   * `isHost`, never derived from `gameState` (host/ready/lock are session
+   * concerns, not game rules). `false` before any snapshot arrives.
+   */
+  readonly isHost: boolean;
+  /**
+   * S2.5.2: `true` when this room is manual-start only (created with
+   * `isPrivate:true`), folded from `state.snapshot`'s `isPrivate`. `false`
+   * (quick match's default) before any snapshot arrives.
+   */
+  readonly isPrivateRoom: boolean;
   readonly setGameState: (next: GameState) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
@@ -78,8 +91,16 @@ export interface UiStore {
   readonly dispatchIntent: (intent: PlayerIntent) => void;
   /** Predefined bounded quick-reaction (§7.3) — annotates the trace (no free-text). */
   readonly sendReaction: (reaction: QuickReaction) => void;
-  /** Seed `gameState` + the real seat id from a joining `state.snapshot`. */
-  readonly applySnapshot: (state: GameState, myPlayerId: PlayerId) => void;
+  /**
+   * Seed `gameState` + the real seat id from a joining `state.snapshot`, plus
+   * the S2.5.2 transport-only `isHost`/`isPrivate` signals.
+   */
+  readonly applySnapshot: (
+    state: GameState,
+    myPlayerId: PlayerId,
+    isHost: boolean,
+    isPrivate: boolean,
+  ) => void;
   /** Fold a broadcast `event.batch` through core `reduce` (ordered/idempotent). */
   readonly applyEventBatch: (events: readonly GameEvent[]) => void;
   /** Update the shown connection status (+ optional version info). */
@@ -159,6 +180,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tradeLog: [],
   pendingSeal: null,
   notice: null,
+  isHost: false,
+  isPrivateRoom: false,
   setGameState: (next) => set({ gameState: next }),
   dispatchIntent: (intent) => {
     set((state) => {
@@ -195,7 +218,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
         },
       ],
     })),
-  applySnapshot: (next, myPlayerId) => set({ gameState: next, myPlayerId }),
+  applySnapshot: (next, myPlayerId, isHost, isPrivate) =>
+    set({ gameState: next, myPlayerId, isHost, isPrivateRoom: isPrivate }),
   applyEventBatch: (events) =>
     set((state) => {
       const first = events[0];
@@ -219,6 +243,19 @@ export const useUiStore = create<UiStore>((set, get) => ({
   applyIntentError: () => set({ pendingSeal: null, notice: { kind: 'error' } }),
   dismissNotice: () => set({ notice: null }),
 }));
+
+/**
+ * S2.5.2: the uniform client transition signal — flip to `<GameScreen>` once
+ * the room's phase leaves `'lobby'`, for EVERY join mode (quick match /
+ * create private / join by code alike), replacing S2.5.4a's quickMatch-only
+ * connect-time flip (which could show a blank `<GameScreen>` before
+ * `gameState` existed). Pure so `App.tsx`'s routing is unit-tested without a
+ * React render — zustand v5's static-render snapshot can never observe a
+ * later `setState()` (see `lobby/lobbyStore.ts`'s `deriveLobbyViewState` doc).
+ */
+export function shouldShowGame(phase: GameState['phase']): boolean {
+  return phase !== 'lobby';
+}
 
 /** Stable seat order for the current `gameState` — never reorder mid-match (DESIGN.md §6). */
 export function selectSeatOrder(state: GameState): readonly PlayerId[] {

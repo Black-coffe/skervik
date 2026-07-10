@@ -11,7 +11,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App.js';
 import { useUiStore } from './hud/store.js';
 import { I18nProvider } from './i18n/index.js';
-import { shouldStartAfterConnect, useLobbyStore } from './lobby/lobbyStore.js';
+import { shouldMarkConnected, useLobbyStore } from './lobby/lobbyStore.js';
 import { resolveColdLoadAction } from './net/coldLoadAction.js';
 import { fetchGuest } from './net/guestAuth.js';
 import { readCurrentRoomId, readReconnectionToken } from './net/reconnectToken.js';
@@ -50,11 +50,16 @@ function hasResumablePointer(): boolean {
  * from the lobby's Start button (`selectLobbySelection` never returns
  * `undefined`) — the two cold-load callers below always omit it. On that
  * Start-initiated path, `started` flips ONLY once `connect()` resolves a live
- * handle AND the join mode is `quickMatch` ({@link shouldStartAfterConnect})
- * — never synchronously on click, never before the promise settles, so a
- * failed connect leaves the user on `<LobbyScreen>` instead of a blank
- * `<GameScreen>`. `createPrivate`/`joinByCode` deliberately do NOT flip here
- * (S2.5.4a narrowing) — see {@link shouldStartAfterConnect}'s docstring.
+ * handle ({@link shouldMarkConnected}) — never synchronously on click, never
+ * before the promise settles, so a failed connect leaves the user on
+ * `<LobbyScreen>` instead of a live-but-broken view. S2.5.2 unifies this
+ * across every join mode (S2.5.4a used to narrow it to `quickMatch` only):
+ * `started` now means "connected," full stop, and `App.tsx` combines it with
+ * `hud/store.ts`'s `shouldShowGame(gameState.phase)` to decide GameScreen vs.
+ * the waiting view — so `createPrivate`/`joinByCode` correctly stay on
+ * `<LobbyScreen>`'s connected-but-waiting section (never a blank
+ * `<GameScreen>`) for as long as `phase === 'lobby'`, without needing this
+ * function to know the join mode at all.
  */
 export async function startConnection(
   lobbySelection?: LobbyJoinFields,
@@ -64,8 +69,8 @@ export async function startConnection(
   const handle = await connect(
     WS_URL,
     {
-      onSnapshot: (state, myPlayerId) =>
-        useUiStore.getState().applySnapshot(state, myPlayerId),
+      onSnapshot: (state, myPlayerId, isHost, isPrivate) =>
+        useUiStore.getState().applySnapshot(state, myPlayerId, isHost, isPrivate),
       onBatch: (events) => useUiStore.getState().applyEventBatch(events),
       onReject: (reason) => useUiStore.getState().applyReject(reason),
       onError: () => useUiStore.getState().applyIntentError(),
@@ -77,7 +82,7 @@ export async function startConnection(
     joinMode,
   );
   useUiStore.getState().setConnection(handle);
-  if (lobbySelection !== undefined && shouldStartAfterConnect(handle, joinMode)) {
+  if (lobbySelection !== undefined && shouldMarkConnected(handle)) {
     useLobbyStore.getState().start();
   }
 }

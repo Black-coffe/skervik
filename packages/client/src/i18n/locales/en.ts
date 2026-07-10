@@ -166,4 +166,7 @@ export const en: Messages = {
     "Anyone with this link can join until the match fills — it's an invite, not a password.",
   'lobby.copyLink': 'Copy link',
   'lobby.copied': 'Copied!',
+  'lobby.beginMatchButton': 'Begin match',
+  'lobby.waitingForHost': 'Waiting for the host to begin the match…',
+  'lobby.waitingForPlayers': 'Waiting for more players…',
 };

@@ -150,6 +150,10 @@ export const TRANSLATION_KEYS = [
   'lobby.inviteHint',
   'lobby.copyLink',
   'lobby.copied',
+  // --- Ready-up: host-started private matches (S2.5.2) ---
+  'lobby.beginMatchButton',
+  'lobby.waitingForHost',
+  'lobby.waitingForPlayers',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

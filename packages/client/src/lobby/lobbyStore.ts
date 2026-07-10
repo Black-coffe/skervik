@@ -77,28 +77,23 @@ export function selectJoinMode(state: LobbyStore): JoinMode {
 }
 
 /**
- * Whether a Start-initiated `connect()` attempt should flip the lobby to the
- * game screen (S2.5.4a) — bound to TWO terminal observables, not the click
- * itself: a live handle (`connect()` never throws; `null` means a failed
- * attempt — expired resume, rejected join, absent server — and must leave
- * the user on `<LobbyScreen>` rather than a blank `<GameScreen>`), AND the
- * quick-match join mode specifically. `App.tsx` renders `<GameScreen>` XOR
- * `<LobbyScreen>`, so flipping `started` unmounts `<LobbyScreen>` — exactly
- * where S2.5.3 renders the just-created invite link for a `createPrivate`
- * host (`deriveLobbyViewState`'s `showInvite`) once connected, and a private
- * room / `joinByCode` join has no live `gameState` yet (no seats-full
- * auto-start), so `<GameScreen>` would render blank. Quick match auto-starts
- * once bot seats fill, so `gameState` arrives immediately and `<GameScreen>`
- * is correct right away. The `createPrivate`/`joinByCode` transition belongs
- * to the ready-up / match-started work (S2.5.2), out of scope here. Pure so
- * the decision is directly unit-testable without a React render (mirrors
- * {@link deriveLobbyViewState}).
+ * Whether a Start-initiated `connect()` attempt should mark the lobby
+ * "connected" (S2.5.2 — replaces S2.5.4a's `shouldStartAfterConnect`, which
+ * narrowed this to quickMatch only). Bound to ONE terminal observable: a live
+ * handle (`connect()` never throws; `null` means a failed attempt — expired
+ * resume, rejected join, absent server — and must leave the user on
+ * `<LobbyScreen>`). Unlike S2.5.4a, this no longer discriminates by join
+ * mode: `started` now means "a connection attempt succeeded," for every mode
+ * alike — the GameScreen-vs-waiting-view decision moved downstream to
+ * `hud/store.ts`'s `shouldShowGame(phase)`, which `App.tsx` combines with
+ * this flag. A private room's host/joiner still lands on `<LobbyScreen>`'s
+ * connected-but-waiting view (invite link / "Start match" / "waiting for
+ * host") for as long as `gameState.phase === 'lobby'` — the SAME guarantee
+ * S2.5.4a's narrowing used to provide, by a different, uniform mechanism.
+ * Pure so the decision is directly unit-testable without a React render.
  */
-export function shouldStartAfterConnect(
-  handle: WsClientHandle | null,
-  joinMode: JoinMode | undefined,
-): boolean {
-  return handle !== null && joinMode?.kind === 'quickMatch';
+export function shouldMarkConnected(handle: WsClientHandle | null): boolean {
+  return handle !== null;
 }
 
 export interface LobbyViewState {
@@ -108,12 +103,42 @@ export interface LobbyViewState {
   readonly showInvite: boolean;
   /** Disable Start (a `joinByCode` attempt with no code entered can never resolve). */
   readonly startDisabled: boolean;
+  /**
+   * S2.5.2: show the host-only "Start match" trigger — connected, I'm the
+   * host (seat 0 / the room's creator), and the room is manual-start
+   * (`isPrivate`). Never shown for quick match (it auto-starts).
+   */
+  readonly showStartMatchButton: boolean;
+  /**
+   * S2.5.2: connected to a manual-start (private) room, NOT the host —
+   * "waiting for the host to start".
+   */
+  readonly showWaitingForHost: boolean;
+  /**
+   * S2.5.2: connected to an auto-start room (quick match) that hasn't
+   * started yet — "waiting for players", regardless of seat/host.
+   */
+  readonly showWaitingForPlayers: boolean;
 }
 
 /**
- * Derives `LobbyScreen`'s three conditional sections from store state (S2.5.3)
- * — pure, so the branching is unit-tested WITHOUT a React render. This is
- * deliberate, not incidental: zustand v5's `useStore` feeds
+ * The S2.5.2 host/manual-start signals `deriveLobbyViewState` needs —
+ * `hud/store.ts`'s `isHost`/`isPrivateRoom`, folded from `state.snapshot`
+ * (transport-only, never derived from `gameState`). Optional at the call
+ * site (defaults to "not connected yet") so every pre-S2.5.2 call site keeps
+ * working unmodified.
+ */
+export interface LobbyHostState {
+  readonly isHost: boolean;
+  readonly isPrivate: boolean;
+}
+
+const NOT_CONNECTED_HOST_STATE: LobbyHostState = { isHost: false, isPrivate: false };
+
+/**
+ * Derives `LobbyScreen`'s conditional sections from store state (S2.5.3,
+ * extended S2.5.2) — pure, so the branching is unit-tested WITHOUT a React
+ * render. This is deliberate, not incidental: zustand v5's `useStore` feeds
  * `useSyncExternalStore` a `getServerSnapshot` backed by `getInitialState()`
  * (`zustand/vanilla.js`), which stays frozen at the store's FIRST snapshot
  * forever — `renderToStaticMarkup` (the ONLY render path this codebase's
@@ -126,10 +151,15 @@ export interface LobbyViewState {
 export function deriveLobbyViewState(
   state: Pick<LobbyStore, 'joinMode' | 'roomCode'>,
   connectedRoomId: string | null,
+  host: LobbyHostState = NOT_CONNECTED_HOST_STATE,
 ): LobbyViewState {
+  const connected = connectedRoomId !== null;
   return {
     showRuleSelectors: state.joinMode !== 'joinByCode',
-    showInvite: state.joinMode === 'createPrivate' && connectedRoomId !== null,
+    showInvite: state.joinMode === 'createPrivate' && connected,
     startDisabled: state.joinMode === 'joinByCode' && state.roomCode.trim().length === 0,
+    showStartMatchButton: connected && host.isHost && host.isPrivate,
+    showWaitingForHost: connected && !host.isHost && host.isPrivate,
+    showWaitingForPlayers: connected && !host.isPrivate,
   };
 }

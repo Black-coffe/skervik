@@ -234,6 +234,10 @@ export interface GameRoomOptions {
    * existing room stays publicly matchable, byte-unchanged. Privacy here is
    * "unguessable-enough for play with a friend," not a security boundary —
    * anyone holding the roomId can join until the room fills.
+   *
+   * S2.5.2: ALSO gates `#maybeAutoStart` — a private room never auto-starts
+   * on seats-full; it starts only when its host (seat 0) sends `startMatch`
+   * (`#handleStartMatch`), which bot-fills any still-empty seats first.
    */
   readonly isPrivate?: boolean;
 }
@@ -365,6 +369,16 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #botFillDifficulty: Difficulty = 'medium';
 
   /**
+   * {@link GameRoomOptions.isPrivate}, resolved at `onCreate` (S2.5.2, first
+   * read by S2.5.3 only for `setPrivate`). Gates `#maybeAutoStart` (a private
+   * room is manual-start only — `#handleStartMatch` is its sole trigger) and
+   * is echoed on every `state.snapshot` (`#sendSnapshot`) so a client can tell
+   * a manual-start room from an auto-starting quick match without depending
+   * on its own remembered join mode (survives a reload).
+   */
+  #isPrivate = false;
+
+  /**
    * The one-way game-end close latch (S2.3.3): flips exactly once, when the
    * `game.ended` batch is applied, so the consented client-close is scheduled a
    * single time. Guards against a re-entrant/duplicate schedule (core freezes to
@@ -395,6 +409,7 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // resolves before any join can observe the room, closing the theoretical
     // race a fire-and-forget `void setPrivate(...)` would leave open. Absent
     // for every existing room (production default `false`) — byte-unchanged.
+    this.#isPrivate = options?.isPrivate ?? false;
     if (options?.isPrivate) {
       await this.setPrivate(true);
     }
@@ -459,21 +474,7 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // match's secret `#seed` — so a single-player match stays reproducible
     // from the same room options without coupling the bot to commit-reveal.
     (options?.bots ?? []).forEach((spec, i) => {
-      const playerId = `bot-${i}` as PlayerId;
-      const seat = new SeatSchema().assign({
-        playerId,
-        seatIndex: this.state.seats.length,
-        connected: true,
-        consecutiveMisses: 0,
-        idle: false,
-        isBot: true,
-        botDifficulty: spec.difficulty,
-      });
-      this.state.seats.push(seat);
-      this.#bots.set(
-        playerId,
-        createHeuristicBot({ difficulty: spec.difficulty, seed: `bot-${i}` }),
-      );
+      this.#mintBotSeat(spec.difficulty, i);
     });
 
     // The authoritative intent pipeline (S1.4.2), SERIALIZED per room (see
@@ -483,6 +484,16 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // not-yet-committed state.
     this.onMessage('intent', (client, message: unknown) => {
       this.#enqueueIntent(client, message);
+    });
+
+    // Host-only manual match start (S2.5.2): a private room's ONLY start
+    // trigger — `#maybeAutoStart` skips it entirely (see that method's
+    // updated guard). No payload, no reply on either success or a silent
+    // ignore: this is a lobby control message (host-only, private-room-only),
+    // never a gameplay `validate`/`intent.rejected` concern, so it stays off
+    // the S1.4.2 intent/reject channel entirely.
+    this.onMessage('startMatch', (client) => {
+      this.#handleStartMatch(client);
     });
 
     // Bots alone can already fill the room (a pure bot-vs-bot room, or the
@@ -520,12 +531,85 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * rides the SAME per-room `#queue` as every intent.
    */
   #maybeAutoStart(): void {
+    // Private rooms are manual-start only (S2.5.2): `#handleStartMatch` is
+    // their sole start trigger, even once every seat is technically full —
+    // the host may still be waiting on one more friend to click the invite
+    // link. Quick-match (the default, `#isPrivate === false`) is unchanged.
+    if (this.#isPrivate) return;
     if (this.#matchStarted || this.state.seats.length < this.maxClients) return;
     this.#matchStarted = true;
     this.#queue = this.#queue
       .then(() => this.#startMatch())
       .catch((error: unknown) => {
         this.#logInternalError('match-start queue link threw unexpectedly', error);
+      });
+  }
+
+  /**
+   * Mints ONE brand-new server-owned bot seat with playerId `bot-${index}`
+   * and a fresh `Bot` brain. Extracted from `onCreate`'s genesis `options.bots`
+   * loop (S2.4.3) so S2.5.2's host-start pre-fill (`#handleStartMatch`) can
+   * share the EXACT same minting logic instead of a second bot-mint path.
+   *
+   * DEVIATION (reported per the story's own contingency): the story asked to
+   * reuse `#botFillSeat` (S2.3.3) for pre-start fill, but that method solves a
+   * different problem — it converts an ALREADY-SEATED (human) seat into a
+   * bot-driven one, and explicitly no-ops in `'lobby'` phase (`if
+   * (this.gameState.phase === 'finished' || this.gameState.phase === 'lobby')
+   * return;`), which is exactly the phase a pre-start fill runs in; it also
+   * has no existing seat/playerId to key off for a slot that was NEVER
+   * occupied. Rather than duplicate a second bot-mint code path, this shares
+   * the ONE that already existed (previously inlined here), so there is still
+   * exactly one bot-mint path — just not the specific method the story named.
+   */
+  #mintBotSeat(difficulty: Difficulty, index: number): void {
+    const playerId = `bot-${index}` as PlayerId;
+    const seat = new SeatSchema().assign({
+      playerId,
+      seatIndex: this.state.seats.length,
+      connected: true,
+      consecutiveMisses: 0,
+      idle: false,
+      isBot: true,
+      botDifficulty: difficulty,
+    });
+    this.state.seats.push(seat);
+    this.#bots.set(playerId, createHeuristicBot({ difficulty, seed: `bot-${index}` }));
+  }
+
+  /**
+   * The host-only manual match-start trigger (S2.5.2) — a private room's ONLY
+   * way to start, since `#maybeAutoStart` skips it entirely. A no-op (no
+   * reply — see the `onMessage('startMatch', …)` registration doc) unless
+   * ALL of: the room is private, the match hasn't already started, and the
+   * sender IS the host (seat 0 — the `createPrivate` creator; seat 0 is never
+   * reassigned after genesis). On a valid press: bot-fill whatever seats are
+   * still empty up to `maxClients` (via `#mintBotSeat`, shared with the
+   * genesis path — see its doc), then hand off to the EXISTING `#startMatch`
+   * genesis pipeline through the room's `#queue` — the identical path
+   * `#maybeAutoStart` uses, so a manually-started private match is
+   * indistinguishable from an auto-started one once it begins.
+   *
+   * The `#matchStarted` latch is set synchronously, BEFORE the bot-fill loop
+   * and the async enqueue — same discipline as `#maybeAutoStart` — so a
+   * re-entrant/duplicate Start press can never mint bots or start twice.
+   */
+  #handleStartMatch(client: Client): void {
+    if (!this.#isPrivate) return;
+    if (this.#matchStarted) return;
+    const hostSeat = this.state.seats[0];
+    if (!hostSeat || hostSeat.playerId !== client.sessionId) return;
+
+    this.#matchStarted = true;
+    let index = this.state.seats.length;
+    while (this.state.seats.length < this.maxClients) {
+      this.#mintBotSeat(this.#botFillDifficulty, index);
+      index += 1;
+    }
+    this.#queue = this.#queue
+      .then(() => this.#startMatch())
+      .catch((error: unknown) => {
+        this.#logInternalError('host-start queue link threw unexpectedly', error);
       });
   }
 
@@ -802,6 +886,13 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       v: 1,
       type: 'state.snapshot',
       payload: this.gameState,
+      // S2.5.2: transport-only host/manual-start signals — NEVER on
+      // `GameState`/an event. Recomputed at EVERY snapshot send (join, and
+      // every reconnect/reclaim unicast, S2.3.1/S2.3.2), so a reloaded host
+      // regains its Start-match affordance without depending on any
+      // client-remembered join mode.
+      isHost: this.state.seats[0]?.playerId === client.sessionId,
+      isPrivate: this.#isPrivate,
     };
     client.send(snapshot.type, snapshot);
   }

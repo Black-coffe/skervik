@@ -32,6 +32,7 @@ const FAKE_HANDLE = {
   sessionId: 'session-1',
   roomId: 'room-1',
   sendIntent: () => {},
+  startMatch: () => {},
   disconnect: () => {},
 };
 
@@ -63,20 +64,20 @@ describe('startConnection — Start button transition (S2.5.4a)', () => {
     expect(useUiStore.getState().connection).toBeNull();
   });
 
-  it('[forcing] regression guard: a createPrivate Start with a LIVE handle does NOT flip started — the host must stay on LobbyScreen to see the invite link S2.5.3 renders there (deriveLobbyViewState.showInvite)', async () => {
+  it("[forcing] S2.5.2 unification: a createPrivate Start with a LIVE handle DOES flip started now — the GameScreen-vs-waiting-view decision moved to shouldShowGame(phase) (hud/store.test.ts), which keeps the host on LobbyScreen's waiting section (invite link, S2.5.3) while phase stays 'lobby'", async () => {
     mockConnect.mockResolvedValue(FAKE_HANDLE);
     await startConnection({ profileId: 'classic', bots: [] }, { kind: 'createPrivate' });
-    expect(useLobbyStore.getState().started).toBe(false);
+    expect(useLobbyStore.getState().started).toBe(true);
     expect(useUiStore.getState().connection).toEqual(FAKE_HANDLE);
   });
 
-  it('[forcing] regression guard: a joinByCode Start with a LIVE handle does NOT flip started — no live gameState yet, GameScreen would render blank', async () => {
+  it('[forcing] S2.5.2 unification: a joinByCode Start with a LIVE handle DOES flip started now — same reasoning (a blank GameScreen is prevented by shouldShowGame(phase), not by narrowing started)', async () => {
     mockConnect.mockResolvedValue(FAKE_HANDLE);
     await startConnection(
       { profileId: 'classic', bots: [] },
       { kind: 'joinByCode', roomId: 'room-1' },
     );
-    expect(useLobbyStore.getState().started).toBe(false);
+    expect(useLobbyStore.getState().started).toBe(true);
   });
 
   it('criterion 3: a resume-style call (no lobbySelection) does not itself flip started, and does not throw when started is already true', async () => {

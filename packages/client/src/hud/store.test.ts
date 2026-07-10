@@ -15,6 +15,7 @@ import {
   selectIsMyTurn,
   selectOpenOffer,
   selectSeatOrder,
+  shouldShowGame,
   useUiStore,
 } from './store.js';
 
@@ -30,6 +31,11 @@ describe('useUiStore — initial state', () => {
     expect(useUiStore.getState().myPlayerId).toBe(expected);
   });
 
+  it('defaults isHost/isPrivateRoom to false before any snapshot arrives (S2.5.2)', () => {
+    expect(useUiStore.getState().isHost).toBe(false);
+    expect(useUiStore.getState().isPrivateRoom).toBe(false);
+  });
+
   it('setGameState replaces the held GameState', () => {
     const next: GameState = { ...devFixtureState, turn: 99 };
     useUiStore.getState().setGameState(next);
@@ -37,6 +43,20 @@ describe('useUiStore — initial state', () => {
     // Restore, so other tests in this file (and any future ones) aren't
     // order-dependent on this mutation of the shared module-level store.
     useUiStore.getState().setGameState(devFixtureState);
+  });
+});
+
+describe('shouldShowGame (S2.5.2) — the uniform phase-based transition signal, pure', () => {
+  it("[forcing] returns false for phase 'lobby' — never flips to GameScreen while waiting", () => {
+    expect(shouldShowGame('lobby')).toBe(false);
+  });
+
+  it('[forcing] returns true for every other phase — setup/roll/main/robber/finished all show the game', () => {
+    expect(shouldShowGame('setup')).toBe(true);
+    expect(shouldShowGame('roll')).toBe(true);
+    expect(shouldShowGame('main')).toBe(true);
+    expect(shouldShowGame('robber')).toBe(true);
+    expect(shouldShowGame('finished')).toBe(true);
   });
 });
 
@@ -135,6 +155,7 @@ describe('dispatchIntent — the S1.6.4→S1.6.5 stub seam', () => {
         sessionId: 'seat-x',
         roomId: 'room-x',
         sendIntent,
+        startMatch: vi.fn(),
         disconnect: vi.fn(),
       },
     });
@@ -167,9 +188,15 @@ describe('applySnapshot / applyEventBatch — the live wire', () => {
   });
 
   it('applySnapshot seeds gameState and the real seat id', () => {
-    useUiStore.getState().applySnapshot(devFixtureState, 'seat-42');
+    useUiStore.getState().applySnapshot(devFixtureState, 'seat-42', false, false);
     expect(useUiStore.getState().gameState).toBe(devFixtureState);
     expect(useUiStore.getState().myPlayerId).toBe('seat-42');
+  });
+
+  it('[forcing] applySnapshot folds isHost/isPrivate (S2.5.2) — transport-only, never derived from gameState', () => {
+    useUiStore.getState().applySnapshot(devFixtureState, 'seat-42', true, true);
+    expect(useUiStore.getState().isHost).toBe(true);
+    expect(useUiStore.getState().isPrivateRoom).toBe(true);
   });
 
   it('applyEventBatch folds a real multi-event batch identically to server-side reduce', () => {
@@ -178,7 +205,7 @@ describe('applySnapshot / applyEventBatch — the live wire', () => {
       RP(base, { 'player-2': { timber: 1 } }),
       RP(base + 1, { 'player-3': { clay: 2 } }),
     ];
-    useUiStore.getState().applySnapshot(devFixtureState, 'seat-x');
+    useUiStore.getState().applySnapshot(devFixtureState, 'seat-x', false, false);
     useUiStore.getState().applyEventBatch(events);
 
     const expected = events.reduce((s, e) => reduce(s, e), devFixtureState);
@@ -188,7 +215,7 @@ describe('applySnapshot / applyEventBatch — the live wire', () => {
 
   it('drops a stale/re-delivered batch (first event index behind the applied count)', () => {
     const base = devFixtureState.eventIndex;
-    useUiStore.getState().applySnapshot(devFixtureState, 'seat-x');
+    useUiStore.getState().applySnapshot(devFixtureState, 'seat-x', false, false);
     useUiStore.getState().applyEventBatch([RP(base, { 'player-2': { timber: 1 } })]);
     const afterFirst = useUiStore.getState().gameState;
 

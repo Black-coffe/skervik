@@ -376,7 +376,13 @@ describe('outbound envelopes (ServerMessageSchema, E1.6 client contract)', () =>
         depth: 0,
       },
     };
-    const msg = { v: 1, type: 'state.snapshot', payload: snapshot };
+    const msg = {
+      v: 1,
+      type: 'state.snapshot',
+      payload: snapshot,
+      isHost: true,
+      isPrivate: false,
+    };
     expect(StateSnapshotEnvelopeSchema.safeParse(msg).success).toBe(true);
     expect(ServerMessageSchema.safeParse(msg).success).toBe(true);
   });

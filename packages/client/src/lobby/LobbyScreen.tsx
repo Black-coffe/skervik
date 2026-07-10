@@ -94,6 +94,10 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
   // The live connection handle (S1.6.5) — once a `createPrivate` join
   // resolves, its `roomId` IS the shareable invite code/link (S2.5.3).
   const connection = useUiStore((state) => state.connection);
+  // S2.5.2: transport-only host/manual-start signals, folded from
+  // `state.snapshot` (never derived from `gameState`).
+  const isHost = useUiStore((state) => state.isHost);
+  const isPrivateRoom = useUiStore((state) => state.isPrivateRoom);
   const [copied, setCopied] = useState(false);
 
   const joinModeRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -160,144 +164,176 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
     }
   }
 
-  const { showRuleSelectors, showInvite, startDisabled } = deriveLobbyViewState(
-    { joinMode, roomCode },
-    connection?.roomId ?? null,
-  );
+  const connected = connection !== null;
+  const {
+    showRuleSelectors,
+    showInvite,
+    startDisabled,
+    showStartMatchButton,
+    showWaitingForHost,
+    showWaitingForPlayers,
+  } = deriveLobbyViewState({ joinMode, roomCode }, connection?.roomId ?? null, {
+    isHost,
+    isPrivate: isPrivateRoom,
+  });
 
   return (
     <div className="lobby-screen">
       <div className="lobby-screen__panel">
         <h1 className="lobby-screen__title">{t('lobby.title')}</h1>
 
-        <section className="lobby-screen__section">
-          <span className="lobby-screen__label">{t('lobby.joinModeLabel')}</span>
-          <div
-            className="lobby-screen__presets"
-            role="radiogroup"
-            aria-label={t('a11y.joinModeSelector')}
-          >
-            {JOIN_MODES.map((mode, index) => {
-              const active = mode === joinMode;
-              const keys = JOIN_MODE_KEYS[mode];
-              return (
-                <button
-                  key={mode}
-                  ref={(el) => {
-                    joinModeRefs.current[index] = el;
-                  }}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  data-active={active}
-                  tabIndex={active ? 0 : -1}
-                  className="lobby-screen__preset"
-                  onClick={() => setJoinMode(mode)}
-                  onKeyDown={(event) => handleJoinModeKeyDown(event, index)}
+        {/* Join-mode/preset/bot pick + the connect-Start button — the
+            PRE-CONNECT picker (S2.5.4/S2.5.3). Once connected (S2.5.2), this
+            whole picker is replaced by the invite/waiting/Begin-match
+            sections below: "Only the host sees and can press 'Start match'.
+            Joiners see a 'waiting for host to start' state" — a REPLACEMENT
+            of the picker, not an addition alongside it (you already joined). */}
+        {!connected && (
+          <>
+            <section className="lobby-screen__section">
+              <span className="lobby-screen__label">{t('lobby.joinModeLabel')}</span>
+              <div
+                className="lobby-screen__presets"
+                role="radiogroup"
+                aria-label={t('a11y.joinModeSelector')}
+              >
+                {JOIN_MODES.map((mode, index) => {
+                  const active = mode === joinMode;
+                  const keys = JOIN_MODE_KEYS[mode];
+                  return (
+                    <button
+                      key={mode}
+                      ref={(el) => {
+                        joinModeRefs.current[index] = el;
+                      }}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      data-active={active}
+                      tabIndex={active ? 0 : -1}
+                      className="lobby-screen__preset"
+                      onClick={() => setJoinMode(mode)}
+                      onKeyDown={(event) => handleJoinModeKeyDown(event, index)}
+                    >
+                      <span className="lobby-screen__preset-mark" aria-hidden="true">
+                        {active ? '✓' : ''}
+                      </span>
+                      <span className="lobby-screen__preset-name">{t(keys.name)}</span>
+                      <span className="lobby-screen__preset-description">
+                        {t(keys.description)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {joinMode === 'joinByCode' && (
+              <section className="lobby-screen__section">
+                <label className="lobby-screen__label" htmlFor="lobby-room-code">
+                  {t('lobby.roomCodeLabel')}
+                </label>
+                <input
+                  id="lobby-room-code"
+                  className="lobby-screen__room-code-input"
+                  type="text"
+                  value={roomCode}
+                  onChange={handleRoomCodeChange}
+                  aria-label={t('a11y.roomCodeInput')}
+                  autoComplete="off"
+                />
+              </section>
+            )}
+
+            {showRuleSelectors && (
+              <section className="lobby-screen__section">
+                <span className="lobby-screen__label">{t('lobby.presetLabel')}</span>
+                <div
+                  className="lobby-screen__presets"
+                  role="radiogroup"
+                  aria-label={t('a11y.presetSelector')}
                 >
-                  <span className="lobby-screen__preset-mark" aria-hidden="true">
-                    {active ? '✓' : ''}
-                  </span>
-                  <span className="lobby-screen__preset-name">{t(keys.name)}</span>
-                  <span className="lobby-screen__preset-description">
-                    {t(keys.description)}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
+                  {SHIPPING_PROFILE_IDS.map((id, index) => {
+                    const active = id === profileId;
+                    const keys = PRESET_KEYS[id];
+                    return (
+                      <button
+                        key={id}
+                        ref={(el) => {
+                          presetRefs.current[index] = el;
+                        }}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        data-active={active}
+                        tabIndex={active ? 0 : -1}
+                        className="lobby-screen__preset"
+                        onClick={() => setProfileId(id)}
+                        onKeyDown={(event) => handlePresetKeyDown(event, index)}
+                      >
+                        <span className="lobby-screen__preset-mark" aria-hidden="true">
+                          {active ? '✓' : ''}
+                        </span>
+                        <span className="lobby-screen__preset-name">{t(keys.name)}</span>
+                        <span className="lobby-screen__preset-description">
+                          {t(keys.description)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
-        {joinMode === 'joinByCode' && (
-          <section className="lobby-screen__section">
-            <label className="lobby-screen__label" htmlFor="lobby-room-code">
-              {t('lobby.roomCodeLabel')}
-            </label>
-            <input
-              id="lobby-room-code"
-              className="lobby-screen__room-code-input"
-              type="text"
-              value={roomCode}
-              onChange={handleRoomCodeChange}
-              aria-label={t('a11y.roomCodeInput')}
-              autoComplete="off"
-            />
-          </section>
-        )}
+            {showRuleSelectors && (
+              <section className="lobby-screen__section">
+                <span className="lobby-screen__label">
+                  {t('lobby.botCountLabel')} — {t('lobby.botCount', { count: botCount })}
+                </span>
+                <div
+                  className="lobby-screen__bot-count"
+                  role="radiogroup"
+                  aria-label={t('a11y.botCountSelector')}
+                >
+                  {BOT_COUNT_OPTIONS.map((count, index) => {
+                    const active = count === botCount;
+                    return (
+                      <button
+                        key={count}
+                        ref={(el) => {
+                          botRefs.current[index] = el;
+                        }}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        data-active={active}
+                        tabIndex={active ? 0 : -1}
+                        className="lobby-screen__bot-option"
+                        onClick={() => setBotCount(count)}
+                        onKeyDown={(event) => handleBotKeyDown(event, index)}
+                      >
+                        {count}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
 
-        {showRuleSelectors && (
-          <section className="lobby-screen__section">
-            <span className="lobby-screen__label">{t('lobby.presetLabel')}</span>
-            <div
-              className="lobby-screen__presets"
-              role="radiogroup"
-              aria-label={t('a11y.presetSelector')}
+            <Button
+              variant="primary"
+              className="lobby-screen__start"
+              disabled={startDisabled}
+              onClick={() =>
+                onStart(
+                  selectLobbySelection(useLobbyStore.getState()),
+                  selectJoinMode(useLobbyStore.getState()),
+                )
+              }
             >
-              {SHIPPING_PROFILE_IDS.map((id, index) => {
-                const active = id === profileId;
-                const keys = PRESET_KEYS[id];
-                return (
-                  <button
-                    key={id}
-                    ref={(el) => {
-                      presetRefs.current[index] = el;
-                    }}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    data-active={active}
-                    tabIndex={active ? 0 : -1}
-                    className="lobby-screen__preset"
-                    onClick={() => setProfileId(id)}
-                    onKeyDown={(event) => handlePresetKeyDown(event, index)}
-                  >
-                    <span className="lobby-screen__preset-mark" aria-hidden="true">
-                      {active ? '✓' : ''}
-                    </span>
-                    <span className="lobby-screen__preset-name">{t(keys.name)}</span>
-                    <span className="lobby-screen__preset-description">
-                      {t(keys.description)}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {showRuleSelectors && (
-          <section className="lobby-screen__section">
-            <span className="lobby-screen__label">
-              {t('lobby.botCountLabel')} — {t('lobby.botCount', { count: botCount })}
-            </span>
-            <div
-              className="lobby-screen__bot-count"
-              role="radiogroup"
-              aria-label={t('a11y.botCountSelector')}
-            >
-              {BOT_COUNT_OPTIONS.map((count, index) => {
-                const active = count === botCount;
-                return (
-                  <button
-                    key={count}
-                    ref={(el) => {
-                      botRefs.current[index] = el;
-                    }}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    data-active={active}
-                    tabIndex={active ? 0 : -1}
-                    className="lobby-screen__bot-option"
-                    onClick={() => setBotCount(count)}
-                    onKeyDown={(event) => handleBotKeyDown(event, index)}
-                  >
-                    {count}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
+              {t('lobby.startButton')}
+            </Button>
+          </>
         )}
 
         {showInvite && connection && (
@@ -316,19 +352,24 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
           </section>
         )}
 
-        <Button
-          variant="primary"
-          className="lobby-screen__start"
-          disabled={startDisabled}
-          onClick={() =>
-            onStart(
-              selectLobbySelection(useLobbyStore.getState()),
-              selectJoinMode(useLobbyStore.getState()),
-            )
-          }
-        >
-          {t('lobby.startButton')}
-        </Button>
+        {/* S2.5.2: host-only manual start (private rooms) vs. the
+            corresponding waiting states — mutually exclusive with the
+            pre-connect picker above and with each other. */}
+        {showStartMatchButton && connection && (
+          <Button
+            variant="primary"
+            className="lobby-screen__start"
+            onClick={() => connection.startMatch()}
+          >
+            {t('lobby.beginMatchButton')}
+          </Button>
+        )}
+        {showWaitingForHost && (
+          <p className="lobby-screen__waiting">{t('lobby.waitingForHost')}</p>
+        )}
+        {showWaitingForPlayers && (
+          <p className="lobby-screen__waiting">{t('lobby.waitingForPlayers')}</p>
+        )}
       </div>
     </div>
   );
