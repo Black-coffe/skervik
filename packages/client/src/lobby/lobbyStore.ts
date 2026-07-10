@@ -8,7 +8,12 @@
 import type { RuleProfileId } from '@skervik/core';
 import { create } from 'zustand';
 
-import type { BotDifficulty, JoinMode, LobbyJoinFields } from '../net/wsClient.js';
+import type {
+  BotDifficulty,
+  JoinMode,
+  LobbyJoinFields,
+  WsClientHandle,
+} from '../net/wsClient.js';
 
 /** Mirrors the server's wire-level cap (`JoinLobbySelectionSchema.bots`, protocol/src/messages.ts) — a 4-seat Classic room around at least one human. */
 export const MAX_LOBBY_BOTS = 3;
@@ -69,6 +74,19 @@ export function selectJoinMode(state: LobbyStore): JoinMode {
     return { kind: 'joinByCode', roomId: state.roomCode.trim() };
   }
   return { kind: 'quickMatch' };
+}
+
+/**
+ * Whether a Start-initiated `connect()` attempt should flip the lobby to the
+ * game screen (S2.5.4a) — bound to the terminal observable (a live handle),
+ * NOT to the click itself: `connect()` never throws, it resolves `null` on
+ * any failure (expired resume, rejected join, absent server), and a failed
+ * attempt must leave the user on `<LobbyScreen>` rather than a blank
+ * `<GameScreen>`. Pure so the decision is directly unit-testable without a
+ * React render (mirrors {@link deriveLobbyViewState}).
+ */
+export function shouldStartAfterConnect(handle: WsClientHandle | null): boolean {
+  return handle !== null;
 }
 
 export interface LobbyViewState {

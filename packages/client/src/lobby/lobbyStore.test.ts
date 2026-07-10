@@ -5,6 +5,7 @@ import {
   MAX_LOBBY_BOTS,
   selectJoinMode,
   selectLobbySelection,
+  shouldStartAfterConnect,
   useLobbyStore,
 } from './lobbyStore.js';
 
@@ -103,6 +104,23 @@ describe('selectJoinMode (S2.5.3)', () => {
       kind: 'joinByCode',
       roomId: 'room-42',
     });
+  });
+});
+
+describe('shouldStartAfterConnect (S2.5.4a) — the Start-button transition decision, pure', () => {
+  it('[forcing] a live handle returns true', () => {
+    expect(
+      shouldStartAfterConnect({
+        sessionId: 's1',
+        roomId: 'r1',
+        sendIntent: () => {},
+        disconnect: () => {},
+      }),
+    ).toBe(true);
+  });
+
+  it('[forcing] null (failed connect) returns false', () => {
+    expect(shouldStartAfterConnect(null)).toBe(false);
   });
 });
 
