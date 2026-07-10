@@ -17,6 +17,7 @@ import {
   ErrorEnvelopeSchema,
   EventBatchEnvelopeSchema,
   GameEventSchema,
+  JoinOptionsSchema,
   PlayerIntentSchema,
   RejectEnvelopeSchema,
   ServerMessageSchema,
@@ -448,6 +449,71 @@ describe('ConnectOptionsSchema (client join handshake)', () => {
     expect(
       ConnectOptionsSchema.safeParse({ protocolVersion: PROTOCOL_VERSION, guestId: 5 })
         .success,
+    ).toBe(false);
+  });
+});
+
+// --- security follow-up to S2.5.4: the FULL wire-permitted join contract ---
+
+describe('JoinOptionsSchema (the FULL strict wire allow-list, security follow-up)', () => {
+  it('accepts the bare handshake alone', () => {
+    expect(
+      JoinOptionsSchema.safeParse({ protocolVersion: PROTOCOL_VERSION }).success,
+    ).toBe(true);
+  });
+
+  it('accepts a handshake + every legitimate lobby field together', () => {
+    const parsed = JoinOptionsSchema.safeParse({
+      protocolVersion: PROTOCOL_VERSION,
+      guestId: 'g-1',
+      displayName: 'Nemo',
+      profileId: 'blitz',
+      bots: [{ difficulty: 'medium' }],
+      reconnectGraceSeconds: 300,
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('[forcing] rejects a `seed` key — the exact field GameRoom.onCreate would otherwise trust straight off the wire (commit-reveal break)', () => {
+    expect(
+      JoinOptionsSchema.safeParse({
+        protocolVersion: PROTOCOL_VERSION,
+        seed: 'attacker-chosen-seed',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('[forcing] rejects a `maxSeats` key', () => {
+    expect(
+      JoinOptionsSchema.safeParse({
+        protocolVersion: PROTOCOL_VERSION,
+        maxSeats: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('[forcing] rejects botActionCap / botFillDifficulty / matchesDir / sink / metadataStore / turnTimerScheduler — every other internal-only GameRoomOptions field', () => {
+    const forbiddenKeys = [
+      'botActionCap',
+      'botFillDifficulty',
+      'matchesDir',
+      'sink',
+      'metadataStore',
+      'turnTimerScheduler',
+    ];
+    for (const key of forbiddenKeys) {
+      const options = { protocolVersion: PROTOCOL_VERSION, [key]: 'anything' };
+      expect(JoinOptionsSchema.safeParse(options).success, `key "${key}"`).toBe(false);
+    }
+  });
+
+  it('rejects an unrecognized key even alongside an otherwise-valid payload (fail closed, not just fail on the bad field alone)', () => {
+    expect(
+      JoinOptionsSchema.safeParse({
+        protocolVersion: PROTOCOL_VERSION,
+        profileId: 'classic',
+        somethingNew: true,
+      }).success,
     ).toBe(false);
   });
 });

@@ -545,6 +545,22 @@ export const TWO_PLAYER_PROFILE: RuleProfile = {
   neutralSettlements: 2,
 };
 
+/**
+ * The four shipping preset ids, in display order (S2.5.4) — the runtime
+ * counterpart of {@link RuleProfileId} a caller can enumerate without
+ * importing the profile bodies themselves. This is the ALLOW-LIST a lobby
+ * (client) and the authoritative wire boundary (server, `GameRoom.onAuth`)
+ * check a join's requested `profileId` against, since {@link PROFILE_REGISTRY}
+ * below is keyed by `string` and additionally resolves six measurement-only
+ * ids (`EXPERIMENTAL_PROFILE_IDS`) that must never be reachable from a client.
+ */
+export const SHIPPING_PROFILE_IDS: readonly RuleProfileId[] = [
+  'classic',
+  'balanced',
+  'blitz',
+  'twoPlayer',
+];
+
 /** The shipping profiles — one entry per {@link RuleProfileId} (exhaustive). */
 const SHIPPING_PROFILES: Readonly<Record<RuleProfileId, RuleProfile>> = {
   classic: CLASSIC_PROFILE,

@@ -14,6 +14,7 @@ import type {
   PlayerId,
   PlayerIntent,
   RejectReason,
+  RuleProfileId,
 } from '@skervik/core';
 import {
   ErrorEnvelopeSchema,
@@ -251,6 +252,22 @@ export interface GuestJoinFields {
   readonly displayName?: string;
 }
 
+/** A bot seat's difficulty — mirrors `@skervik/bots`' `Difficulty` without a package dependency (the client never runs bot AI itself). */
+export type BotDifficulty = 'easy' | 'medium' | 'hard';
+
+/**
+ * A lobby's rule-preset + bot-fill choice (S2.5.4), forwarded ONLY on a FRESH
+ * `joinOrCreate` — never on the resume-first branch below (a page reload with
+ * a live reconnect pointer must resume the existing match unmodified, never
+ * re-apply a lobby pick to it). The server independently re-validates
+ * `profileId` against its own shipping allow-list (`GameRoom.onAuth`); this
+ * type only documents the wire shape the client sends.
+ */
+export interface LobbyJoinFields {
+  readonly profileId?: RuleProfileId;
+  readonly bots?: ReadonlyArray<{ readonly difficulty: BotDifficulty }>;
+}
+
 /**
  * Connect to the authoritative room. On a COLD load (a page reload, not the
  * in-tab drop S2.3.2 handles) this first tries to RESUME a held seat: if the
@@ -261,17 +278,21 @@ export interface GuestJoinFields {
  * join (sync handlers + `ReconnectCapability` apply identically), and the
  * server's existing reclaim/resync unicast (S2.3.2) delivers a fresh
  * `state.snapshot` that folds the board back to consistent — no server change.
+ * `lobby` is INTENTIONALLY never read in this branch (S2.5.4): resuming a held
+ * seat must never re-apply a lobby pick.
  * On failure (expired token / grace ran out) the pointer+token are cleared
  * and this falls through to a fresh `joinOrCreate` with the protocol-version
- * handshake (plus optional guest {@link GuestJoinFields}). A rejected
- * `joinOrCreate` is interpreted by {@link parseJoinError} into a
- * `version-mismatch` (with versions) or a generic `error`, and returns `null`
- * so the caller keeps its fallback (dev-fixture) view. Never throws.
+ * handshake (plus optional guest {@link GuestJoinFields} and lobby
+ * {@link LobbyJoinFields} selection, S2.5.4). A rejected `joinOrCreate` is
+ * interpreted by {@link parseJoinError} into a `version-mismatch` (with
+ * versions) or a generic `error`, and returns `null` so the caller keeps its
+ * fallback (dev-fixture) view. Never throws.
  */
 export async function connect(
   url: string,
   callbacks: WsClientCallbacks,
   guest?: GuestJoinFields,
+  lobby?: LobbyJoinFields,
 ): Promise<WsClientHandle | null> {
   callbacks.onConnectionChange('connecting');
   const client = new Client(url);
@@ -312,6 +333,8 @@ export async function connect(
       protocolVersion: PROTOCOL_VERSION,
       ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
       ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
+      ...(lobby?.profileId !== undefined ? { profileId: lobby.profileId } : {}),
+      ...(lobby?.bots !== undefined ? { bots: lobby.bots } : {}),
     });
     const handle = attachRoom(
       room as unknown as RoomLike,

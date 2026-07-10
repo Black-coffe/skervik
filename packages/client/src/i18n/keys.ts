@@ -119,6 +119,22 @@ export const TRANSLATION_KEYS = [
   'reject.notTradeProposer',
   'reject.counterLimitReached',
   'reject.gameAlreadyEnded',
+  // --- Lobby (S2.5.4: preset selection, bot fill, start) ---
+  'lobby.title',
+  'lobby.presetLabel',
+  'a11y.presetSelector',
+  'lobby.preset.classic.name',
+  'lobby.preset.classic.description',
+  'lobby.preset.balanced.name',
+  'lobby.preset.balanced.description',
+  'lobby.preset.blitz.name',
+  'lobby.preset.blitz.description',
+  'lobby.preset.twoPlayer.name',
+  'lobby.preset.twoPlayer.description',
+  'lobby.botCountLabel',
+  'a11y.botCountSelector',
+  'lobby.botCount',
+  'lobby.startButton',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

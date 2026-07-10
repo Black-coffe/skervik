@@ -73,6 +73,7 @@ export {
   CLASSIC_PROFILE,
   EXPERIMENTAL_PROFILE_IDS,
   loadRuleProfile,
+  SHIPPING_PROFILE_IDS,
   TWO_PLAYER_PROFILE,
 } from './ruleProfile.js';
 export type * from './types.js';

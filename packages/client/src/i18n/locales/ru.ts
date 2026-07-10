@@ -135,4 +135,29 @@ export const ru: Messages = {
   'reject.notTradeProposer': 'Отозвать предложение может только его автор.',
   'reject.counterLimitReached': 'На это предложение больше нельзя ответить встречным.',
   'reject.gameAlreadyEnded': 'Партия уже завершена.',
+  // --- Lobby (S2.5.4) ---
+  'lobby.title': 'Новая партия',
+  'lobby.presetLabel': 'Правила партии',
+  'a11y.presetSelector': 'Выбор правил партии',
+  'lobby.preset.classic.name': 'Классика',
+  'lobby.preset.classic.description':
+    'Стандартные правила — ресурсы по броску костей, 10 очков славы для победы.',
+  'lobby.preset.balanced.name': 'Баланс',
+  'lobby.preset.balanced.description':
+    'Классика, но ресурсы выдаются по сбалансированной колоде вместо костей — меньше перепадов удачи.',
+  'lobby.preset.blitz.name': 'Блиц',
+  'lobby.preset.blitz.description':
+    'Короткая партия — всего 8 очков славы для победы и более жёсткие таймеры хода.',
+  'lobby.preset.twoPlayer.name': 'На двоих',
+  'lobby.preset.twoPlayer.description':
+    'Ровно для двух капитанов — нейтральные поселения вынуждают бороться за место на карте.',
+  'lobby.botCountLabel': 'Команда ботов',
+  'a11y.botCountSelector': 'Выбор числа ботов',
+  'lobby.botCount': {
+    one: '{count} бот',
+    few: '{count} бота',
+    many: '{count} ботов',
+    other: '{count} бота',
+  },
+  'lobby.startButton': 'Начать партию',
 };

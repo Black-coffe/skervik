@@ -134,4 +134,29 @@ export const uk: Messages = {
   'reject.notTradeProposer': 'Відкликати пропозицію може лише її автор.',
   'reject.counterLimitReached': 'На цю пропозицію більше не можна відповісти зустрічною.',
   'reject.gameAlreadyEnded': 'Партію вже завершено.',
+  // --- Lobby (S2.5.4) ---
+  'lobby.title': 'Нова партія',
+  'lobby.presetLabel': 'Правила партії',
+  'a11y.presetSelector': 'Вибір правил партії',
+  'lobby.preset.classic.name': 'Класика',
+  'lobby.preset.classic.description':
+    'Стандартні правила — ресурси за кидком костей, 10 очок слави для перемоги.',
+  'lobby.preset.balanced.name': 'Баланс',
+  'lobby.preset.balanced.description':
+    'Класика, але ресурси видаються за збалансованою колодою замість костей — менше перепадів удачі.',
+  'lobby.preset.blitz.name': 'Бліц',
+  'lobby.preset.blitz.description':
+    'Коротша партія — лише 8 очок слави для перемоги і жорсткіші таймери ходу.',
+  'lobby.preset.twoPlayer.name': 'На двох',
+  'lobby.preset.twoPlayer.description':
+    'Рівно для двох капітанів — нейтральні поселення змушують боротися за місце на карті.',
+  'lobby.botCountLabel': 'Команда ботів',
+  'a11y.botCountSelector': 'Вибір кількості ботів',
+  'lobby.botCount': {
+    one: '{count} бот',
+    few: '{count} боти',
+    many: '{count} ботів',
+    other: '{count} боти',
+  },
+  'lobby.startButton': 'Почати партію',
 };

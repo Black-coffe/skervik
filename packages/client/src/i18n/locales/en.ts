@@ -125,4 +125,27 @@ export const en: Messages = {
   'reject.notTradeProposer': 'Only the proposer can withdraw this offer.',
   'reject.counterLimitReached': 'This offer cannot be countered again.',
   'reject.gameAlreadyEnded': 'The match has already ended.',
+  // --- Lobby (S2.5.4) ---
+  'lobby.title': 'New match',
+  'lobby.presetLabel': 'Rule preset',
+  'a11y.presetSelector': 'Rule preset selector',
+  'lobby.preset.classic.name': 'Classic',
+  'lobby.preset.classic.description':
+    'Standard rules — dice-driven resources, 10 renown to win.',
+  'lobby.preset.balanced.name': 'Balanced',
+  'lobby.preset.balanced.description':
+    'Classic rules with a balanced resource deck instead of dice — less swingy.',
+  'lobby.preset.blitz.name': 'Blitz',
+  'lobby.preset.blitz.description':
+    'A shorter race — only 8 renown to win, with tighter turn timers.',
+  'lobby.preset.twoPlayer.name': 'Two-player',
+  'lobby.preset.twoPlayer.description':
+    'For exactly two captains — neutral settlements force you to contest the board.',
+  'lobby.botCountLabel': 'Bot crew',
+  'a11y.botCountSelector': 'Bot count selector',
+  'lobby.botCount': {
+    one: '{count} bot',
+    other: '{count} bots',
+  },
+  'lobby.startButton': 'Start match',
 };
