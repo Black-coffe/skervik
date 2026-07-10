@@ -27,11 +27,19 @@ Classify every request into a tier, announce the tier, then follow its protocol:
 
 ## Token economy (non-negotiable)
 
-- **Queen never reads or writes source code.** All code — even a one-line fix
-  discovered during review or benchmarking — is dispatched to `worker-code`
-  (Sonnet by default; Opus for the hardest stories). The Queen produces only
-  specs, docs, plans, and orchestration (owner directive 2026-07-03). For
-  recon, request `drone-scout` reports; consume `memory/map/` and `memory/memory.md`.
+- **Queen delegates code; small fixes are the exception.** All real
+  implementation is dispatched to `worker-code` (Sonnet by default; Opus for the
+  hardest stories). The Queen otherwise produces specs, docs, plans, and
+  orchestration. For recon, request `drone-scout` reports; consume `memory/map/`
+  and `memory/memory.md`.
+  **Exception (owner directive 2026-07-10, relaxing the 2026-07-03 absolute
+  ban):** the Queen MAY directly edit up to ~20 lines in a single file, and MAY
+  read a diff or run the verify chain, provided the change touches neither
+  `packages/core` nor `packages/protocol` nor anything determinism-bearing.
+  Anything larger, anything in the engine, and anything touching the seed/event
+  contract still goes to a worker. Rationale: the absolute ban was sized for a
+  100k-LOC repo; here it turned one-line fixes into hours of orchestration.
+  See `memory/` → ceremony-exceeded-the-value.
 - **Bookend:** top model for planning and final review only. Implementation runs on Sonnet; recon, docs, and memory upkeep on Haiku.
 - **Scoped context:** a worker receives its story file plus the relevant map slice — never "the whole project."
 - **`/clear` between tiers.** Stale conversation history is resent on every turn; clear it when switching tasks.
