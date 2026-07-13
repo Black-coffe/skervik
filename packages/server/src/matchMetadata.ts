@@ -16,15 +16,6 @@ import type { MatchId, RuleProfile, Seed } from '@skervik/core';
 import type { MatchPlayerResult } from './db/schema/index.js';
 
 /**
- * Receives (and later returns) a match's revealed seed. `recordSeedReveal` is
- * called by the room once the game has ended; `readSeedReveal` is the read path
- * the verify endpoint (S1.7.3) uses to recompute every draw from the log and
- * check it against the public `seedHash`. Both MAY be async (the FS/DB writer);
- * the room `await`s the write in its pipeline. The store is the durable home of
- * the commit-reveal secret — a `null` read means "not revealed yet" (the match
- * has not ended), which the endpoint must surface WITHOUT ever exposing a seed.
- */
-/**
  * The `match.started` metadata (S2.6.3): everything known when a match opens, so
  * a durable store can insert a `status:'live'` row that a later `game.ended`
  * completes. `roomId` duplicates the interface's `matchId` key (they are the same
@@ -67,6 +58,15 @@ export interface MatchResultMetadata {
   readonly playerResults: readonly MatchPlayerResultMetadata[];
 }
 
+/**
+ * The room's durable-metadata seam. `recordSeedReveal`/`readSeedReveal` are the
+ * commit-reveal secret's home (S1.4.3): the room writes the seed here ONLY after
+ * `game.ended`; the verify endpoint (S1.7.3) reads it back to recompute every
+ * draw from the log. `recordMatchStart`/`recordMatchResult` (S2.6.3) persist the
+ * match lifecycle alongside it. Every method MAY be async (the FS/DB writer) and
+ * is a PURE side-effect — never a `GameEvent`, so a durable store drops in with
+ * zero change to the deterministic core / event log.
+ */
 export interface MatchMetadataStore {
   recordSeedReveal(matchId: MatchId, seed: Seed): void | Promise<void>;
   readSeedReveal(matchId: MatchId): Seed | null | Promise<Seed | null>;
