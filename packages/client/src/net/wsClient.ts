@@ -284,6 +284,13 @@ export function attachRoom(
 export interface GuestJoinFields {
   readonly guestId?: string;
   readonly displayName?: string;
+  /**
+   * A signed guest session token (S2.6.2a) — presented so the server re-resolves
+   * the SAME durable `userId`. The server verifies it in `onAuth` (a
+   * present-but-invalid token is REJECTED); absent, the join proceeds as a fresh
+   * guest. Non-authoritative: it never changes the seat `PlayerId` (`sessionId`).
+   */
+  readonly sessionToken?: string;
 }
 
 /** A bot seat's difficulty — mirrors `@skervik/bots`' `Difficulty` without a package dependency (the client never runs bot AI itself). */
@@ -387,6 +394,7 @@ export async function connect(
       protocolVersion: PROTOCOL_VERSION,
       ...(guest?.guestId !== undefined ? { guestId: guest.guestId } : {}),
       ...(guest?.displayName !== undefined ? { displayName: guest.displayName } : {}),
+      ...(guest?.sessionToken !== undefined ? { sessionToken: guest.sessionToken } : {}),
       ...(lobby?.profileId !== undefined ? { profileId: lobby.profileId } : {}),
       ...(lobby?.bots !== undefined ? { bots: lobby.bots } : {}),
     };

@@ -45,6 +45,32 @@ describe('fetchGuest', () => {
     );
   });
 
+  it('passes through a sessionToken when the server returns one (S2.6.2a)', async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ guestId: 'g-3', displayName: 'Ned', sessionToken: 'a.b.c' }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    await expect(fetchGuest('http://localhost:2567')).resolves.toEqual({
+      guestId: 'g-3',
+      displayName: 'Ned',
+      sessionToken: 'a.b.c',
+    });
+  });
+
+  it('drops a non-string sessionToken as malformed (S2.6.2a wire-shape guard)', async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ guestId: 'g-4', displayName: 'Ned', sessionToken: 42 }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    await expect(fetchGuest('http://localhost:2567')).resolves.toBeNull();
+  });
+
   it('returns null on a non-2xx response (falls back to fixture)', async () => {
     stubFetch(() => new Response('{"error":"INVALID_BODY"}', { status: 400 }));
     await expect(fetchGuest('http://localhost:2567')).resolves.toBeNull();
