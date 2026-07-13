@@ -187,7 +187,9 @@ describe('lobby preset selection + bot fill over the wire (S2.5.4)', () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {});
     const options = { protocolVersion: PROTOCOL_VERSION, reconnectGraceSeconds: 60 };
 
-    const authorized = room.onAuth({} as Client, options);
+    // onAuth is async (S2.6.2a — it may verify a session token); the grace
+    // floor is applied before the awaited token step, but await it regardless.
+    const authorized = await room.onAuth({} as Client, options);
 
     expect(authorized).toBe(true);
     expect(options.reconnectGraceSeconds).toBe(120);
@@ -197,7 +199,7 @@ describe('lobby preset selection + bot fill over the wire (S2.5.4)', () => {
     const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {});
     const options = { protocolVersion: PROTOCOL_VERSION, reconnectGraceSeconds: 300 };
 
-    room.onAuth({} as Client, options);
+    await room.onAuth({} as Client, options);
 
     expect(options.reconnectGraceSeconds).toBe(300);
   });

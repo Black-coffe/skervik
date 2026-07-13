@@ -38,7 +38,10 @@ describe('MatchRepository', () => {
     const matchRepo = new MatchRepository(testDb.db);
     const userRepo = new UserRepository(testDb.db);
 
-    const winner = await userRepo.create({ username: 'winner-of-record' });
+    const winner = await userRepo.create({
+      username: 'winner-of-record',
+      displayName: 'Winner',
+    });
     const created = await matchRepo.create({
       profile: CLASSIC_PROFILE,
       seedHash: 'abc123',

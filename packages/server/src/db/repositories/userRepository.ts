@@ -12,6 +12,8 @@ import { type AuthProvider, users } from '../schema/index.js';
 
 export interface CreateUserInput {
   readonly username: string;
+  /** The user-chosen, NON-unique shown name (S2.6.2a). Required — always present. */
+  readonly displayName: string;
   readonly email?: string;
   readonly authProvider?: AuthProvider;
   readonly isGuest?: boolean;
@@ -20,6 +22,7 @@ export interface CreateUserInput {
 export interface UserRow {
   readonly id: string;
   readonly username: string;
+  readonly displayName: string;
   readonly email: string | null;
   readonly authProvider: AuthProvider | null;
   readonly isGuest: boolean;
@@ -40,6 +43,7 @@ export class UserRepository {
       .values({
         id: randomUUID(),
         username: input.username,
+        displayName: input.displayName,
         email: input.email ?? null,
         authProvider: input.authProvider ?? null,
         isGuest: input.isGuest ?? false,

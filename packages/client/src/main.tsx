@@ -14,8 +14,15 @@ import { I18nProvider } from './i18n/index.js';
 import { shouldMarkConnected, useLobbyStore } from './lobby/lobbyStore.js';
 import { resolveColdLoadAction } from './net/coldLoadAction.js';
 import { fetchGuest } from './net/guestAuth.js';
+import { clearGuestToken, persistGuestToken, readGuestToken } from './net/guestToken.js';
 import { readCurrentRoomId, readReconnectionToken } from './net/reconnectToken.js';
-import { connect, type JoinMode, type LobbyJoinFields } from './net/wsClient.js';
+import {
+  connect,
+  type GuestJoinFields,
+  type JoinMode,
+  type LobbyJoinFields,
+  type WsClientCallbacks,
+} from './net/wsClient.js';
 
 // The WS URL comes from a Vite env var with a localhost dev default; the
 // REST/API URL is `VITE_API_URL` or derived from the WS URL (ws→http).
@@ -65,22 +72,51 @@ export async function startConnection(
   lobbySelection?: LobbyJoinFields,
   joinMode?: JoinMode,
 ): Promise<void> {
-  const guest = await fetchGuest(API_URL);
-  const handle = await connect(
-    WS_URL,
-    {
-      onSnapshot: (state, myPlayerId, isHost, isPrivate) =>
-        useUiStore.getState().applySnapshot(state, myPlayerId, isHost, isPrivate),
-      onBatch: (events) => useUiStore.getState().applyEventBatch(events),
-      onReject: (reason) => useUiStore.getState().applyReject(reason),
-      onError: () => useUiStore.getState().applyIntentError(),
-      onConnectionChange: (status, versionMismatch) =>
-        useUiStore.getState().setConnectionStatus(status, versionMismatch),
-    },
-    guest ?? undefined,
-    lobbySelection,
-    joinMode,
-  );
+  const callbacks: WsClientCallbacks = {
+    onSnapshot: (state, myPlayerId, isHost, isPrivate) =>
+      useUiStore.getState().applySnapshot(state, myPlayerId, isHost, isPrivate),
+    onBatch: (events) => useUiStore.getState().applyEventBatch(events),
+    onReject: (reason) => useUiStore.getState().applyReject(reason),
+    onError: () => useUiStore.getState().applyIntentError(),
+    onConnectionChange: (status, versionMismatch) =>
+      useUiStore.getState().setConnectionStatus(status, versionMismatch),
+  };
+
+  // S2.6.2a: a persisted guest session token (durable, survives reload/session)
+  // is re-presented so the server re-resolves the SAME `userId` — `fetchGuest`
+  // is called ONLY when there is no stored token. A freshly issued token is
+  // persisted for next time.
+  const storedToken = readGuestToken();
+  let guest: GuestJoinFields | undefined;
+  if (storedToken !== null) {
+    guest = { sessionToken: storedToken };
+  } else {
+    const fetched = await fetchGuest(API_URL);
+    if (fetched !== null) {
+      if (fetched.sessionToken !== undefined) persistGuestToken(fetched.sessionToken);
+      guest = fetched;
+    }
+  }
+
+  let handle = await connect(WS_URL, callbacks, guest, lobbySelection, joinMode);
+
+  // A stored token the server REJECTED (expired / bad signature → 4004, so
+  // `connect` returned null) must not permanently wedge the client: forget it
+  // and retry ONCE with a freshly issued guest. (A merely-down server also
+  // yields null here; the retry then also fails and leaves the fallback view —
+  // harmless.)
+  if (handle === null && storedToken !== null) {
+    clearGuestToken();
+    const fetched = await fetchGuest(API_URL);
+    if (fetched !== null) {
+      if (fetched.sessionToken !== undefined) persistGuestToken(fetched.sessionToken);
+      guest = fetched;
+    } else {
+      guest = undefined;
+    }
+    handle = await connect(WS_URL, callbacks, guest, lobbySelection, joinMode);
+  }
+
   useUiStore.getState().setConnection(handle);
   if (lobbySelection !== undefined && shouldMarkConnected(handle)) {
     useLobbyStore.getState().start();

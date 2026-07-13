@@ -658,11 +658,19 @@ export const ErrorEnvelopeSchema = z.object({
  * Colyseus `sessionId`, S1.4.2/S1.5.2). They are typed here only so the wire
  * contract documents them; wiring `displayName` onto a seat for HUD display is
  * deferred (S1.7.1b/S1.6.6).
+ *
+ * `sessionToken` (S2.6.2a) is an OPTIONAL signed JWT a returning guest presents
+ * so the server can re-resolve its durable `userId` across reconnect/reload.
+ * The server verifies it in `GameRoom.onAuth`: a PRESENT-but-invalid token is
+ * REJECTED (never downgraded); an ABSENT token proceeds as a fresh guest. The
+ * resolved `userId` is NON-authoritative metadata (`client.userData`) — it does
+ * NOT become the seat `playerId` (still the `sessionId`, ADR-0009).
  */
 export const ConnectOptionsSchema = z.object({
   protocolVersion: z.string(),
   guestId: z.string().optional(),
   displayName: z.string().optional(),
+  sessionToken: z.string().optional(),
 });
 export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
 

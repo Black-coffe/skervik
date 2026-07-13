@@ -19,11 +19,15 @@ export interface GuestIdentity {
 
 /**
  * The guest-identity seam (S1.7.1). `issueGuest` mints an anonymous identity;
- * the in-memory M1 impl is {@link InMemoryGuestStore}, and a future
- * DB/token-backed store implements the same interface without touching callers.
+ * the in-memory M1 impl is {@link InMemoryGuestStore}, and the DB-backed
+ * {@link DbGuestStore} (S2.6.2a) implements the same interface without touching
+ * callers. The return type is `GuestIdentity | Promise<GuestIdentity>` (mirrors
+ * the `MatchMetadataStore` sync|async precedent): the in-memory impl stays
+ * synchronous, while the DB impl awaits an insert. Callers `await` it either
+ * way (`await` on a plain value is a no-op).
  */
 export interface GuestStore {
-  issueGuest(displayName?: string): GuestIdentity;
+  issueGuest(displayName?: string): GuestIdentity | Promise<GuestIdentity>;
 }
 
 /** Longest display name we keep — anything past this is clamped (not rejected). */

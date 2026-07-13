@@ -8,6 +8,13 @@
       "when": 1783926061441,
       "tag": "0000_steady_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783927781672,
+      "tag": "0001_faulty_triathlon",
+      "breakpoints": true
     }
   ]
 }

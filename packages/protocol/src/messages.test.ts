@@ -481,6 +481,15 @@ describe('JoinOptionsSchema (the FULL strict wire allow-list, security follow-up
     expect(parsed.success).toBe(true);
   });
 
+  it('[forcing] a wire join carrying a sessionToken is permitted by the .strict() allow-list (S2.6.2a — fails if sessionToken is not added to ConnectOptionsSchema)', () => {
+    const parsed = JoinOptionsSchema.safeParse({
+      protocolVersion: PROTOCOL_VERSION,
+      sessionToken: 'header.payload.signature',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sessionToken).toBe('header.payload.signature');
+  });
+
   it('[forcing] a wire create carrying isPrivate:true is accepted, not rejected by the .strict() allow-list (S2.5.3 — this test fails if isPrivate is not added to JoinLobbySelectionSchema)', () => {
     const parsed = JoinOptionsSchema.safeParse({
       protocolVersion: PROTOCOL_VERSION,

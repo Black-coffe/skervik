@@ -6,20 +6,32 @@
 // Guest identity is anonymous DISPLAY metadata; the authoritative seat identity
 // is still the server-assigned Colyseus `sessionId`.
 
-/** The anonymous guest identity the server issues — display metadata only. */
+/**
+ * The guest identity the server issues. `guestId`/`displayName` are display
+ * metadata; `sessionToken` (S2.6.2a) is an OPTIONAL signed JWT the client
+ * persists and re-presents on join so the server re-resolves the SAME durable
+ * `userId` across reload/reconnect. Optional so an older server (no token) still
+ * parses. Still NOT the in-game identity — the seat is the server `sessionId`.
+ */
 export interface GuestIdentity {
   readonly guestId: string;
   readonly displayName: string;
+  readonly sessionToken?: string;
 }
 
 /** Structural guard: a parsed JSON body is a usable {@link GuestIdentity}. */
 function isGuestIdentity(value: unknown): value is GuestIdentity {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as { guestId?: unknown }).guestId === 'string' &&
-    typeof (value as { displayName?: unknown }).displayName === 'string'
-  );
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    typeof (value as { guestId?: unknown }).guestId !== 'string' ||
+    typeof (value as { displayName?: unknown }).displayName !== 'string'
+  ) {
+    return false;
+  }
+  // `sessionToken`, when present, must be a string (else drop it as malformed).
+  const token = (value as { sessionToken?: unknown }).sessionToken;
+  return token === undefined || typeof token === 'string';
 }
 
 /**

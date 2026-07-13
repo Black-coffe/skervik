@@ -25,7 +25,15 @@ import { GAME_ROOM_NAME } from '@skervik/protocol';
 import { matchMaker, Server } from 'colyseus';
 import Fastify, { type FastifyInstance } from 'fastify';
 
+import { DbGuestStore } from './auth/dbGuestStore.js';
 import { type GuestStore, InMemoryGuestStore } from './auth/guestStore.js';
+import {
+  resolveSessionSecret,
+  signSessionToken,
+  verifySessionToken,
+} from './auth/sessionToken.js';
+import { createPgDb } from './db/client.js';
+import { UserRepository } from './db/repositories/userRepository.js';
 import { FsMatchMetadataStore, NoopMatchMetadataStore } from './matchMetadata.js';
 import { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
 import { registerGuestAuthRoute } from './routes/guestAuth.js';
@@ -51,6 +59,22 @@ export interface CreateHttpServerOptions {
   readonly seed?: Seed;
   /** Inject a guest store (tests); defaults to the in-memory M1 impl. */
   readonly guestStore?: GuestStore;
+  /**
+   * Postgres connection string (S2.6.2a). When set, a `DbGuestStore` (durable
+   * `users`-backed guests) is built over `createPgDb`; when absent, the
+   * in-memory M1 store is used (Invariant 9 — no behavior change with no DB). An
+   * explicitly injected `guestStore` always wins (tests pass a PGlite-backed one).
+   * No auto-migrate on boot (Invariant 4) — the operator runs `migrate` first.
+   */
+  readonly databaseUrl?: string;
+  /**
+   * The HS256 session-token secret (S2.6.2a) — a raw key. Tests inject a FIXED
+   * secret so a signed token round-trips deterministically. Production omits it:
+   * {@link startServer} resolves `SESSION_SECRET` (or an ephemeral per-boot key)
+   * via `resolveSessionSecret`. Used for BOTH the `/auth/guest` route's signer
+   * and the room's `onAuth` verifier, so a token this server signs it can verify.
+   */
+  readonly sessionSecret?: Uint8Array;
   /**
    * CORS origin for the REST surface (Fastify CORS). Dev-permissive default
    * (`true` = reflect the request origin); tighten to the real client origin(s)
@@ -80,13 +104,37 @@ export interface HttpServerHandle {
 export async function createHttpServer(
   options: CreateHttpServerOptions = {},
 ): Promise<HttpServerHandle> {
-  const guestStore = options.guestStore ?? new InMemoryGuestStore();
+  // S2.6.2a — resolve the session secret ONCE (injected in tests; else from
+  // `SESSION_SECRET`/ephemeral). The route SIGNS and the room VERIFIES with this
+  // same key, so a token this server issues it can later re-resolve.
+  const sessionSecret = options.sessionSecret ?? resolveSessionSecret(process.env);
+  const signToken = (claims: { userId: string; displayName: string }): Promise<string> =>
+    signSessionToken(claims, sessionSecret);
+  // Deliberate deviation from the literal S2.6.2a block-G wording (DB-gated
+  // verification): the verifier is wired in EVERY mode, not only when a DB is
+  // configured. It is strictly safer (a garbage/tampered token is always
+  // rejected, never silently downgraded) and it cannot regress AC5 — every
+  // existing test presents NO token, so the verifier never fires, and
+  // `@colyseus/testing` bypasses `onAuth` entirely. The DB choice below still
+  // gates only WHICH guest store is durable.
+  const verify = (
+    token: string,
+  ): Promise<{ userId: string; displayName: string } | null> =>
+    verifySessionToken(token, sessionSecret);
+
+  // Durable `users`-backed guests when a DB is configured (S2.6.2a); the M1
+  // in-memory store otherwise. An injected store always wins (tests).
+  const guestStore =
+    options.guestStore ??
+    (options.databaseUrl !== undefined
+      ? new DbGuestStore(new UserRepository(createPgDb(options.databaseUrl)))
+      : new InMemoryGuestStore());
 
   // Fastify owns the single HTTP server (REST + the mounted matchmaking route).
   const fastify = Fastify({ logger: false });
   await fastify.register(cors, { origin: options.corsOrigin ?? true });
   registerHealthRoute(fastify);
-  registerGuestAuthRoute(fastify, guestStore);
+  registerGuestAuthRoute(fastify, guestStore, signToken);
   // The provably-fair verify endpoint (S1.7.3) reads the revealed seed sidecar
   // for ANY finished match through one stateless store keyed by `matchesDir` —
   // the SAME dir the rooms write their reveal + log to. With durability off, a
@@ -112,6 +160,9 @@ export async function createHttpServer(
     ...(options.matchesDir !== undefined ? { matchesDir: options.matchesDir } : {}),
     ...(options.maxSeats !== undefined ? { maxSeats: options.maxSeats } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    // S2.6.2a define-time server option — the room verifies a presented
+    // `sessionToken` in `onAuth` with this. Never a client field.
+    verifySessionToken: verify,
   };
   gameServer
     .define(
@@ -178,13 +229,21 @@ export async function createHttpServer(
 
 /**
  * Real entry point (the `start` npm script): read `PORT`/`HOST`/`MATCHES_DIR`
- * from the environment, boot, and listen for real. Logs the bound address.
+ * plus (S2.6.2a) `DATABASE_URL` + `SESSION_SECRET` from the environment, boot,
+ * and listen for real. Logs the bound address. `DATABASE_URL` (when set) selects
+ * the durable `DbGuestStore` (operator must run `migrate` first — no
+ * auto-migrate, Invariant 4); `SESSION_SECRET` is resolved by `createHttpServer`
+ * (ephemeral + warn if unset) — MANDATORY in production so tokens survive a restart.
  */
 export async function startServer(): Promise<HttpServerHandle> {
   const port = Number(process.env['PORT'] ?? DEFAULT_PORT);
   const host = process.env['HOST'] ?? DEFAULT_HOST;
   const matchesDir = process.env['MATCHES_DIR'];
-  const handle = await createHttpServer(matchesDir !== undefined ? { matchesDir } : {});
+  const databaseUrl = process.env['DATABASE_URL'];
+  const handle = await createHttpServer({
+    ...(matchesDir !== undefined ? { matchesDir } : {}),
+    ...(databaseUrl !== undefined ? { databaseUrl } : {}),
+  });
   const bound = await handle.listen(port, host);
   console.log(
     `[skervik/server] listening on http://${bound.host}:${bound.port} (HTTP + WS)`,
