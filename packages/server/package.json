@@ -9,7 +9,9 @@
     "build": "tsup",
     "test": "vitest run",
     "lint": "eslint src",
-    "start": "node dist/start.js"
+    "start": "node dist/start.js",
+    "migrate": "node dist/db/migrate.js",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@colyseus/schema": "^4.0.27",
@@ -19,12 +21,17 @@
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
     "colyseus": "^0.17.10",
+    "drizzle-orm": "^0.45.2",
     "fastify": "^5.10.0",
+    "pg": "^8.22.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.17.43",
     "@colyseus/testing": "^0.17.11",
+    "@electric-sql/pglite": "^0.5.4",
+    "@types/pg": "^8.20.0",
+    "drizzle-kit": "^0.31.10",
     "tsup": "^8",
     "typescript": "^5"
   }
