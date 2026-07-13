@@ -317,6 +317,19 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #matchStartRecorded = false;
 
   /**
+   * Captured `sessionId → userId` for every token-authenticated seat (S2.6.4
+   * block C2). Written in {@link onAuth} the moment a valid token resolves, and
+   * read by {@link #resolveUserIdForSeat} — so a DROPPED authenticated human
+   * (no longer in `this.clients`) still resolves to their durable `userId`, and
+   * their `match_players.user_id` is retained (not written NULL) so the match
+   * appears in their GDPR export. A room-private `Map`, NOT a schema field: it
+   * is metadata-only and MUST stay off the broadcast/state-sync path — it never
+   * touches `gameState`, events, or the public projection clients fold (ADR-0009
+   * — the seat `PlayerId` is still the `sessionId`, this is only attribution).
+   */
+  readonly #seatUserIds = new Map<string, string>();
+
+  /**
    * One-shot latch for the durable `recordMatchResult` (S2.6.3). Flips once, on
    * the first `game.ended` batch, alongside {@link #seedRevealed} — guards the
    * result write + per-seat `match_players` inserts against a double-fire.
@@ -834,14 +847,16 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * Resolves a seat to its token-authenticated `userId` (S2.6.3), or `undefined`
    * for a bot seat OR a human seat that presented no session token — both persist
    * as a NULL `user_id`/`winner_id`. The `PlayerId` (seat/sessionId) is unchanged;
-   * this is a metadata-only lookup on the non-authoritative `client.userData` bag
-   * (set in `onAuth`).
+   * this is a metadata-only lookup on the room-private `#seatUserIds` map captured
+   * in `onAuth` (S2.6.4 C2). Reading the captured map — NOT the live `this.clients`
+   * — is what lets a DROPPED authenticated human (result `'abandoned'`), gone from
+   * `this.clients` by `game.ended`, still keep their `user_id` linkage in
+   * `match_players` (so the match appears in their GDPR export).
    */
   #resolveUserIdForSeat(seatIndex: number): string | undefined {
     const seat = this.state.seats[seatIndex];
     if (!seat || seat.isBot) return undefined;
-    const client = this.clients.find((c) => c.sessionId === seat.playerId);
-    return (client?.userData as { userId?: string } | undefined)?.userId;
+    return this.#seatUserIds.get(seat.playerId);
   }
 
   /**
@@ -996,6 +1011,10 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         throw new ServerError(AUTH_TOKEN_INVALID_CODE, 'invalid session token');
       }
       client.userData = { userId: claims.userId };
+      // Capture the userId keyed by the stable `sessionId` (S2.6.4 C2) so it
+      // OUTLIVES a disconnect — `#resolveUserIdForSeat` reads this, not the live
+      // `this.clients`, and a dropped/abandoned authed seat keeps its linkage.
+      this.#seatUserIds.set(client.sessionId, claims.userId);
     }
 
     return true;
