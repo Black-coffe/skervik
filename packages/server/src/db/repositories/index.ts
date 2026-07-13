@@ -12,4 +12,9 @@ export {
   type MatchRow,
   type UpdateMatchInput,
 } from './matchRepository.js';
-export { type CreateUserInput, UserRepository, type UserRow } from './userRepository.js';
+export {
+  type CreateUserInput,
+  TOMBSTONE_DISPLAY_NAME,
+  UserRepository,
+  type UserRow,
+} from './userRepository.js';

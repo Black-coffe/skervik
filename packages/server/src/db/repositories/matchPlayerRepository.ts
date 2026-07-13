@@ -48,4 +48,14 @@ export class MatchPlayerRepository {
   async findByMatch(matchId: string): Promise<readonly MatchPlayerRow[]> {
     return this.#db.select().from(matchPlayers).where(eq(matchPlayers.matchId, matchId));
   }
+
+  /**
+   * Every seat a user ever held, across all matches (S2.6.4 GDPR export). The
+   * route joins each row's `match_id` back to `MatchRepository` to assemble the
+   * portable export. A bot / tokenless seat has a `null` `user_id` and so never
+   * matches — only the caller's own participations are returned.
+   */
+  async findByUser(userId: string): Promise<readonly MatchPlayerRow[]> {
+    return this.#db.select().from(matchPlayers).where(eq(matchPlayers.userId, userId));
+  }
 }

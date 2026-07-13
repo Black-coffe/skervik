@@ -43,6 +43,7 @@ import {
 } from './matchMetadata.js';
 import { PgMatchMetadataStore } from './pgMatchMetadataStore.js';
 import { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
+import { registerAccountRoutes } from './routes/account.js';
 import { registerGuestAuthRoute } from './routes/guestAuth.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerMatchVerifyRoute } from './routes/matchVerify.js';
@@ -173,6 +174,20 @@ export async function createHttpServer(
     // in-memory buffer — the route still 404s on an absent matchesDir first.
     metadataStore,
   });
+  // GDPR self-service (S2.6.4) — DB-gated: the export/erasure endpoints need the
+  // `users`/`matches`/`match_players` repos, so they exist ONLY when a DB is
+  // configured. Absent a DB the routes aren't registered at all (a 404, not a
+  // partial surface) and every existing flow is unchanged (AC4). Both endpoints
+  // authenticate the caller's OWN session token with the SAME `verify` the room
+  // uses — own-data-only, no admin, no cross-user.
+  if (db !== undefined) {
+    registerAccountRoutes(fastify, {
+      userRepository: new UserRepository(db),
+      matchRepository: new MatchRepository(db),
+      matchPlayerRepository: new MatchPlayerRepository(db),
+      verifySessionToken: verify,
+    });
+  }
 
   // Colyseus WS transport with NO http server of its own (`noServer`) — it is
   // attached to Fastify's server below, so the two never fight over the port.

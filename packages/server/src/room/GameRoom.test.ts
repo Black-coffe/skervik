@@ -1569,6 +1569,66 @@ describe('GameRoom', () => {
       await c1.leave();
     });
 
+    // S2.6.4 C2: an authenticated human who DROPS before game.ended is gone from
+    // `this.clients`, but their `userId` was captured in `onAuth` into the
+    // room-private `#seatUserIds` map — so `#resolveUserIdForSeat` still resolves
+    // it, and their `match_players` row keeps the linkage (result 'abandoned')
+    // instead of a spurious NULL. Without the capture the seat would export as
+    // NULL and the match would vanish from that user's GDPR export.
+    it('C2: a dropped authenticated seat keeps its user_id in the result (abandoned, not NULL)', async () => {
+      const store = new InMemoryMatchMetadataStore();
+      const verify = async (
+        token: string,
+      ): Promise<{ userId: string; displayName: string } | null> =>
+        token === 'token-A' ? { userId: 'user-A', displayName: 'A' } : null;
+      // maxSeats:2 so a SECOND (never-dropped) seat drives the win to game.ended
+      // after the authed seat drops; large grace so no bot-fill converts the seat.
+      const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+        maxSeats: 2,
+        metadataStore: store,
+        reconnectGraceSeconds: 30,
+        verifySessionToken: verify,
+      });
+
+      // Seat 0 authenticates (userId captured in onAuth); seat 1 is a fresh guest.
+      const cA = await testServer.connectTo(room, {
+        protocolVersion: PROTOCOL_VERSION,
+        sessionToken: 'token-A',
+      });
+      const cB = await testServer.connectTo(room, CONNECT_OPTS);
+      await waitFor(() => room.gameState.phase !== 'lobby');
+      const seatAId = cA.sessionId;
+      const winner = cB.sessionId;
+
+      // A drops (non-consented) before the match ends — removed from this.clients,
+      // seat retained + connected:false, NOT bot-filled (grace pending).
+      await cA.leave(false);
+      await nextTick();
+      expect(room.state.seats.find((s) => s.playerId === seatAId)?.connected).toBe(false);
+      expect(room.state.seats.find((s) => s.playerId === seatAId)?.isBot).toBe(false);
+
+      // B drives to a one-move win → game.ended → recordMatchResult on the tail.
+      driveToNearWin(room, winner);
+      cB.send('intent', {
+        v: 1,
+        type: 'intent',
+        payload: {
+          type: 'intent.buildSettlement',
+          playerId: winner,
+          vertexId: winTarget.id,
+        },
+      });
+      await waitFor(() => store.results.size === 1);
+
+      const result = store.results.get(room.roomId);
+      const seatA = result?.playerResults.find((p) => p.seat === 0);
+      // The dropped authed seat: 'abandoned' AND its captured userId retained.
+      expect(seatA?.result).toBe('abandoned');
+      expect(seatA?.userId).toBe('user-A');
+
+      await cB.leave();
+    });
+
     it('AC3 (determinism): the winning batch + final gameState are byte-identical with a Noop vs a recording store, and no metadata enters the log', async () => {
       const tempDir = await mkdtemp(join(tmpdir(), 'skervik-meta-det-'));
       try {
