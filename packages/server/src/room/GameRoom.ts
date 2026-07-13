@@ -131,6 +131,29 @@ const INVALID_LOBBY_SELECTION_CODE = 4002;
  */
 const INVALID_JOIN_OPTIONS_CODE = 4003;
 
+/**
+ * The transport-level `ServerError.code` for a PRESENT-but-invalid session
+ * token (S2.6.2a): a `sessionToken` on the join handshake that fails
+ * verification (bad signature / expired / malformed). Distinct from the three
+ * codes above — same WebSocket application-reserved range (4000-4999). An
+ * ABSENT token is NOT an error (a fresh guest proceeds); only a supplied token
+ * that fails is rejected, never silently downgraded (that would mask tampering).
+ */
+const AUTH_TOKEN_INVALID_CODE = 4004;
+
+/**
+ * Verifies a session token (S2.6.2a) — injected into the room so `onAuth` can
+ * resolve a returning guest's durable `userId` without this module importing
+ * `jose` or reading the secret. Returns the claims on success, `null` on any
+ * verification failure. Defaults (when auth isn't configured) to a no-op that
+ * returns `null` for ANY token — but `onAuth` treats an ABSENT token as "no
+ * auth" and only rejects a PRESENT one, so an unconfigured room simply never
+ * exercises this (test rooms that pass no token are unchanged).
+ */
+export type VerifySessionToken = (
+  token: string,
+) => Promise<{ userId: string; displayName: string } | null>;
+
 export interface GameRoomOptions {
   readonly maxSeats?: number;
   /**
@@ -240,6 +263,17 @@ export interface GameRoomOptions {
    * (`#handleStartMatch`), which bot-fills any still-empty seats first.
    */
   readonly isPrivate?: boolean;
+  /**
+   * Session-token verifier (S2.6.2a) — a DEFINE-time server config option (bound
+   * to the resolved `SESSION_SECRET` in `boot.ts`), NOT a client-supplied field
+   * (`JoinOptionsSchema.strict()` forbids it on the wire). When present, `onAuth`
+   * verifies a PRESENT `sessionToken` and rejects an invalid one with
+   * {@link AUTH_TOKEN_INVALID_CODE}; a valid token attaches the resolved
+   * `userId` to `client.userData` (metadata only — the seat `PlayerId` stays the
+   * `sessionId`, ADR-0009). When ABSENT (no DB/auth configured), a supplied
+   * token is simply ignored — the room accepts the join as a fresh guest.
+   */
+  readonly verifySessionToken?: VerifySessionToken;
 }
 
 export class GameRoom extends Room<{ state: RoomSchema }> {
@@ -396,8 +430,23 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #botActionsThisTurn = 0;
   #botActionsTrackedTurn = -1;
 
+  /**
+   * {@link GameRoomOptions.verifySessionToken}, resolved at `onCreate` (S2.6.2a).
+   * A DEFINE-time server config (bound to `SESSION_SECRET` in `boot.ts`), never
+   * a client field — read in `onAuth` to verify a presented `sessionToken`.
+   * `undefined` when auth isn't configured (a supplied token is then ignored).
+   */
+  #verifySessionToken?: VerifySessionToken;
+
   override async onCreate(options?: GameRoomOptions): Promise<void> {
     this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
+    // S2.6.2a: the session-token verifier is a define-time server option (bound
+    // to the resolved secret in `boot.ts`), stored here for `onAuth`. A client
+    // cannot inject it — `JoinOptionsSchema.strict()` forbids the key on the
+    // wire, and `onAuth`'s strict gate rejects any such join before it is read.
+    if (options?.verifySessionToken !== undefined) {
+      this.#verifySessionToken = options.verifySessionToken;
+    }
     // The match's rule profile (S2.1.1/S2.1.6) — Classic by default (production
     // has no lobby mode selection yet, S2.5.4); a `twoPlayer` room places
     // neutral blockers at genesis (`#startMatch`). Byte-unchanged for the default.
@@ -770,7 +819,7 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * already gave their own specific rejections for a bad version/lobby pick)
    * so a legitimately-shaped-but-extended payload gets this SPECIFIC reason.
    */
-  override onAuth(_client: Client, options: unknown): boolean {
+  override async onAuth(client: Client, options: unknown): Promise<boolean> {
     const parsed = ConnectOptionsSchema.safeParse(options);
     // The raw value the client presented, reported back for a precise client
     // message: the parsed string on a structurally-valid handshake, else null
@@ -822,6 +871,27 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         DEFAULT_RECONNECT_GRACE_SECONDS,
         lobby.data.reconnectGraceSeconds,
       );
+    }
+
+    // S2.6.2a — durable-guest session token. `parsed` succeeded above, so
+    // `sessionToken` is a validated optional string. Only acted on when a
+    // verifier is configured (DB/auth wired via `boot.ts`); an unconfigured
+    // room (every existing test) ignores any token entirely, unchanged.
+    //   • ABSENT token  → proceed as a fresh guest (backward compatible).
+    //   • PRESENT+VALID → attach the resolved durable `userId` to the
+    //     per-connection `client.userData` bag — NON-authoritative metadata for
+    //     S2.6.3 match attribution; the seat `PlayerId` stays the `sessionId`
+    //     (ADR-0009), so a forged/replayed token can re-attach a display
+    //     identity at most, never impersonate another player's MOVES.
+    //   • PRESENT+INVALID → REJECT (4004). Never silently downgraded to
+    //     anonymous — a bad signature/expiry is treated as tampering, made loud.
+    const { sessionToken } = parsed.data;
+    if (this.#verifySessionToken !== undefined && sessionToken !== undefined) {
+      const claims = await this.#verifySessionToken(sessionToken);
+      if (claims === null) {
+        throw new ServerError(AUTH_TOKEN_INVALID_CODE, 'invalid session token');
+      }
+      client.userData = { userId: claims.userId };
     }
 
     return true;
