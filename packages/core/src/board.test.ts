@@ -163,4 +163,71 @@ describe('buildTopology', () => {
       expect(again.portSlots).toEqual(topology.portSlots);
     });
   });
+
+  it('buildTopology(2, 9) is byte-identical to the no-arg default (Classic frozen, AC1)', () => {
+    expect(buildTopology(2, 9)).toEqual(topology);
+  });
+});
+
+// S2.1.7a / ADR-0013 — the radius-3 expanded 5–6 player board. The geometry
+// derives entirely from the `radius`/`portSlotCount` parameters; these asserts
+// prove the parameterisation yields the ADR's counts and preserves every
+// topological invariant at the larger size.
+describe('buildTopology (radius 3 — expanded board)', () => {
+  const topology = buildTopology(3, 11);
+
+  it('yields exactly 37 tiles, 96 vertices, 132 edges (AC1)', () => {
+    expect(topology.tiles).toHaveLength(37);
+    expect(topology.vertices).toHaveLength(96);
+    expect(topology.edges).toHaveLength(132);
+  });
+
+  it('carves exactly 11 port slots on distinct coastal edges', () => {
+    expect(topology.portSlots).toHaveLength(11);
+    const seenIndices = new Set<number>();
+    for (const slot of topology.portSlots) {
+      const edge = findEdge(topology, slot.edgeId);
+      expect(edge).toBeDefined();
+      const incidentTiles = topology.tiles.filter((t) => t.edgeIds.includes(slot.edgeId));
+      expect(incidentTiles).toHaveLength(1);
+      expect(seenIndices.has(slot.index)).toBe(false);
+      seenIndices.add(slot.index);
+    }
+    expect(seenIndices.size).toBe(11);
+  });
+
+  it('has exactly 42 boundary edges (edges incident to a single on-board tile)', () => {
+    const boundaryEdges = topology.edges.filter(
+      (edge) => topology.tiles.filter((t) => t.edgeIds.includes(edge.id)).length === 1,
+    );
+    expect(boundaryEdges).toHaveLength(42);
+  });
+
+  it('gives every tile 6 vertex ids and 6 edge ids; ids stay globally unique', () => {
+    for (const tile of topology.tiles) {
+      expect(tile.vertexIds).toHaveLength(6);
+      expect(tile.edgeIds).toHaveLength(6);
+      expect(tile.id).toBe(tileId(tile.coord));
+    }
+    expect(new Set(topology.tiles.map((t) => t.id)).size).toBe(37);
+    expect(new Set(topology.vertices.map((v) => v.id)).size).toBe(96);
+    expect(new Set(topology.edges.map((e) => e.id)).size).toBe(132);
+  });
+
+  it('keeps vertex adjacency invariants (2–3 edges, back-references) at radius 3', () => {
+    for (const vertex of topology.vertices) {
+      expect(vertex.edgeIds.length).toBeGreaterThanOrEqual(2);
+      expect(vertex.edgeIds.length).toBeLessThanOrEqual(3);
+      expect(vertex.adjacentVertexIds).toHaveLength(vertex.edgeIds.length);
+    }
+    for (const tile of topology.tiles) {
+      for (const vertexId of tile.vertexIds) {
+        expect(findVertex(topology, vertexId)?.adjacentTileIds).toContain(tile.id);
+      }
+    }
+  });
+
+  it('is pure and deterministic: recomputing (3, 11) gives deep-equal results', () => {
+    expect(buildTopology(3, 11)).toEqual(topology);
+  });
 });

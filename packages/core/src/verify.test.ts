@@ -13,6 +13,7 @@ import { buildTopology } from './board.js';
 import { generateBoard } from './boardgen.js';
 import { CLASSIC_DEV_CARD_PROFILE, shuffledDevDeck } from './devcards.js';
 import { deriveValue, gameplayStreamIndex, rollDie, type Seed } from './rng.js';
+import { EXPANDED_BOARD } from './ruleProfile.js';
 import type {
   BoardGeneratedEvent,
   DevCardBoughtEvent,
@@ -413,5 +414,85 @@ describe('verifyMatchRandomness — Balanced (balanced_deck) randomness source (
 
     expect(result.ok).toBe(true);
     expect(result.checked).toBe(39); // board + 38 rolls
+  });
+});
+
+// --- S2.1.7a / ADR-0013: verify recomputes board.generated from the PROFILE ---
+// The board-leg discharge. An `expanded` (radius-3) match's board must be
+// recomputed against the radius-3 topology + expanded board contents resolved
+// from `state.profileId` — NOT the hardcoded Classic topology the verifier used
+// before. These prove the recompute is profile-resolved both ways: an honest
+// expanded log verifies clean; a corrupted one is flagged; and the SAME expanded
+// layout fails if the log claims Classic (the verifier is not board-blind).
+
+const EXPANDED_TOPO = buildTopology(3, 11);
+
+/** A minimal honest `expanded` log: match.started(expanded) + its board.generated. */
+function faithfulExpandedLog(): GameEvent[] {
+  const matchStarted: MatchStartedEvent = {
+    type: 'match.started',
+    index: 0,
+    matchId: 'expanded-verify',
+    seedHash: 'opaque-here',
+    playerIds: ['a', 'b', 'c', 'd', 'e'],
+    profileId: 'expanded',
+  };
+  const layout = generateBoard(SEED, EXPANDED_TOPO, EXPANDED_BOARD);
+  const boardGenerated: BoardGeneratedEvent = {
+    type: 'board.generated',
+    index: 1,
+    tileKinds: layout.tileKinds,
+    tileTokens: layout.tileTokens,
+    portContents: layout.portContents,
+    robberTileId: layout.robberTileId,
+  };
+  return [matchStarted, boardGenerated];
+}
+
+describe('verifyMatchRandomness — expanded (radius-3) board recompute (S2.1.7a)', () => {
+  it('accepts a faithful expanded log — the 37-tile board recomputes clean', () => {
+    const result = verifyMatchRandomness(SEED, faithfulExpandedLog());
+
+    expect(result.ok).toBe(true);
+    expect(result.mismatches).toEqual([]);
+    expect(result.checked).toBe(1); // the board.generated draw
+  });
+
+  it('flags a corrupted expanded layout (naming board.generated/robberTileId)', () => {
+    const events = faithfulExpandedLog();
+    const board = events[1] as BoardGeneratedEvent;
+    events[1] = {
+      ...board,
+      robberTileId: EXPANDED_TOPO.tiles.find((t) => t.id !== board.robberTileId)!.id,
+    };
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some(
+        (m) => m.type === 'board.generated' && m.field === 'robberTileId',
+      ),
+    ).toBe(true);
+  });
+
+  it('flags an expanded layout mislabeled as Classic — proves the recompute is profile-resolved', () => {
+    // Same honest expanded board.generated, but the log claims no profile (→
+    // Classic). A board-blind verifier (old behavior: hardcoded Classic topology)
+    // would recompute a 19-tile Classic board and flag every field. This is the
+    // forcing proof that the board-leg now resolves topology+board from profileId.
+    const events = faithfulExpandedLog();
+    const started = events[0] as MatchStartedEvent;
+    const { profileId: _dropped, ...classicClaim } = started;
+    events[0] = classicClaim as MatchStartedEvent;
+
+    const result = verifyMatchRandomness(SEED, events);
+
+    expect(result.ok).toBe(false);
+    expect(
+      result.mismatches.some(
+        (m) => m.type === 'board.generated' && m.field === 'tileKinds',
+      ),
+    ).toBe(true);
   });
 });
