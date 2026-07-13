@@ -18,6 +18,7 @@ describe('MatchRepository', () => {
     const repo = new MatchRepository(testDb.db);
 
     const created = await repo.create({
+      roomId: 'room-round-trip',
       profile: CLASSIC_PROFILE,
       seedHash: 'abc123',
       playerCount: 4,
@@ -43,6 +44,7 @@ describe('MatchRepository', () => {
       displayName: 'Winner',
     });
     const created = await matchRepo.create({
+      roomId: 'room-ended-update',
       profile: CLASSIC_PROFILE,
       seedHash: 'abc123',
     });
@@ -61,10 +63,43 @@ describe('MatchRepository', () => {
     expect(updated?.finishedAt).toEqual(finishedAt);
   });
 
+  it('findByRoomId resolves the durable row from the Colyseus roomId (S2.6.3)', async () => {
+    testDb = await createTestDb();
+    const repo = new MatchRepository(testDb.db);
+
+    const created = await repo.create({
+      roomId: 'room-lookup',
+      profile: CLASSIC_PROFILE,
+      seedHash: 'abc123',
+    });
+
+    const found = await repo.findByRoomId('room-lookup');
+    expect(found).toEqual(created);
+    expect(await repo.findByRoomId('no-such-room')).toBeNull();
+  });
+
+  it('update with an empty patch is a no-op returning the current row (nit #1 guard)', async () => {
+    testDb = await createTestDb();
+    const repo = new MatchRepository(testDb.db);
+    const created = await repo.create({
+      roomId: 'room-empty-patch',
+      profile: CLASSIC_PROFILE,
+      seedHash: 'abc123',
+    });
+
+    // Drizzle throws "No values to set" on `.set({})`; the guard returns the row.
+    const unchanged = await repo.update(created.id, {});
+    expect(unchanged).toEqual(created);
+  });
+
   it('rejects a winner_id that does not exist (FK, AC3)', async () => {
     testDb = await createTestDb();
     const repo = new MatchRepository(testDb.db);
-    const created = await repo.create({ profile: CLASSIC_PROFILE, seedHash: 'abc123' });
+    const created = await repo.create({
+      roomId: 'room-fk-reject',
+      profile: CLASSIC_PROFILE,
+      seedHash: 'abc123',
+    });
 
     await expect(
       repo.update(created.id, { winnerId: '00000000-0000-0000-0000-000000000000' }),

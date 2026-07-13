@@ -18,6 +18,7 @@ describe('MatchPlayerRepository', () => {
     const matchRepo = new MatchRepository(testDb.db);
     const playerRepo = new MatchPlayerRepository(testDb.db);
     const match = await matchRepo.create({
+      roomId: 'room-mp-roundtrip',
       profile: CLASSIC_PROFILE,
       seedHash: 'abc123',
     });
@@ -47,6 +48,7 @@ describe('MatchPlayerRepository', () => {
     const matchRepo = new MatchRepository(testDb.db);
     const playerRepo = new MatchPlayerRepository(testDb.db);
     const match = await matchRepo.create({
+      roomId: 'room-mp-dupseat',
       profile: CLASSIC_PROFILE,
       seedHash: 'abc123',
     });
