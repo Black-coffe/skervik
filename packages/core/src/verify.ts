@@ -39,7 +39,7 @@
 // from the real draw (the plan's #1 cross-cutting risk).
 
 import { drawBalancedRoll } from './balancedDeck.js';
-import { type BoardTopology, buildTopology } from './board.js';
+import { topologyForRadius } from './board.js';
 import { generateBoard } from './boardgen.js';
 import { shuffledDevDeck } from './devcards.js';
 import { reduce } from './reduce.js';
@@ -111,8 +111,10 @@ function deepEqual(a: unknown, b: unknown): boolean {
  *
  * Covered M1 random-draw surface (the complete set — a missed type would be a
  * silent verification hole):
- * - `board.generated` — `generateBoard(seed, topology)` deep-equals the layout
- *   (`tileKinds` / `tileTokens` / `portContents` / `robberTileId`).
+ * - `board.generated` — `generateBoard(seed, topology, board)` deep-equals the
+ *   layout (`tileKinds` / `tileTokens` / `portContents` / `robberTileId`), with
+ *   `topology`+`board` resolved from the folded `state.profileId` (radius-aware,
+ *   ADR-0013 — Classic radius 2, expanded radius 3), NOT a hardcoded Classic board.
  * - `dice.rolled` — branches on the folded profile's randomness (S2.1.2):
  *   `'dice'` recomputes `rollDie(seed, gameplayStreamIndex(expectedIndex,
  *   DICE_A|DICE_B))`; `'balanced_deck'` recomputes `drawBalancedRoll(seed,
@@ -138,7 +140,6 @@ export function verifyMatchRandomness(
   const mismatches: RandomnessMismatch[] = [];
   let checked = 0;
   let state: GameState = GENESIS;
-  let topology: BoardTopology | undefined;
 
   // The event's TRUE folded position — a verifier-owned counter (genesis 0,
   // then +1 per event), NOT `event.index`. Every seed-derived draw keys off
@@ -186,8 +187,16 @@ export function verifyMatchRandomness(
     switch (event.type) {
       case 'board.generated': {
         checked += 1;
-        topology ??= buildTopology();
-        const layout = generateBoard(seed, topology);
+        // Recompute the board for THIS match's profile — both geometry (radius)
+        // and contents (tileMix/tokens/ports) — resolved from `state.profileId`
+        // (set by the already-folded `match.started`, index 0). NEVER a
+        // hardcoded Classic topology: that ignored the profile's board and made
+        // the fairness recompute wrong for any non-Classic board. This discharges
+        // the verify board-leg carry-forward (ADR-0013 invariant 3): an expanded
+        // (radius-3) match now recomputes its own 37-tile board, not Classic's 19.
+        const { board } = loadRuleProfile(state.profileId ?? 'classic');
+        const topology = topologyForRadius(board.radius, board.ports.length);
+        const layout = generateBoard(seed, topology, board);
         if (!deepEqual(layout.tileKinds, event.tileKinds)) {
           flag(expectedIndex, event.type, 'tileKinds', layout.tileKinds, event.tileKinds);
         }
