@@ -12,6 +12,7 @@
 //
 // Zero runtime deps (ADR-0003): pure data + a pure total loader.
 
+import { buildTopology } from './board.js';
 import type { DevCardKind, PortContent, ResourceType, TileKind } from './types.js';
 
 /**
@@ -323,6 +324,38 @@ export function validateRuleProfile(profile: RuleProfile): void {
       `Rule profile "${profile.id}": catchUp.robinHoodExchangeRate must be ` +
         `in [1, ${profile.bankTrade.baseRate}) (the bank's base rate), got ` +
         `${profile.catchUp.robinHoodExchangeRate}.`,
+    );
+  }
+  // G4 (S2.1.7a / ADR-0013 invariant 6) — the board arrays must be internally
+  // consistent for the profile's `radius`, or `generateBoard` would zip
+  // mismatched-length arrays and silently drop/undefine tiles. Checked at import
+  // for EVERY registered profile (the loop below `PROFILE_REGISTRY`), so a
+  // mis-sized expanded board fails at module load, never at turn 200 of a match.
+  const { radius, tileMix, tokens, ports } = profile.board;
+  // tile count for a radius-r hexagon is 3r² + 3r + 1 (r=2 → 19, r=3 → 37).
+  const expectedTiles = 3 * radius * radius + 3 * radius + 1;
+  if (tileMix.length !== expectedTiles) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.tileMix.length must be ${expectedTiles} ` +
+        `(3·r²+3·r+1 for radius ${radius}), got ${tileMix.length}.`,
+    );
+  }
+  // one token per NON-desert tile.
+  const nonDesertTiles = tileMix.filter((kind) => kind !== 'desert').length;
+  if (tokens.length !== nonDesertTiles) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.tokens.length must be ${nonDesertTiles} ` +
+        `(one per non-desert tile), got ${tokens.length}.`,
+    );
+  }
+  // ports.length must equal the port slots the topology carves for this radius —
+  // `buildTopology` carves exactly `ports.length` slots (ports.length is the one
+  // source of truth for portSlotCount), so this binds the geometry to the config.
+  const portSlots = buildTopology(radius, ports.length).portSlots.length;
+  if (ports.length !== portSlots) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.ports.length (${ports.length}) must equal ` +
+        `the ${portSlots} port slots the radius-${radius} topology carves.`,
     );
   }
 }
