@@ -32,7 +32,14 @@ export type {
   VertexId,
   VertexTopology,
 } from './board.js';
-export { buildTopology, findEdge, findTile, findVertex, tileId } from './board.js';
+export {
+  buildTopology,
+  findEdge,
+  findTile,
+  findVertex,
+  tileId,
+  topologyForRadius,
+} from './board.js';
 export type { BoardLayout } from './boardgen.js';
 export { BOARD_GEN_STREAM, CLASSIC_BOARD_PROFILE, generateBoard } from './boardgen.js';
 export {
@@ -71,6 +78,8 @@ export {
   BALANCED_PROFILE,
   BLITZ_PROFILE,
   CLASSIC_PROFILE,
+  EXPANDED_BOARD,
+  EXPANDED_PROFILE,
   EXPERIMENTAL_PROFILE_IDS,
   loadRuleProfile,
   SHIPPING_PROFILE_IDS,
