@@ -220,7 +220,9 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | S2.1.3 adaptive-duration | T2 | ✅ done | `f0738b6` |
 | S2.1.4 turn timers + anti-AFK | T3 | ✅ done | `4d149e0` |
 | S2.1.5 parallel trade | T3 | ✅ done | `06e080d` |
-| S2.1.6 2-player mode (phantom, standard board) | T3 | ✅ done — **E2.1 COMPLETE** | `f0d69b7` |
+| S2.1.6 2-player mode (phantom, standard board) | T3 | ✅ done | `f0d69b7` |
+| S2.1.7a 5–6 player expanded board — CORE | T3 | 🔨 **dispatched** — ADR-0013 radius-3 (37 tiles); parameterize `buildTopology(radius,portSlotCount)` + `topologyForRadius` memo (replace singleton); `EXPANDED_PROFILE`/`EXPANDED_BOARD`; **verify board-leg discharge** (resolve topology+board from `profileId` — closes [[verify-profile-blindness-carryforward]]); G4 guard; Classic byte-frozen; core-only | — |
+| S2.1.7b 5–6 player — CONSUMERS | T3 | ▫ next after 7a — route server(`GameRoom`)/client(`GameTable`)/bots through `topologyForRadius`; `maxSeats`→6 + lobby routes ≥5 to `expanded`; bots play the big board (owner-approved); 5–6p cross-process e2e (single + multi + verify) | — |
 | S2.2.1 friendly robber | T2 | ✅ done — first E2.2 mechanic; lead-review MERGE | `cd4b876` |
 | S2.2.2 robin-hood / poverty tokens | T3 | ✅ done — Option A (self-comp); discharged dedup; lead-review MERGE | `c759090` |
 | S2.2.3 final round + hidden VP | T3 | ✅ done — Splendor round-to-circle + public-VP threshold; forced-action no-hang CLOSED; lead-review MERGE | `08cc776` |
