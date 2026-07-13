@@ -17,13 +17,18 @@ describe('UserRepository', () => {
     testDb = await createTestDb();
     const repo = new UserRepository(testDb.db);
 
-    const created = await repo.create({ username: 'kestrel', isGuest: true });
+    const created = await repo.create({
+      username: 'kestrel',
+      displayName: 'Kestrel',
+      isGuest: true,
+    });
 
     // App-generated UUID (Invariant 5) — not empty, not a DB-default artifact.
     expect(created.id).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
     expect(created.username).toBe('kestrel');
+    expect(created.displayName).toBe('Kestrel');
     expect(created.isGuest).toBe(true);
     expect(created.email).toBeNull();
     expect(created.deletedAt).toBeNull();
@@ -39,15 +44,17 @@ describe('UserRepository', () => {
     testDb = await createTestDb();
     const repo = new UserRepository(testDb.db);
 
-    await repo.create({ username: 'duplicate' });
-    await expect(repo.create({ username: 'duplicate' })).rejects.toThrow();
+    await repo.create({ username: 'duplicate', displayName: 'Dup' });
+    await expect(
+      repo.create({ username: 'duplicate', displayName: 'Dup' }),
+    ).rejects.toThrow();
   });
 
   it('excludes soft-deleted rows from the live-user read (AC3)', async () => {
     testDb = await createTestDb();
     const repo = new UserRepository(testDb.db);
 
-    const created = await repo.create({ username: 'erased' });
+    const created = await repo.create({ username: 'erased', displayName: 'Erased' });
     await testDb.db
       .update(users)
       .set({ deletedAt: new Date() })

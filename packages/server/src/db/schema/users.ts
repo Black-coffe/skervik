@@ -17,6 +17,12 @@ export type AuthProvider = 'google' | 'discord' | 'guest';
 export const users = pgTable('users', {
   id: uuid('id').primaryKey(),
   username: text('username').notNull().unique(),
+  // The shown name is user-CHOSEN and NON-unique (two players may both pick
+  // "Nemo"); `username` above stays the UNIQUE handle. For guests, `username`
+  // is a generated unique slug and `display_name` holds the sanitized chosen
+  // or generated name (S2.6.2a). NOT NULL: a guest always has a name (the
+  // store generates one when none is usable).
+  displayName: text('display_name').notNull(),
   email: text('email').unique(),
   authProvider: text('auth_provider').$type<AuthProvider>(),
   isGuest: boolean('is_guest').notNull().default(false),
