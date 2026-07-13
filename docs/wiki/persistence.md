@@ -46,4 +46,22 @@ These invariants are binding for every E2.6 story and any future code that touch
   `DATABASE_URL`. First external-auth surface → `/security-review` before merge.
 - **S2.6.3** — `PgMatchMetadataStore` writing `matches`/`match_players` at match-start + `game.ended`;
   extends the `MatchMetadataStore` interface; keeps `event_log_uri` pointing at the ndjson.
+- **S2.6.2a** — ✅ durable guest identity: `DbGuestStore` (guests → `users` rows, `guestId = users.id`)
+  + `jose` HS256 session tokens (sign at `/auth/guest`, verify at the WS `onAuth` seam), `SESSION_SECRET`
+  env with ephemeral-per-boot fallback. PlayerId stays the seat `sessionId` (ADR-0009); `client.userData.userId`
+  is non-authoritative metadata. Added `display_name` column via additive migration `0001`. Merged `8aa1fd6`.
+  (S2.6.2b OAuth + guest-upgrade deferred pending owner OAuth-app registration.)
+- **S2.6.3** — `PgMatchMetadataStore` writing `matches`/`match_players` at match-start + `game.ended`;
+  extends the `MatchMetadataStore` interface; keeps `event_log_uri` pointing at the ndjson.
 - **S2.6.4 / S2.6.5** — GDPR delete/export + solo save/resume: read/history surfaces over the repos.
+
+## Ops runbook notes
+
+- **Run `pnpm --filter @skervik/server migrate` before first serving with `DATABASE_URL` set** — the
+  server never auto-migrates on boot (Invariant 4). `SESSION_SECRET` and `DATABASE_URL` (and
+  `MATCHES_DIR`/S3) are all mandatory for a fully-featured production boot.
+- **Additive migrations that add a `NOT NULL` column MUST supply a default (or backfill) if the table
+  may already hold rows.** S2.6.2a's `0001` (`ADD COLUMN display_name text NOT NULL`) is safe ONLY because
+  the `users` table is brand-new in S2.6.1 and nothing writes to it before `0001` (0000+0001 always apply
+  together on a fresh DB). A future `NOT NULL`-without-default `ALTER` against a populated table will fail
+  the `migrate` step — add a `DEFAULT` or a two-step backfill migration instead.
