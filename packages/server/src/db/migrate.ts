@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { migrate as migratePg } from 'drizzle-orm/node-postgres/migrator';
 import { PgliteDatabase } from 'drizzle-orm/pglite';
 import { migrate as migratePglite } from 'drizzle-orm/pglite/migrator';
+import { Pool } from 'pg';
 
 import { createPgDb, type SkervikDb } from './client.js';
 
@@ -50,9 +51,16 @@ async function main(): Promise<void> {
   if (databaseUrl === undefined) {
     throw new Error('DATABASE_URL is not set — the migrate script needs it to connect.');
   }
-  const db = createPgDb(databaseUrl);
-  await runMigrations(db);
-  console.log('[skervik/server] migrations applied.');
+  const pool = new Pool({ connectionString: databaseUrl });
+  const db = createPgDb(pool);
+  try {
+    await runMigrations(db);
+    console.log('[skervik/server] migrations applied.');
+  } finally {
+    // Fold S2.6.1 review nit #2: close the pg pool so the CLI process exits
+    // promptly instead of hanging on an idle connection.
+    await pool.end();
+  }
 }
 
 // Only run when executed directly (`node dist/db/migrate.js`), not when

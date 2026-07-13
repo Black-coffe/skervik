@@ -10,6 +10,7 @@ import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import {
   buildTopology,
   type EdgeId,
+  type GameEndedEvent,
   type GameState,
   generateBoard,
   loadRuleProfile,
@@ -38,7 +39,13 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { createGameServer, GAME_ROOM_NAME, type GameRoom } from '../index.js';
-import { InMemoryMatchMetadataStore } from '../matchMetadata.js';
+import {
+  InMemoryMatchMetadataStore,
+  type MatchMetadataStore,
+  type MatchResultMetadata,
+  type MatchStartMetadata,
+  NoopMatchMetadataStore,
+} from '../matchMetadata.js';
 import { sha256Hex } from '../seed.js';
 import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
 
@@ -136,6 +143,36 @@ function driveToNearWin(room: GameRoom, winner: string): void {
   };
   room.state.phase = 'main';
   room.state.currentPlayerId = winner;
+}
+
+// --- S2.6.3 durable match-metadata helpers ----------------------------------
+/** Polls `nextTick` until `pred` holds or the tick budget runs out (drains the #queue). */
+async function waitFor(pred: () => boolean, ticks = 40): Promise<void> {
+  for (let i = 0; i < ticks && !pred(); i += 1) await nextTick();
+}
+
+/** Canonicalizes past the per-run random roomId/winner-sessionId so two runs deep-compare. */
+function canonicalizeMeta(value: unknown, winnerId: string, roomId: string): unknown {
+  let json = JSON.stringify(value);
+  json = json.split(roomId).join('__ROOM__');
+  json = json.split(winnerId).join('__WINNER__');
+  return JSON.parse(json);
+}
+
+/** A store whose every write rejects ASYNCHRONOUSLY — the realistic DB/FS failure (S2.6.3 AC4). */
+class ThrowingMatchMetadataStore implements MatchMetadataStore {
+  async recordSeedReveal(): Promise<void> {
+    throw new Error('seed reveal write failed');
+  }
+  readSeedReveal(): null {
+    return null;
+  }
+  async recordMatchStart(): Promise<void> {
+    throw new Error('match-start write failed');
+  }
+  async recordMatchResult(): Promise<void> {
+    throw new Error('match-result write failed');
+  }
 }
 
 describe('GameRoom', () => {
@@ -1463,6 +1500,206 @@ describe('GameRoom', () => {
     expect(JSON.stringify(room.gameState)).toBe(gameStateBefore);
 
     await reconnected.leave();
+  });
+
+  // --- S2.6.3 durable match-metadata lifecycle (AC2/AC3/AC4) -----------------
+  // Reuses this describe's ONE booted testServer + the driveToNearWin harness.
+  // Proves the room drives the metadata seam once per lifecycle edge, that the
+  // store choice cannot perturb the deterministic game, and that a throwing
+  // store never crashes or blocks the room.
+  describe('durable match metadata (S2.6.3)', () => {
+    it('AC2 (forcing): recordMatchStart fires once at start, recordMatchResult once at game.ended', async () => {
+      const store = new InMemoryMatchMetadataStore();
+      // maxSeats:1 → the single human join fills the room and auto-fires #startMatch.
+      const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+        maxSeats: 1,
+        metadataStore: store,
+      });
+      const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+      await waitFor(() => room.gameState.phase !== 'lobby');
+
+      // START recorded exactly once, with the authoritative start payload.
+      expect(store.starts.size).toBe(1);
+      const start: MatchStartMetadata | undefined = store.starts.get(room.roomId);
+      expect(start).toMatchObject({
+        roomId: room.roomId,
+        seedHash: room.gameState.seedHash,
+        playerCount: 1,
+      });
+      expect(start?.profile).toBeDefined();
+      expect(start?.startedAt).toBeInstanceOf(Date);
+      expect(store.results.size).toBe(0);
+
+      // Drive the seated client to a one-move win, then fire the winning intent.
+      const winner = c1.sessionId;
+      driveToNearWin(room, winner);
+      const batches: EventBatchMessage[] = [];
+      c1.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+      c1.send('intent', {
+        v: 1,
+        type: 'intent',
+        payload: {
+          type: 'intent.buildSettlement',
+          playerId: winner,
+          vertexId: winTarget.id,
+        },
+      });
+      // The result write runs on the queue tail AFTER commit+broadcast, so wait
+      // for it directly (phase flips earlier, at commit) — the forcing signal.
+      await waitFor(() => store.results.size === 1);
+      expect(room.gameState.phase).toBe('finished');
+
+      // RESULT recorded exactly once; START not re-fired (both latched).
+      expect(store.starts.size).toBe(1);
+      expect(store.results.size).toBe(1);
+      const result: MatchResultMetadata | undefined = store.results.get(room.roomId);
+      expect(result?.playerResults).toHaveLength(1);
+      expect(result?.playerResults[0]).toMatchObject({ seat: 0, result: 'win' });
+      // finalVp is the AUTHORITATIVE game.ended tally (core's computeVictoryPoints).
+      const ended = batches
+        .flatMap((b) => b.payload)
+        .find((e): e is GameEndedEvent => e.type === 'game.ended');
+      expect(ended).toBeDefined();
+      expect(result?.playerResults[0]?.finalVp).toBe(ended?.finalStandings[winner]);
+      // No session token was presented → winner_id / user_id resolve to null.
+      expect(result?.winnerUserId).toBeUndefined();
+      expect(result?.playerResults[0]?.userId).toBeUndefined();
+      expect(result?.seed).toMatch(/^[0-9a-f]{64}$/);
+
+      await c1.leave();
+    });
+
+    it('AC3 (determinism): the winning batch + final gameState are byte-identical with a Noop vs a recording store, and no metadata enters the log', async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'skervik-meta-det-'));
+      try {
+        const runWin = async (
+          store: MatchMetadataStore,
+        ): Promise<{
+          payload: unknown;
+          finalState: GameState;
+          winnerId: string;
+          roomId: string;
+        }> => {
+          const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+            maxSeats: 1,
+            metadataStore: store,
+            matchesDir: tempDir,
+            // A FIXED seed so both runs share a seedHash — driveToNearWin then
+            // crafts an otherwise-identical state, isolating the store as the ONLY
+            // difference; canonicalizing the random roomId/winnerId proves equality.
+            seed: 'b'.repeat(64) as Seed,
+          });
+          const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+          await waitFor(() => room.gameState.phase !== 'lobby');
+          const winner = c1.sessionId;
+          driveToNearWin(room, winner);
+          const batches: EventBatchMessage[] = [];
+          let endedSeen = false;
+          c1.onMessage('event.batch', (m: EventBatchMessage) => {
+            batches.push(m);
+            if (m.payload.some((e) => e.type === 'game.ended')) endedSeen = true;
+          });
+          c1.send('intent', {
+            v: 1,
+            type: 'intent',
+            payload: {
+              type: 'intent.buildSettlement',
+              playerId: winner,
+              vertexId: winTarget.id,
+            },
+          });
+          // Wait until the client OBSERVES the game.ended batch (phase commits first).
+          await waitFor(() => endedSeen);
+          const winBatch = batches
+            .map((b) => b.payload)
+            .find((p) => p.some((e) => e.type === 'game.ended'));
+          const finalState = structuredClone(room.gameState);
+          const roomId = room.roomId;
+          await c1.leave();
+          return { payload: winBatch, finalState, winnerId: winner, roomId };
+        };
+
+        const noop = await runWin(new NoopMatchMetadataStore());
+        const rec = await runWin(new InMemoryMatchMetadataStore());
+
+        // The store choice cannot change the game: canonicalized past the per-run
+        // random ids, the winning batch AND the final gameState are byte-identical.
+        expect(canonicalizeMeta(rec.payload, rec.winnerId, rec.roomId)).toEqual(
+          canonicalizeMeta(noop.payload, noop.winnerId, noop.roomId),
+        );
+        expect(canonicalizeMeta(rec.finalState, rec.winnerId, rec.roomId)).toEqual(
+          canonicalizeMeta(noop.finalState, noop.winnerId, noop.roomId),
+        );
+
+        // The metadata NEVER enters the replayable event log (ADR-0009 Fork 3):
+        // the ndjson carries GameEvents only, none of the metadata-only fields.
+        const ndjson = await readFile(join(tempDir, rec.roomId, 'events.ndjson'), 'utf8');
+        for (const forbidden of [
+          'eventLogUri',
+          'finalVp',
+          'winnerUserId',
+          'playerResults',
+          'startedAt',
+          'finishedAt',
+        ]) {
+          expect(ndjson).not.toContain(forbidden);
+        }
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('AC4 (best-effort isolation): a THROWING metadata store never crashes or blocks the room — the match starts, completes, log intact', async () => {
+      const tempDir = await mkdtemp(join(tmpdir(), 'skervik-meta-throw-'));
+      try {
+        const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+          maxSeats: 1,
+          metadataStore: new ThrowingMatchMetadataStore(),
+          matchesDir: tempDir,
+        });
+        const c1 = await testServer.connectTo(room, CONNECT_OPTS);
+        // recordMatchStart rejected — but genesis still committed + broadcast.
+        await waitFor(() => room.gameState.phase !== 'lobby');
+        expect(room.gameState.phase).toBe('setup');
+
+        const winner = c1.sessionId;
+        driveToNearWin(room, winner);
+        const batches: EventBatchMessage[] = [];
+        let endedSeen = false;
+        c1.onMessage('event.batch', (m: EventBatchMessage) => {
+          batches.push(m);
+          if (m.payload.some((e) => e.type === 'game.ended')) endedSeen = true;
+        });
+        c1.send('intent', {
+          v: 1,
+          type: 'intent',
+          payload: {
+            type: 'intent.buildSettlement',
+            playerId: winner,
+            vertexId: winTarget.id,
+          },
+        });
+        // recordSeedReveal + recordMatchResult both reject — but the batch already
+        // persisted + committed + broadcast, so the match reaches game.ended anyway.
+        await waitFor(() => endedSeen);
+        expect(room.gameState.phase).toBe('finished');
+        expect(
+          batches.flatMap((b) => b.payload).some((e) => e.type === 'game.ended'),
+        ).toBe(true);
+
+        // The durable log is intact — the winning game.ended is on disk (persist
+        // happened BEFORE the throwing metadata write, which never touched it).
+        const ndjson = await readFile(
+          join(tempDir, room.roomId, 'events.ndjson'),
+          'utf8',
+        );
+        expect(ndjson).toContain('game.ended');
+
+        await c1.leave();
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    });
   });
 });
 

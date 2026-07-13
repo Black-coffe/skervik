@@ -11,20 +11,78 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { MatchId, Seed } from '@skervik/core';
+import type { MatchId, RuleProfile, Seed } from '@skervik/core';
+
+import type { MatchPlayerResult } from './db/schema/index.js';
 
 /**
- * Receives (and later returns) a match's revealed seed. `recordSeedReveal` is
- * called by the room once the game has ended; `readSeedReveal` is the read path
- * the verify endpoint (S1.7.3) uses to recompute every draw from the log and
- * check it against the public `seedHash`. Both MAY be async (the FS/DB writer);
- * the room `await`s the write in its pipeline. The store is the durable home of
- * the commit-reveal secret — a `null` read means "not revealed yet" (the match
- * has not ended), which the endpoint must surface WITHOUT ever exposing a seed.
+ * The `match.started` metadata (S2.6.3): everything known when a match opens, so
+ * a durable store can insert a `status:'live'` row that a later `game.ended`
+ * completes. `roomId` duplicates the interface's `matchId` key (they are the same
+ * Colyseus `roomId` today) so the Pg impl can write the `room_id` column without
+ * re-deriving it. A wall-clock `startedAt` is fine here — this is a pure metadata
+ * side-effect, NEVER a `GameEvent` (ADR-0009 Fork 3), so it can never perturb the
+ * deterministic core / event log.
+ */
+export interface MatchStartMetadata {
+  readonly roomId: string;
+  /** The FULLY-RESOLVED rule profile the match runs under (jsonb, not a profileId). */
+  readonly profile: RuleProfile;
+  readonly seedHash: string;
+  readonly playerCount: number;
+  readonly startedAt: Date;
+  /** Pointer to the ndjson log (FS path today), or omitted when durability is off. */
+  readonly eventLogUri?: string;
+}
+
+/** One seat's final standing (S2.6.3) — a `match_players` row's payload. */
+export interface MatchPlayerResultMetadata {
+  readonly seat: number;
+  /** The token-authenticated userId, or omitted for a bot / tokenless-guest seat (→ null). */
+  readonly userId?: string;
+  readonly finalVp: number;
+  readonly result: MatchPlayerResult;
+}
+
+/**
+ * The `game.ended` metadata (S2.6.3): the commit-reveal `seed`, the resolved
+ * winner (or none if the winning seat has no userId), and one entry per seat. A
+ * pure side-effect on the room's queue, like {@link MatchStartMetadata} — it runs
+ * AFTER the event log + broadcast already committed and can never feed back in.
+ */
+export interface MatchResultMetadata {
+  readonly seed: Seed;
+  /** The winning seat's resolved userId, or omitted for a bot / tokenless winner (→ null). */
+  readonly winnerUserId?: string;
+  readonly finishedAt: Date;
+  readonly playerResults: readonly MatchPlayerResultMetadata[];
+}
+
+/**
+ * The room's durable-metadata seam. `recordSeedReveal`/`readSeedReveal` are the
+ * commit-reveal secret's home (S1.4.3): the room writes the seed here ONLY after
+ * `game.ended`; the verify endpoint (S1.7.3) reads it back to recompute every
+ * draw from the log. `recordMatchStart`/`recordMatchResult` (S2.6.3) persist the
+ * match lifecycle alongside it. Every method MAY be async (the FS/DB writer) and
+ * is a PURE side-effect — never a `GameEvent`, so a durable store drops in with
+ * zero change to the deterministic core / event log.
  */
 export interface MatchMetadataStore {
   recordSeedReveal(matchId: MatchId, seed: Seed): void | Promise<void>;
   readSeedReveal(matchId: MatchId): Seed | null | Promise<Seed | null>;
+  /**
+   * Records a freshly-started match (`status:'live'`). A pure metadata
+   * side-effect (S2.6.3): NEVER a `GameEvent`, never in `events.ndjson`, never
+   * feeds `reduce`/`validate`. MAY be async (the Pg/FS writer); the room fires it
+   * best-effort AFTER the genesis batch is appended + committed.
+   */
+  recordMatchStart(matchId: MatchId, meta: MatchStartMetadata): void | Promise<void>;
+  /**
+   * Completes a match at `game.ended` (`status:'finished'`, seed, winner, per-seat
+   * results). Same purity contract as {@link recordMatchStart}; fired alongside
+   * `recordSeedReveal` on the queue tail, best-effort.
+   */
+  recordMatchResult(matchId: MatchId, meta: MatchResultMetadata): void | Promise<void>;
 }
 
 /**
@@ -46,13 +104,19 @@ export function assertSafeMatchId(matchId: string): void {
   }
 }
 
-/** Discards the reveal, reads nothing back — the "no durable metadata" default. */
+/** Discards every write, reads nothing back — the "no durable metadata" default. */
 export class NoopMatchMetadataStore implements MatchMetadataStore {
   recordSeedReveal(): void {
     // Intentionally empty — durability is off.
   }
   readSeedReveal(): null {
     return null;
+  }
+  recordMatchStart(): void {
+    // Intentionally empty — durability is off.
+  }
+  recordMatchResult(): void {
+    // Intentionally empty — durability is off.
   }
 }
 
@@ -64,6 +128,10 @@ export class NoopMatchMetadataStore implements MatchMetadataStore {
  */
 export class InMemoryMatchMetadataStore implements MatchMetadataStore {
   readonly reveals = new Map<MatchId, Seed>();
+  /** Buffered `recordMatchStart` payloads, keyed by match — for test assertions (S2.6.3). */
+  readonly starts = new Map<MatchId, MatchStartMetadata>();
+  /** Buffered `recordMatchResult` payloads, keyed by match — for test assertions (S2.6.3). */
+  readonly results = new Map<MatchId, MatchResultMetadata>();
 
   recordSeedReveal(matchId: MatchId, seed: Seed): void {
     this.reveals.set(matchId, seed);
@@ -72,10 +140,31 @@ export class InMemoryMatchMetadataStore implements MatchMetadataStore {
   readSeedReveal(matchId: MatchId): Seed | null {
     return this.reveals.get(matchId) ?? null;
   }
+
+  recordMatchStart(matchId: MatchId, meta: MatchStartMetadata): void {
+    this.starts.set(matchId, meta);
+  }
+
+  recordMatchResult(matchId: MatchId, meta: MatchResultMetadata): void {
+    this.results.set(matchId, meta);
+  }
 }
 
 /** Sidecar filename written next to `events.ndjson`, holding the revealed seed. */
 export const SEED_REVEAL_FILENAME = 'seed-reveal.json';
+
+/** Sidecar filename holding the durable match metadata (start + result, S2.6.3). */
+export const MATCH_METADATA_FILENAME = 'match.json';
+
+/**
+ * On-disk shape of the `match.json` sidecar (S2.6.3) — the start payload,
+ * completed with the result at `game.ended`. `start` is optional so a
+ * result-before-start write (shouldn't happen; best-effort) still persists.
+ */
+interface MatchMetadataFile {
+  readonly start?: MatchStartMetadata;
+  readonly result?: MatchResultMetadata;
+}
 
 export interface FsMatchMetadataStoreOptions {
   /** Base directory holding one folder per match — the SAME dir `FsEventSink` writes the log to. */
@@ -129,5 +218,37 @@ export class FsMatchMetadataStore implements MatchMetadataStore {
     }
     const parsed = JSON.parse(raw) as SeedRevealFile;
     return parsed.seed;
+  }
+
+  async #readMetadataFile(matchId: MatchId): Promise<MatchMetadataFile | null> {
+    try {
+      const raw = await readFile(
+        join(this.#dir(matchId), MATCH_METADATA_FILENAME),
+        'utf8',
+      );
+      return JSON.parse(raw) as MatchMetadataFile;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  }
+
+  async recordMatchStart(matchId: MatchId, meta: MatchStartMetadata): Promise<void> {
+    const dir = this.#dir(matchId);
+    await mkdir(dir, { recursive: true });
+    // A `match.json` sidecar NEXT TO the log (same dir/id as `seed-reveal.json`) —
+    // never a `GameEvent`, so it can't pollute the replayable ndjson (Fork 3).
+    const payload: MatchMetadataFile = { start: meta };
+    await writeFile(join(dir, MATCH_METADATA_FILENAME), JSON.stringify(payload), 'utf8');
+  }
+
+  async recordMatchResult(matchId: MatchId, meta: MatchResultMetadata): Promise<void> {
+    const dir = this.#dir(matchId);
+    await mkdir(dir, { recursive: true });
+    // Fold the result into the existing start sidecar; tolerate a missing start
+    // (best-effort metadata) by writing the result alone rather than throwing.
+    const existing = await this.#readMetadataFile(matchId);
+    const payload: MatchMetadataFile = { ...existing, result: meta };
+    await writeFile(join(dir, MATCH_METADATA_FILENAME), JSON.stringify(payload), 'utf8');
   }
 }

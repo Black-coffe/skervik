@@ -11,6 +11,7 @@ import { type Bot, createHeuristicBot, type Difficulty } from '@skervik/bots';
 import {
   type BoardGeneratedEvent,
   buildTopology,
+  type GameEndedEvent,
   type GameEvent,
   type GameState,
   generateBoard,
@@ -40,10 +41,13 @@ import {
 } from '@skervik/protocol';
 import { type Client, CloseCode, Room, ServerError } from 'colyseus';
 
+import type { MatchPlayerResult } from '../db/schema/index.js';
 import {
   FsMatchMetadataStore,
   InMemoryMatchMetadataStore,
   type MatchMetadataStore,
+  type MatchPlayerResultMetadata,
+  type MatchResultMetadata,
 } from '../matchMetadata.js';
 import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.js';
 import { generateSeed, sha256Hex } from '../seed.js';
@@ -303,6 +307,21 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * re-entrant batch can slip a second reveal through.
    */
   #seedRevealed = false;
+
+  /**
+   * One-shot latch for the durable `recordMatchStart` (S2.6.3). Flips once, when
+   * the genesis batch has been appended + committed, so a re-entrant start can
+   * never double-insert the `matches` row. A pure metadata side-effect, isolated
+   * from the deterministic core exactly like {@link #seedRevealed}.
+   */
+  #matchStartRecorded = false;
+
+  /**
+   * One-shot latch for the durable `recordMatchResult` (S2.6.3). Flips once, on
+   * the first `game.ended` batch, alongside {@link #seedRevealed} — guards the
+   * result write + per-seat `match_players` inserts against a double-fire.
+   */
+  #matchResultRecorded = false;
 
   /**
    * The log-append seam (S1.4.2): every validated batch is handed here and
@@ -765,6 +784,15 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       // acting first at all) needs to be driven right after genesis — the
       // other trigger is the commit tail of every subsequent intent.
       this.#scheduleBotTurnIfNeeded();
+
+      // Durable match metadata (S2.6.3): record the freshly-started match — a
+      // PURE side-effect on the queue tail, AFTER append + commit + broadcast,
+      // exactly like the `game.ended` reveal. It is NOT a `GameEvent`, never
+      // enters `events.ndjson`, never feeds `reduce`/`validate` (ADR-0009 Fork
+      // 3), so it cannot perturb the deterministic core. Best-effort + latched:
+      // any failure is caught + logged and the match continues; the wall-clock
+      // `startedAt` lives ONLY here (never in core / the log).
+      this.#recordMatchStart(profile);
     } catch (error) {
       // Append failed: state was NOT advanced, nothing broadcast. Log with the
       // public seedHash only (never the raw seed) and swallow — nothing escapes
@@ -774,6 +802,82 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         error,
       );
     }
+  }
+
+  /**
+   * Fires the best-effort `recordMatchStart` metadata write (S2.6.3), guarded by
+   * the one-shot {@link #matchStartRecorded} latch. A metadata failure is caught
+   * + logged and NEVER propagates — the match must never crash or block on a
+   * secondary durability write. `eventLogUri` is the FS log path when durable,
+   * omitted for an in-memory sink.
+   */
+  #recordMatchStart(profile: ReturnType<typeof loadRuleProfile>): void {
+    if (this.#matchStartRecorded) return;
+    this.#matchStartRecorded = true;
+    const eventLogUri =
+      this.eventSink instanceof FsEventSink ? this.eventSink.filePath : undefined;
+    void Promise.resolve(
+      this.matchMetadataStore.recordMatchStart(this.gameState.matchId, {
+        roomId: this.gameState.matchId,
+        profile,
+        seedHash: this.gameState.seedHash,
+        playerCount: this.state.seats.length,
+        startedAt: new Date(),
+        ...(eventLogUri !== undefined ? { eventLogUri } : {}),
+      }),
+    ).catch((error: unknown) => {
+      this.#logInternalError('recordMatchStart failed (metadata is best-effort)', error);
+    });
+  }
+
+  /**
+   * Resolves a seat to its token-authenticated `userId` (S2.6.3), or `undefined`
+   * for a bot seat OR a human seat that presented no session token — both persist
+   * as a NULL `user_id`/`winner_id`. The `PlayerId` (seat/sessionId) is unchanged;
+   * this is a metadata-only lookup on the non-authoritative `client.userData` bag
+   * (set in `onAuth`).
+   */
+  #resolveUserIdForSeat(seatIndex: number): string | undefined {
+    const seat = this.state.seats[seatIndex];
+    if (!seat || seat.isBot) return undefined;
+    const client = this.clients.find((c) => c.sessionId === seat.playerId);
+    return (client?.userData as { userId?: string } | undefined)?.userId;
+  }
+
+  /**
+   * Assembles the `recordMatchResult` payload (S2.6.3) from the AUTHORITATIVE
+   * `game.ended` event — `winnerId` + `finalStandings` are core's own tally
+   * (`computeVictoryPoints`, public + hidden), never a server-side re-derivation.
+   * One entry per seat: `'win'` for the winner, `'abandoned'` for a dropped
+   * non-bot seat, else `'loss'`. The `finishedAt` wall-clock lives ONLY here.
+   */
+  #buildMatchResult(event: GameEndedEvent): MatchResultMetadata {
+    const playerResults: MatchPlayerResultMetadata[] = this.state.seats.map((seat, i) => {
+      const userId = this.#resolveUserIdForSeat(i);
+      const result: MatchPlayerResult =
+        seat.playerId === event.winnerId
+          ? 'win'
+          : !seat.isBot && !seat.connected
+            ? 'abandoned'
+            : 'loss';
+      return {
+        seat: i,
+        finalVp: event.finalStandings[seat.playerId as PlayerId] ?? 0,
+        result,
+        ...(userId !== undefined ? { userId } : {}),
+      };
+    });
+    const winnerSeatIndex = this.state.seats.findIndex(
+      (s) => s.playerId === event.winnerId,
+    );
+    const winnerUserId =
+      winnerSeatIndex >= 0 ? this.#resolveUserIdForSeat(winnerSeatIndex) : undefined;
+    return {
+      seed: this.#seed,
+      finishedAt: new Date(),
+      playerResults,
+      ...(winnerUserId !== undefined ? { winnerUserId } : {}),
+    };
   }
 
   /**
@@ -1281,13 +1385,46 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       //    the (possibly async) write so a re-entrant batch cannot double-reveal
       //    — though core freezes to `'finished'` at `game.ended`, so no further
       //    batch is even possible.
-      const gameEnded = result.events.some((e) => e.type === 'game.ended');
-      if (!this.#seedRevealed && gameEnded) {
+      const gameEndedEvent = result.events.find(
+        (e): e is GameEndedEvent => e.type === 'game.ended',
+      );
+      const gameEnded = gameEndedEvent !== undefined;
+      if (gameEndedEvent !== undefined && !this.#seedRevealed) {
         this.#seedRevealed = true;
-        await this.matchMetadataStore.recordSeedReveal(
-          this.gameState.matchId,
-          this.#seed,
-        );
+        // Best-effort + ISOLATED (S2.6.3, AC4): a throwing metadata store must
+        // never fail this already-committed batch (the log + broadcast are done)
+        // — catch + log locally so the pipeline still runs its tail (steps 7-9)
+        // and the room never crashes on a secondary durability write.
+        try {
+          await this.matchMetadataStore.recordSeedReveal(
+            this.gameState.matchId,
+            this.#seed,
+          );
+        } catch (error) {
+          this.#logInternalError(
+            'recordSeedReveal failed (metadata is best-effort)',
+            error,
+          );
+        }
+      }
+      // Durable match RESULT (S2.6.3): reveal-adjacent, same purity + isolation
+      // contract as the seed reveal above — a PURE side-effect (NOT a `GameEvent`,
+      // never in the log, no feedback into core). Latched so it fires exactly once
+      // at `game.ended`; the winner + per-seat VP come from the AUTHORITATIVE
+      // `game.ended` event (`winnerId` + `finalStandings`, core's own tally).
+      if (gameEndedEvent !== undefined && !this.#matchResultRecorded) {
+        this.#matchResultRecorded = true;
+        try {
+          await this.matchMetadataStore.recordMatchResult(
+            this.gameState.matchId,
+            this.#buildMatchResult(gameEndedEvent),
+          );
+        } catch (error) {
+          this.#logInternalError(
+            'recordMatchResult failed (metadata is best-effort)',
+            error,
+          );
+        }
       }
 
       // 7. Anti-AFK bookkeeping (S2.1.4): a real committed intent clears the

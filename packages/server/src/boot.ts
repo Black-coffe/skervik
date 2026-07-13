@@ -32,9 +32,16 @@ import {
   signSessionToken,
   verifySessionToken,
 } from './auth/sessionToken.js';
-import { createPgDb } from './db/client.js';
+import { createPgDb, type SkervikDb } from './db/client.js';
+import { MatchPlayerRepository } from './db/repositories/matchPlayerRepository.js';
+import { MatchRepository } from './db/repositories/matchRepository.js';
 import { UserRepository } from './db/repositories/userRepository.js';
-import { FsMatchMetadataStore, NoopMatchMetadataStore } from './matchMetadata.js';
+import {
+  FsMatchMetadataStore,
+  InMemoryMatchMetadataStore,
+  type MatchMetadataStore,
+} from './matchMetadata.js';
+import { PgMatchMetadataStore } from './pgMatchMetadataStore.js';
 import { GameRoom, type GameRoomOptions } from './room/GameRoom.js';
 import { registerGuestAuthRoute } from './routes/guestAuth.js';
 import { registerHealthRoute } from './routes/health.js';
@@ -122,13 +129,32 @@ export async function createHttpServer(
   ): Promise<{ userId: string; displayName: string } | null> =>
     verifySessionToken(token, sessionSecret);
 
+  // ONE Postgres connection/pool for the whole boot when a DB is configured
+  // (S2.6.3) — reused by BOTH the guest store and the match-metadata store below,
+  // so we never open a second pool for the same database.
+  const db: SkervikDb | undefined =
+    options.databaseUrl !== undefined ? createPgDb(options.databaseUrl) : undefined;
+
   // Durable `users`-backed guests when a DB is configured (S2.6.2a); the M1
   // in-memory store otherwise. An injected store always wins (tests).
   const guestStore =
     options.guestStore ??
-    (options.databaseUrl !== undefined
-      ? new DbGuestStore(new UserRepository(createPgDb(options.databaseUrl)))
+    (db !== undefined
+      ? new DbGuestStore(new UserRepository(db))
       : new InMemoryGuestStore());
+
+  // Durable match metadata (S2.6.3), three-tier gated exactly like the guest
+  // store: a configured DB → Postgres (`matches`/`match_players`, reusing the
+  // SAME `db`/pool above); else a `matchesDir` → the FS `match.json` sidecar;
+  // else the in-memory buffer (dev/test, off the filesystem). This ONE instance
+  // is shared by every room AND the verify endpoint below, so the endpoint reads
+  // the same durable seed the rooms write.
+  const metadataStore: MatchMetadataStore =
+    db !== undefined
+      ? new PgMatchMetadataStore(new MatchRepository(db), new MatchPlayerRepository(db))
+      : options.matchesDir !== undefined
+        ? new FsMatchMetadataStore({ matchesDir: options.matchesDir })
+        : new InMemoryMatchMetadataStore();
 
   // Fastify owns the single HTTP server (REST + the mounted matchmaking route).
   const fastify = Fastify({ logger: false });
@@ -142,10 +168,10 @@ export async function createHttpServer(
   // first, so the store is never read then).
   registerMatchVerifyRoute(fastify, {
     ...(options.matchesDir !== undefined ? { matchesDir: options.matchesDir } : {}),
-    metadataStore:
-      options.matchesDir !== undefined
-        ? new FsMatchMetadataStore({ matchesDir: options.matchesDir })
-        : new NoopMatchMetadataStore(),
+    // The SAME store instance the rooms write to (S2.6.3), so the endpoint reads
+    // the durable revealed seed. With no DB and no matchesDir this is the
+    // in-memory buffer — the route still 404s on an absent matchesDir first.
+    metadataStore,
   });
 
   // Colyseus WS transport with NO http server of its own (`noServer`) — it is
@@ -160,6 +186,9 @@ export async function createHttpServer(
     ...(options.matchesDir !== undefined ? { matchesDir: options.matchesDir } : {}),
     ...(options.maxSeats !== undefined ? { maxSeats: options.maxSeats } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    // The durable match-metadata store (S2.6.3) — the SAME instance the verify
+    // route reads. Every room records its lifecycle (start + result) here.
+    metadataStore,
     // S2.6.2a define-time server option — the room verifies a presented
     // `sessionToken` in `onAuth` with this. Never a client field.
     verifySessionToken: verify,

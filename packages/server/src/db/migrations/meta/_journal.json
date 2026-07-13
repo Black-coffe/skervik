@@ -15,6 +15,13 @@
       "when": 1783927781672,
       "tag": "0001_faulty_triathlon",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783930276802,
+      "tag": "0002_nebulous_xavin",
+      "breakpoints": true
     }
   ]
 }

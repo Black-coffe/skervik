@@ -21,10 +21,15 @@ export {
   startServer,
 } from './boot.js';
 export {
+  FsMatchMetadataStore,
   InMemoryMatchMetadataStore,
   type MatchMetadataStore,
+  type MatchPlayerResultMetadata,
+  type MatchResultMetadata,
+  type MatchStartMetadata,
   NoopMatchMetadataStore,
 } from './matchMetadata.js';
+export { PgMatchMetadataStore } from './pgMatchMetadataStore.js';
 export {
   DEFAULT_MATCHES_DIR,
   FsEventSink,

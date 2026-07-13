@@ -15,6 +15,13 @@ export type MatchStatus = 'live' | 'finished' | 'abandoned';
 
 export const matches = pgTable('matches', {
   id: uuid('id').primaryKey(),
+  /**
+   * The Colyseus `roomId` (S2.6.3) — the room's own `matchId`, distinct from the
+   * durable uuid PK above. Short and recyclable across restarts, so NOT the PK;
+   * `unique` so `findByRoomId` resolves a live match's row, and the same key the
+   * FS event log / seed-reveal sidecar are addressed by.
+   */
+  roomId: text('room_id').notNull().unique(),
   /** The FULLY-RESOLVED RuleProfile (incl. adaptive overrides), not just a `profileId`. */
   profile: jsonb('profile').notNull().$type<RuleProfile>(),
   seedHash: text('seed_hash').notNull(),

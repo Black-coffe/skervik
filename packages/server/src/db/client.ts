@@ -15,9 +15,15 @@ import * as schema from './schema/index.js';
 /** The typed `db` shape repositories depend on, regardless of driver. */
 export type SkervikDb = NodePgDatabase<typeof schema> | PgliteDatabase<typeof schema>;
 
-/** Real Postgres, for prod boot and the `migrate` CLI (Invariant 9: not called from `boot.ts` yet). */
-export function createPgDb(databaseUrl: string): NodePgDatabase<typeof schema> {
-  const pool = new Pool({ connectionString: databaseUrl });
+/**
+ * Real Postgres, for prod boot and the `migrate` CLI. Accepts a connection
+ * string (the common case — mints its own {@link Pool}) OR an existing `Pool`,
+ * so the `migrate` CLI can hold the pool it opened and `.end()` it to exit
+ * promptly (S2.6.3, folds S2.6.1 nit #2) without a second drizzle-wiring site.
+ */
+export function createPgDb(source: string | Pool): NodePgDatabase<typeof schema> {
+  const pool =
+    typeof source === 'string' ? new Pool({ connectionString: source }) : source;
   return drizzlePg(pool, { schema });
 }
 
