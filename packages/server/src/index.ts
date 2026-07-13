@@ -62,10 +62,15 @@ export interface CreateGameServerOptions {
  */
 export function createGameServer(options?: CreateGameServerOptions): Server {
   const gameServer = new Server();
-  gameServer.define(
-    GAME_ROOM_NAME,
-    GameRoom,
-    options?.matchesDir !== undefined ? { matchesDir: options.matchesDir } : undefined,
-  );
+  gameServer
+    .define(
+      GAME_ROOM_NAME,
+      GameRoom,
+      options?.matchesDir !== undefined ? { matchesDir: options.matchesDir } : undefined,
+    )
+    // S2.5.5: segregate quick-match by rule preset — a joiner's `profileId`
+    // must match the room's creation `profileId`, else `joinOrCreate` spawns
+    // a fresh room instead of seating the player into a different preset.
+    .filterBy(['profileId']);
   return gameServer;
 }

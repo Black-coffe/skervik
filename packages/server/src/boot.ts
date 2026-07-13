@@ -113,11 +113,15 @@ export async function createHttpServer(
     ...(options.maxSeats !== undefined ? { maxSeats: options.maxSeats } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
   };
-  gameServer.define(
-    GAME_ROOM_NAME,
-    GameRoom,
-    Object.keys(roomOptions).length > 0 ? roomOptions : undefined,
-  );
+  gameServer
+    .define(
+      GAME_ROOM_NAME,
+      GameRoom,
+      Object.keys(roomOptions).length > 0 ? roomOptions : undefined,
+    )
+    // S2.5.5: segregate quick-match by rule preset (see index.ts's createGameServer
+    // for the full rationale) — production boot needs the same filter.
+    .filterBy(['profileId']);
 
   // Mount matchmaking into Fastify (ADR-0011): the SDK POSTs
   // `/matchmake/<method>/<roomName>` with the join options as the body;
