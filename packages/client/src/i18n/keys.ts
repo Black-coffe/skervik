@@ -179,6 +179,26 @@ export const TRANSLATION_KEYS = [
   'discard.confirm',
   'discard.addResource',
   'discard.removeResource',
+  // --- Ventures: buy + hand panel + resource-picker plays (S2.8.5a) ---
+  'venture.title',
+  'venture.buyButton',
+  'venture.deckRemaining',
+  'venture.play',
+  'venture.close',
+  'venture.empty',
+  'venture.boughtThisTurnHint',
+  'venture.kind.knight',
+  'venture.kind.roadBuilding',
+  'venture.kind.yearOfPlenty',
+  'venture.kind.monopoly',
+  'venture.kind.victoryPoint',
+  'venture.yopPrompt',
+  'venture.yopCounter',
+  'venture.yopAddResource',
+  'venture.yopRemoveResource',
+  'a11y.ventureYearOfPlenty',
+  'venture.monopolyPrompt',
+  'a11y.ventureMonopoly',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

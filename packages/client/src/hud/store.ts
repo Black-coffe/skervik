@@ -98,11 +98,21 @@ export interface UiStore {
    * tile (board picking active).
    */
   readonly robberPendingTile: TileId | null;
+  /**
+   * S2.8.5a: whether the «Предприятие» (Venture) hand panel is open —
+   * UI-ONLY, never part of `gameState`, never sent to the server. Lives here
+   * (not in a component) for the same "two sibling HUD pieces share it"
+   * reason as `buildMode`: `BottomDeck` (the «Предприятие» toggle) SETS it,
+   * `GameScreen` READS it to render `<VenturePanel/>`. `false` = closed.
+   */
+  readonly ventureOpen: boolean;
   readonly setGameState: (next: GameState) => void;
   /** Set (or clear with `'none'`) the UI-only build submode. Never touches `gameState`. */
   readonly setBuildMode: (mode: BuildMode) => void;
   /** Set (or clear with `null`) the UI-only pending robber tile. Never touches `gameState`. */
   readonly setRobberPendingTile: (tileId: TileId | null) => void;
+  /** Open/close the UI-only Venture hand panel. Never touches `gameState`. */
+  readonly setVentureOpen: (open: boolean) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
    * produces a typed {@link PlayerIntent} handed here. It records the intent as
@@ -210,9 +220,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
   isPrivateRoom: false,
   buildMode: 'none',
   robberPendingTile: null,
+  ventureOpen: false,
   setGameState: (next) => set({ gameState: next }),
   setBuildMode: (mode) => set({ buildMode: mode }),
   setRobberPendingTile: (tileId) => set({ robberPendingTile: tileId }),
+  setVentureOpen: (open) => set({ ventureOpen: open }),
   dispatchIntent: (intent) => {
     set((state) => {
       const entry = tradeLogEntryFromIntent(
@@ -258,6 +270,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
       // matches (heeding the S2.8.3b review nit: clear on JOIN, not on every
       // event fold via `setGameState`).
       robberPendingTile: null,
+      // Same discipline for the Venture panel (S2.8.5a) — never leave it open
+      // across a fresh match join.
+      ventureOpen: false,
     }),
   applyEventBatch: (events) =>
     set((state) => {

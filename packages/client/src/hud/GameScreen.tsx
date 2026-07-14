@@ -18,13 +18,14 @@ import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
 import { RobberPrompt } from './RobberPrompt.js';
 import { SetupPrompt } from './SetupPrompt.js';
-import { canShowTradeDock, useUiStore } from './store.js';
+import { canShowTradeDock, selectIsMyTurn, useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
 import { TradeZone } from './TradeZone.js';
 import type { BuildPrompt } from './useBuildPlacement.js';
 import { useBuildPlacement } from './useBuildPlacement.js';
 import { useRobberPlacement } from './useRobberPlacement.js';
 import { useSetupPlacement } from './useSetupPlacement.js';
+import { VenturePanel } from './VenturePanel.js';
 
 // S2.8.3b: the build prompt reuses the setup-prompt status-line visuals (over
 // the Chart) — same "tell the human what to click" role, one phase later.
@@ -54,6 +55,12 @@ export function GameScreen() {
   // off-turn-active HUD surface). While owed, the S2.8.4a robber-move UI is
   // already inert (it gates on a non-empty `playersToDiscard`), so no conflict.
   const owesCardDiscard = owesDiscard(gameState, myPlayerId);
+  // S2.8.5a: the Venture hand panel — a UI-only toggle (`ventureOpen`) gated
+  // to the same window buy/play are legal in, so it auto-hides if the turn
+  // or phase moves on while open.
+  const ventureOpen = useUiStore((state) => state.ventureOpen);
+  const showVenturePanel =
+    ventureOpen && isMainPhase && selectIsMyTurn(gameState, myPlayerId);
   const setup = useSetupPlacement();
   const build = useBuildPlacement();
   const robber = useRobberPlacement();
@@ -103,6 +110,7 @@ export function GameScreen() {
           />
         ) : null}
         {owesCardDiscard ? <DiscardPanel /> : null}
+        {showVenturePanel ? <VenturePanel /> : null}
         <NoticeBar />
       </div>
       <div className="game-screen__log">
