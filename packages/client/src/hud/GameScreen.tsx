@@ -14,12 +14,14 @@ import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
 import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
+import { RobberPrompt } from './RobberPrompt.js';
 import { SetupPrompt } from './SetupPrompt.js';
 import { canShowTradeDock, useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
 import { TradeZone } from './TradeZone.js';
 import type { BuildPrompt } from './useBuildPlacement.js';
 import { useBuildPlacement } from './useBuildPlacement.js';
+import { useRobberPlacement } from './useRobberPlacement.js';
 import { useSetupPlacement } from './useSetupPlacement.js';
 
 // S2.8.3b: the build prompt reuses the setup-prompt status-line visuals (over
@@ -43,9 +45,17 @@ export function GameScreen() {
   // S2.8.1 dev harness available there (`GameTable`'s `isDevHarnessEligible`).
   const isSetupPhase = gameState.phase === 'setup';
   const isMainPhase = gameState.phase === 'main';
+  const isRobberPhase = gameState.phase === 'robber';
   const setup = useSetupPlacement();
   const build = useBuildPlacement();
-  const placement = isSetupPhase ? setup : isMainPhase ? build : null;
+  const robber = useRobberPlacement();
+  const placement = isSetupPhase
+    ? setup
+    : isMainPhase
+      ? build
+      : isRobberPhase
+        ? robber
+        : null;
 
   return (
     <div className="game-screen">
@@ -75,6 +85,14 @@ export function GameScreen() {
               {t(BUILD_PROMPT_KEY[build.prompt])}
             </span>
           </div>
+        ) : null}
+        {isRobberPhase && robber.prompt ? (
+          <RobberPrompt
+            prompt={robber.prompt}
+            victims={robber.victims}
+            onChooseVictim={robber.onChooseVictim}
+            onCancelVictim={robber.onCancelVictim}
+          />
         ) : null}
         <NoticeBar />
       </div>

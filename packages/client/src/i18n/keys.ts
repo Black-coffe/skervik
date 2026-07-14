@@ -168,6 +168,10 @@ export const TRANSLATION_KEYS = [
   'build.promptSettlement',
   'build.promptRoad',
   'build.promptCity',
+  // --- Robber move + steal (S2.8.4a) ---
+  'a11y.robberVictims',
+  'robber.promptMove',
+  'robber.promptChooseVictim',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];
