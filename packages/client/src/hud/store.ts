@@ -9,6 +9,7 @@
 // send and reconciles `pendingSeal` on the server's echo (§7.6 server-truth).
 
 import type {
+  EdgeId,
   GameEvent,
   GameState,
   PlayerId,
@@ -106,6 +107,29 @@ export interface UiStore {
    * `GameScreen` READS it to render `<VenturePanel/>`. `false` = closed.
    */
   readonly ventureOpen: boolean;
+  /**
+   * S2.8.5b: which board-pick Venture play is armed — UI-ONLY, never part of
+   * `gameState`, never sent to the server (it only shapes the eventual
+   * `intent.playDevCard` dispatch). `'none'` = no armed play (the phase-driven
+   * build picker has the board). Set by `VenturePanel`'s «Разыграть» on the
+   * knight/roadBuilding rows; read by `useVenturePlacement` to override the
+   * `main`-phase build picker while armed.
+   */
+  readonly venturePlayMode: 'none' | 'knight' | 'roadBuilding';
+  /**
+   * S2.8.5b: the tile awaiting a KNIGHT steal-victim choice — mirrors
+   * `robberPendingTile`'s role but deliberately a SEPARATE field: a knight
+   * play is armed OUTSIDE the `robber` phase (it's a `main`-phase play), so
+   * `robberPendingTile`'s phase-keyed fold-clear (keyed on the `robber`
+   * phase) would never fire for it. `null` = no pending tile.
+   */
+  readonly knightPendingTile: TileId | null;
+  /**
+   * S2.8.5b: the 0–2 edges picked so far for an armed road-building play —
+   * UI-ONLY, cleared on dispatch/cancel/fold-out-of-validity. Never part of
+   * `gameState`, never sent except inside the resolved `roadBuilding` intent.
+   */
+  readonly roadBuildingEdges: readonly EdgeId[];
   readonly setGameState: (next: GameState) => void;
   /** Set (or clear with `'none'`) the UI-only build submode. Never touches `gameState`. */
   readonly setBuildMode: (mode: BuildMode) => void;
@@ -113,6 +137,12 @@ export interface UiStore {
   readonly setRobberPendingTile: (tileId: TileId | null) => void;
   /** Open/close the UI-only Venture hand panel. Never touches `gameState`. */
   readonly setVentureOpen: (open: boolean) => void;
+  /** Arm (or clear with `'none'`) the UI-only Venture board-pick play. Never touches `gameState`. */
+  readonly setVenturePlayMode: (mode: 'none' | 'knight' | 'roadBuilding') => void;
+  /** Set (or clear with `null`) the UI-only pending knight-steal tile. Never touches `gameState`. */
+  readonly setKnightPendingTile: (tileId: TileId | null) => void;
+  /** Set (replace) the UI-only road-building edge picks. Never touches `gameState`. */
+  readonly setRoadBuildingEdges: (edges: readonly EdgeId[]) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
    * produces a typed {@link PlayerIntent} handed here. It records the intent as
@@ -221,10 +251,16 @@ export const useUiStore = create<UiStore>((set, get) => ({
   buildMode: 'none',
   robberPendingTile: null,
   ventureOpen: false,
+  venturePlayMode: 'none',
+  knightPendingTile: null,
+  roadBuildingEdges: [],
   setGameState: (next) => set({ gameState: next }),
   setBuildMode: (mode) => set({ buildMode: mode }),
   setRobberPendingTile: (tileId) => set({ robberPendingTile: tileId }),
   setVentureOpen: (open) => set({ ventureOpen: open }),
+  setVenturePlayMode: (mode) => set({ venturePlayMode: mode }),
+  setKnightPendingTile: (tileId) => set({ knightPendingTile: tileId }),
+  setRoadBuildingEdges: (edges) => set({ roadBuildingEdges: edges }),
   dispatchIntent: (intent) => {
     set((state) => {
       const entry = tradeLogEntryFromIntent(
@@ -273,6 +309,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
       // Same discipline for the Venture panel (S2.8.5a) — never leave it open
       // across a fresh match join.
       ventureOpen: false,
+      // Same discipline for an armed Venture board-pick play (S2.8.5b) — a
+      // fresh join can never carry over a stale knight/road-building pick.
+      venturePlayMode: 'none',
+      knightPendingTile: null,
+      roadBuildingEdges: [],
     }),
   applyEventBatch: (events) =>
     set((state) => {
@@ -298,7 +339,29 @@ export const useUiStore = create<UiStore>((set, get) => ({
         state.gameState.phase === 'robber' && gameState.phase !== 'robber'
           ? null
           : state.robberPendingTile;
-      return { gameState, pendingSeal, robberPendingTile };
+      // S2.8.5b: the same phase-out-clear discipline for an armed Venture
+      // board-pick play — a completed play (server sets
+      // `devCardPlayedThisTurn`), a turn-timeout, or the turn ending all make
+      // the armed play no longer valid. Clear ONLY on the transition OUT of
+      // validity (never while still valid — that would wipe an in-progress
+      // pick), and only when a play is actually armed (`venturePlayMode !==
+      // 'none'`).
+      const stillValidVenture =
+        gameState.phase === 'main' &&
+        gameState.currentPlayerId === state.myPlayerId &&
+        !gameState.devCardPlayedThisTurn;
+      const ventureNowInvalid = state.venturePlayMode !== 'none' && !stillValidVenture;
+      const venturePlayMode = ventureNowInvalid ? 'none' : state.venturePlayMode;
+      const knightPendingTile = ventureNowInvalid ? null : state.knightPendingTile;
+      const roadBuildingEdges = ventureNowInvalid ? [] : state.roadBuildingEdges;
+      return {
+        gameState,
+        pendingSeal,
+        robberPendingTile,
+        venturePlayMode,
+        knightPendingTile,
+        roadBuildingEdges,
+      };
     }),
   setConnectionStatus: (status, versionMismatch = null) =>
     set({ connectionStatus: status, versionMismatch }),

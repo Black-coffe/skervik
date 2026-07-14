@@ -11,6 +11,7 @@ import { TradeDemoControls } from '../dev/TradeDemoControls.js';
 import { useTranslation } from '../i18n/index.js';
 import type { TranslationKey } from '../i18n/keys.js';
 import { BottomDeck } from './BottomDeck.js';
+import { Button } from './components/Button.js';
 import { owesDiscard } from './discardActions.js';
 import { DiscardPanel } from './DiscardPanel.js';
 import { LogPanel } from './LogPanel.js';
@@ -25,6 +26,7 @@ import type { BuildPrompt } from './useBuildPlacement.js';
 import { useBuildPlacement } from './useBuildPlacement.js';
 import { useRobberPlacement } from './useRobberPlacement.js';
 import { useSetupPlacement } from './useSetupPlacement.js';
+import { useVenturePlacement } from './useVenturePlacement.js';
 import { VenturePanel } from './VenturePanel.js';
 
 // S2.8.3b: the build prompt reuses the setup-prompt status-line visuals (over
@@ -61,16 +63,27 @@ export function GameScreen() {
   const ventureOpen = useUiStore((state) => state.ventureOpen);
   const showVenturePanel =
     ventureOpen && isMainPhase && selectIsMyTurn(gameState, myPlayerId);
+  // S2.8.5b: which board-pick Venture play is armed — read directly from the
+  // store (rather than inferred from `venturePlay.prompt`, which goes `null`
+  // once the road-building 2-edge cap is reached) so the confirm bar keeps
+  // showing at that point.
+  const venturePlayMode = useUiStore((state) => state.venturePlayMode);
   const setup = useSetupPlacement();
   const build = useBuildPlacement();
   const robber = useRobberPlacement();
+  const venturePlay = useVenturePlacement();
+  // S2.8.5b: a venture play, once armed, takes the board over the
+  // phase-driven build picker (both are `main`-phase) — checked BEFORE
+  // `isMainPhase` in the precedence below.
   const placement = isSetupPhase
     ? setup
-    : isMainPhase
-      ? build
-      : isRobberPhase
-        ? robber
-        : null;
+    : venturePlay.active
+      ? venturePlay
+      : isMainPhase
+        ? build
+        : isRobberPhase
+          ? robber
+          : null;
 
   return (
     <div className="game-screen">
@@ -108,6 +121,43 @@ export function GameScreen() {
             onChooseVictim={robber.onChooseVictim}
             onCancelVictim={robber.onCancelVictim}
           />
+        ) : null}
+        {venturePlay.active && venturePlay.prompt === 'knightMove' ? (
+          <div className="setup-prompt" role="status" aria-live="polite">
+            <span className="setup-prompt__text">{t('venture.knightMove')}</span>
+          </div>
+        ) : null}
+        {venturePlay.active && venturePlay.prompt === 'knightChooseVictim' ? (
+          <RobberPrompt
+            prompt="chooseVictim"
+            victims={venturePlay.victims}
+            onChooseVictim={venturePlay.onChooseVictim}
+            onCancelVictim={venturePlay.onCancelVictim}
+            chooseKey="venture.knightChooseVictim"
+          />
+        ) : null}
+        {venturePlay.active && venturePlayMode === 'roadBuilding' ? (
+          <div className="robber-prompt" role="group" aria-label={t('venture.title')}>
+            <span className="setup-prompt__text">
+              {t(
+                venturePlay.roadBuildingCount === 0
+                  ? 'venture.roadBuildingFirst'
+                  : 'venture.roadBuildingSecond',
+              )}
+            </span>
+            <div className="robber-prompt__victims">
+              <Button
+                variant="primary"
+                onClick={venturePlay.onConfirmRoadBuilding}
+                disabled={venturePlay.roadBuildingCount < 1}
+              >
+                {t('venture.play')}
+              </Button>
+              <Button variant="quiet" onClick={venturePlay.onCancelRoadBuilding}>
+                {t('common.cancel')}
+              </Button>
+            </div>
+          </div>
         ) : null}
         {owesCardDiscard ? <DiscardPanel /> : null}
         {showVenturePanel ? <VenturePanel /> : null}

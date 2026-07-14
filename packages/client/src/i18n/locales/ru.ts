@@ -236,4 +236,10 @@ export const ru: Messages = {
   'a11y.ventureYearOfPlenty': 'Щедрый прилив: выбор товаров',
   'venture.monopolyPrompt': 'Скупка: выберите товар',
   'a11y.ventureMonopoly': 'Скупка: выбор товара',
+  // --- Ventures: knight + road-building board-pick plays (S2.8.5b) ---
+  'venture.knightMove': 'Двиньте Капера Конвоем: выберите остров',
+  'venture.knightChooseVictim': 'Конвой: кого ограбить',
+  'venture.roadBuildingFirst': 'Попутный ветер: выберите фарватер (1 из 2)',
+  'venture.roadBuildingSecond':
+    'Попутный ветер: выберите второй фарватер (или подтвердите)',
 };

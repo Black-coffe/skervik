@@ -235,4 +235,10 @@ export const uk: Messages = {
   'a11y.ventureYearOfPlenty': 'Щедрий приплив: вибір товарів',
   'venture.monopolyPrompt': 'Скупка: оберіть товар',
   'a11y.ventureMonopoly': 'Скупка: вибір товару',
+  // --- Ventures: knight + road-building board-pick plays (S2.8.5b) ---
+  'venture.knightMove': 'Перемістіть Капера Конвоєм: оберіть острів',
+  'venture.knightChooseVictim': 'Конвой: кого пограбувати',
+  'venture.roadBuildingFirst': 'Попутний вітер: оберіть фарватер (1 із 2)',
+  'venture.roadBuildingSecond':
+    'Попутний вітер: оберіть другий фарватер (або підтвердіть)',
 };
