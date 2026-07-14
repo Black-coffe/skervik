@@ -6,10 +6,11 @@
 
 import type { GameState } from '@skervik/core';
 import { buildTopology } from '@skervik/core';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { PickDemoControls } from '../dev/PickDemoControls.js';
 import { buildTileDescriptors } from './boardModel.js';
-import type { BoardSceneHandle } from './BoardScene.js';
+import type { BoardSceneHandle, Pick, PickMode } from './BoardScene.js';
 import { createBoardScene } from './BoardScene.js';
 import { buildBuildingDescriptors, buildPortDescriptors } from './pieceModel.js';
 
@@ -21,9 +22,17 @@ export interface GameTableProps {
   readonly state: GameState;
   /** S2.7.1: true while the trade dock is shown (`main` phase only) — the board offsets right so no tile sits under it. */
   readonly dockVisible: boolean;
+  /**
+   * S2.8.1: `'none'` (the default, and what happens when this prop is
+   * omitted) — zero interaction, board behaves exactly as pre-S2.8.1. Real
+   * game-loop wiring (place/build/move-robber) lands in S2.8.2+.
+   */
+  readonly pickMode?: PickMode;
+  /** S2.8.1: fires on a genuine click (not a pan drag) that resolves to a real vertex/edge/tile under the current `pickMode`. */
+  readonly onPick?: (pick: Pick) => void;
 }
 
-export function GameTable({ state, dockVisible }: GameTableProps) {
+export function GameTable({ state, dockVisible, pickMode, onPick }: GameTableProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BoardSceneHandle | null>(null);
   // S2.7.1: read the LATEST `dockVisible` from inside the scene-creation
@@ -31,6 +40,24 @@ export function GameTable({ state, dockVisible }: GameTableProps) {
   // so a dock toggle never remounts the Pixi scene (loses pan/zoom, flickers).
   const dockVisibleRef = useRef(dockVisible);
   dockVisibleRef.current = dockVisible;
+
+  // S2.8.1: dev-only picking harness — active only when NO real pickMode
+  // prop is supplied (undefined), so a future story's real wiring always
+  // takes precedence and the two never fight over the scene's pick mode.
+  const isDevHarnessEligible = import.meta.env.DEV && pickMode === undefined;
+  const [devPickMode, setDevPickMode] = useState<PickMode>('none');
+  const [devLastPick, setDevLastPick] = useState<Pick | null>(null);
+  const effectivePickMode: PickMode =
+    pickMode ?? (isDevHarnessEligible ? devPickMode : 'none');
+  const effectiveOnPick = onPick ?? (isDevHarnessEligible ? setDevLastPick : undefined);
+
+  // S2.8.1: same ref pattern as `dockVisibleRef` — `pickMode`/`onPick` must
+  // be readable from inside the scene-creation effect without joining its
+  // deps (a mode/callback change must never remount the scene).
+  const pickModeRef = useRef(effectivePickMode);
+  pickModeRef.current = effectivePickMode;
+  const onPickRef = useRef(effectiveOnPick);
+  onPickRef.current = effectiveOnPick;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -43,14 +70,18 @@ export function GameTable({ state, dockVisible }: GameTableProps) {
     const seatOrder = state.playerOrder ?? state.players.map((p) => p.id);
     const buildings = buildBuildingDescriptors(TOPOLOGY, state.buildings, seatOrder);
     const ports = buildPortDescriptors(TOPOLOGY, state.board);
-    void createBoardScene(host, descriptors, buildings, ports).then((scene) => {
+    void createBoardScene(host, TOPOLOGY, descriptors, buildings, ports).then((scene) => {
       if (cancelled) {
         scene.destroy();
         return;
       }
-      // Apply whatever dockVisible is current NOW (may have changed while
-      // this scene was still loading) before it's ever painted.
+      // Apply whatever dockVisible/pickMode is current NOW (may have changed
+      // while this scene was still loading) before it's ever painted.
       scene.setDockVisible(dockVisibleRef.current);
+      scene.setPickMode(pickModeRef.current);
+      // The wrapper reads the ref on every call, so a changing `onPick`
+      // never needs to re-register — this one binding lasts the scene's life.
+      scene.onPick((pick) => onPickRef.current?.(pick));
       sceneRef.current = scene;
       destroyScene = scene.destroy;
     });
@@ -68,7 +99,25 @@ export function GameTable({ state, dockVisible }: GameTableProps) {
     sceneRef.current?.setDockVisible(dockVisible);
   }, [dockVisible]);
 
+  // S2.8.1: react to the pick mode changing by re-arming the EXISTING
+  // scene — no remount.
+  useEffect(() => {
+    sceneRef.current?.setPickMode(effectivePickMode);
+  }, [effectivePickMode]);
+
   return (
-    <div ref={hostRef} style={{ position: 'relative', width: '100%', height: '100%' }} />
+    <>
+      <div
+        ref={hostRef}
+        style={{ position: 'relative', width: '100%', height: '100%' }}
+      />
+      {isDevHarnessEligible ? (
+        <PickDemoControls
+          pickMode={devPickMode}
+          onPickModeChange={setDevPickMode}
+          lastPick={devLastPick}
+        />
+      ) : null}
+    </>
   );
 }
