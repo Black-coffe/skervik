@@ -180,4 +180,9 @@ export const uk: Messages = {
   'lobby.beginMatchButton': 'Розпочати гру',
   'lobby.waitingForHost': 'Очікуємо, поки хост розпочне партію…',
   'lobby.waitingForPlayers': 'Очікуємо ще гравців…',
+  // --- Setup-phase placement (S2.8.2) ---
+  'a11y.setupPrompt': 'Підказка розстановки',
+  'setup.placeSettlement': 'Розмістіть поселення',
+  'setup.placeRoad': 'Розмістіть дорогу',
+  'setup.opponentTurn': 'Хід суперника',
 };

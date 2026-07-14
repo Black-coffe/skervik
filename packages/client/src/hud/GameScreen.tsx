@@ -12,9 +12,11 @@ import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
 import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
+import { SetupPrompt } from './SetupPrompt.js';
 import { canShowTradeDock, useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
 import { TradeZone } from './TradeZone.js';
+import { useSetupPlacement } from './useSetupPlacement.js';
 
 export function GameScreen() {
   const gameState = useUiStore((state) => state.gameState);
@@ -22,6 +24,13 @@ export function GameScreen() {
   // DOM entirely elsewhere (not just visually) and offset the board so it
   // never renders under the dock's footprint while the dock IS shown.
   const dockVisible = canShowTradeDock(gameState.phase);
+  // S2.8.2: the setup-phase placement orchestrator — 'none'/null outside
+  // `phase==='setup'` (`deriveSetupPlacement`), so this is only ever wired
+  // onto `<GameTable>` DURING setup below; every other phase leaves
+  // `pickMode`/`onPick`/`legalTargets` `undefined`, keeping the S2.8.1 dev
+  // harness available there (`GameTable`'s `isDevHarnessEligible`).
+  const isSetupPhase = gameState.phase === 'setup';
+  const setup = useSetupPlacement();
 
   return (
     <div className="game-screen">
@@ -32,8 +41,19 @@ export function GameScreen() {
         <PlayersRail />
       </div>
       <div className="game-screen__chart">
-        <GameTable state={gameState} dockVisible={dockVisible} />
+        <GameTable
+          state={gameState}
+          dockVisible={dockVisible}
+          {...(isSetupPhase
+            ? {
+                pickMode: setup.pickMode,
+                onPick: setup.onPick,
+                legalTargets: setup.legalTargets,
+              }
+            : {})}
+        />
         {dockVisible ? <TradeZone /> : null}
+        {isSetupPhase ? <SetupPrompt prompt={setup.prompt} /> : null}
         <NoticeBar />
       </div>
       <div className="game-screen__log">

@@ -29,6 +29,18 @@ export interface Pick {
   readonly id: string;
 }
 
+/**
+ * S2.8.2: a persistent set of legal targets to highlight (e.g. setup-phase
+ * placement hints) — distinct from a `Pick` (a resolved single click) and
+ * from the S2.8.1 hover highlight (transient, follows the pointer). Advisory
+ * only; consumers must never gate a dispatch on membership in this set (the
+ * SERVER is the sole legality authority).
+ */
+export interface LegalTargets {
+  readonly kind: 'vertex' | 'edge';
+  readonly ids: readonly string[];
+}
+
 /** Full-size (un-shrunk) hex corners, reused as the ground truth for tile hit-testing — deliberately NOT `BoardScene`'s `GAP_SCALE`-shrunk render corners, so a click anywhere inside the tile's true hex (including the inter-tile gap) still resolves to it. */
 const TILE_CORNERS = hexCorners(HEX_SIZE);
 

@@ -169,4 +169,9 @@ export const en: Messages = {
   'lobby.beginMatchButton': 'Begin match',
   'lobby.waitingForHost': 'Waiting for the host to begin the match…',
   'lobby.waitingForPlayers': 'Waiting for more players…',
+  // --- Setup-phase placement (S2.8.2) ---
+  'a11y.setupPrompt': 'Setup instructions',
+  'setup.placeSettlement': 'Place a settlement',
+  'setup.placeRoad': 'Place a road',
+  'setup.opponentTurn': "Opponent's turn",
 };

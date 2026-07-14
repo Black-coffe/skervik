@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { PickDemoControls } from '../dev/PickDemoControls.js';
 import { buildTileDescriptors } from './boardModel.js';
-import type { BoardSceneHandle, Pick, PickMode } from './BoardScene.js';
+import type { BoardSceneHandle, LegalTargets, Pick, PickMode } from './BoardScene.js';
 import { createBoardScene } from './BoardScene.js';
 import { buildBuildingDescriptors, buildPortDescriptors } from './pieceModel.js';
 
@@ -30,9 +30,22 @@ export interface GameTableProps {
   readonly pickMode?: PickMode;
   /** S2.8.1: fires on a genuine click (not a pan drag) that resolves to a real vertex/edge/tile under the current `pickMode`. */
   readonly onPick?: (pick: Pick) => void;
+  /**
+   * S2.8.2: a persistent set of vertex/edge ids to highlight as legal
+   * targets (e.g. setup-phase placement hints) — `undefined`/`null` (the
+   * default) draws nothing. Advisory only; the scene never gates `onPick` on
+   * this set (see `board/setupLegality.ts`).
+   */
+  readonly legalTargets?: LegalTargets | null;
 }
 
-export function GameTable({ state, dockVisible, pickMode, onPick }: GameTableProps) {
+export function GameTable({
+  state,
+  dockVisible,
+  pickMode,
+  onPick,
+  legalTargets,
+}: GameTableProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BoardSceneHandle | null>(null);
   // S2.7.1: read the LATEST `dockVisible` from inside the scene-creation
@@ -59,6 +72,11 @@ export function GameTable({ state, dockVisible, pickMode, onPick }: GameTablePro
   const onPickRef = useRef(effectiveOnPick);
   onPickRef.current = effectiveOnPick;
 
+  // S2.8.2: same ref pattern — a `legalTargets` change must never remount
+  // the scene either.
+  const legalTargetsRef = useRef(legalTargets ?? null);
+  legalTargetsRef.current = legalTargets ?? null;
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -79,6 +97,7 @@ export function GameTable({ state, dockVisible, pickMode, onPick }: GameTablePro
       // while this scene was still loading) before it's ever painted.
       scene.setDockVisible(dockVisibleRef.current);
       scene.setPickMode(pickModeRef.current);
+      scene.setLegalTargets(legalTargetsRef.current);
       // The wrapper reads the ref on every call, so a changing `onPick`
       // never needs to re-register — this one binding lasts the scene's life.
       scene.onPick((pick) => onPickRef.current?.(pick));
@@ -104,6 +123,12 @@ export function GameTable({ state, dockVisible, pickMode, onPick }: GameTablePro
   useEffect(() => {
     sceneRef.current?.setPickMode(effectivePickMode);
   }, [effectivePickMode]);
+
+  // S2.8.2: react to the legal-target set changing by redrawing the
+  // EXISTING scene's persistent layer — no remount.
+  useEffect(() => {
+    sceneRef.current?.setLegalTargets(legalTargets ?? null);
+  }, [legalTargets]);
 
   return (
     <>

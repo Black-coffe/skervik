@@ -23,6 +23,7 @@ import {
   vertexToPixel,
 } from './hexGeometry.js';
 import {
+  type LegalTargets,
   nearestEdge,
   nearestVertex,
   type Pick,
@@ -65,7 +66,7 @@ const EDGE_PICK_RADIUS_PX = HEX_SIZE * 0.3;
 /** A pointerdown->pointerup movement below this (screen px) is a click, not a pan drag. */
 const CLICK_MOVE_THRESHOLD_PX = 5;
 
-export type { Pick, PickMode } from './picking.js';
+export type { LegalTargets, Pick, PickMode } from './picking.js';
 
 export interface BoardSceneHandle {
   readonly app: Application;
@@ -89,6 +90,12 @@ export interface BoardSceneHandle {
    * drag) that resolves to a real target under the current pick mode.
    */
   onPick(callback: (pick: Pick) => void): void;
+  /**
+   * S2.8.2: (re)draws the PERSISTENT legal-target layer — distinct from the
+   * transient hover highlight above it (`drawHighlight`/`highlightLayer`).
+   * `null` clears it. Idempotent to call with the same targets repeatedly.
+   */
+  setLegalTargets(targets: LegalTargets | null): void;
   /** Cleans up ticker/listeners and destroys the Pixi application. Safe to call once. */
   destroy(): void;
 }
@@ -540,6 +547,14 @@ export async function createBoardScene(
   for (const port of ports) piecesLayer.addChild(buildPortMarker(port));
   world.addChild(piecesLayer);
 
+  // S2.8.2: persistent legal-target layer — the setup-placement advisory hint
+  // (`useSetupPlacement`), redrawn only when the caller's target SET changes
+  // (never per-frame, unlike the hover highlight below). Sits BELOW the
+  // S2.8.1 hover highlight so a hover ring is never occluded by a marker.
+  // Empty by default, so it's invisible and inert unless a caller opts in.
+  const legalLayer = new Graphics();
+  world.addChild(legalLayer);
+
   // S2.8.1: hover-highlight overlay — above everything else, redrawn (never
   // rebuilt) per pointer move while a pick mode is active. Empty by default
   // (`pickMode: 'none'`), so it's invisible and inert unless a caller opts in.
@@ -647,6 +662,43 @@ export async function createBoardScene(
     pickCallback = callback;
   }
 
+  /**
+   * S2.8.2: draws each legal target as a filled marker in `CANVAS_COLORS.primary`
+   * — shape + token distinct from the hover highlight's stroke-only
+   * `CANVAS_COLORS.accent` ring/line (a11y §10: never hue-only), and subtle
+   * enough not to fight it.
+   */
+  function drawLegalTargets(targets: LegalTargets | null): void {
+    legalLayer.clear();
+    if (targets === null) return;
+    if (targets.kind === 'vertex') {
+      for (const id of targets.ids) {
+        const p = vertexToPixel(id);
+        legalLayer
+          .circle(p.x, p.y, HEX_SIZE * 0.13)
+          .fill({ color: CANVAS_COLORS.primary, alpha: 0.85 })
+          .stroke({ width: 1.5, color: CANVAS_COLORS.onPrimary, alpha: 0.6 });
+      }
+    } else {
+      for (const id of targets.ids) {
+        const { a, b } = edgeToPixel(id, topology);
+        legalLayer
+          .moveTo(a.x, a.y)
+          .lineTo(b.x, b.y)
+          .stroke({
+            width: HEX_SIZE * 0.12,
+            color: CANVAS_COLORS.primary,
+            alpha: 0.7,
+            cap: 'round',
+          });
+      }
+    }
+  }
+
+  function setLegalTargets(targets: LegalTargets | null): void {
+    drawLegalTargets(targets);
+  }
+
   // --- Drag-pan + wheel-zoom on the world container (plain pointer events). ---
   let dragging = false;
   let lastX = 0;
@@ -723,6 +775,7 @@ export async function createBoardScene(
     setDockVisible,
     setPickMode,
     onPick,
+    setLegalTargets,
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
