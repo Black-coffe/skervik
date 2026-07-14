@@ -199,4 +199,16 @@ export const ru: Messages = {
   'a11y.robberVictims': 'Выберите, кого ограбить',
   'robber.promptMove': 'Переместите Капера на другой остров',
   'robber.promptChooseVictim': 'Выберите, кого ограбить',
+  // --- Over-7 discard picker (S2.8.4b) ---
+  'discard.title': 'Сброс карт',
+  'discard.prompt': {
+    one: 'Шторм! Сбросьте {count} карту',
+    few: 'Шторм! Сбросьте {count} карты',
+    many: 'Шторм! Сбросьте {count} карт',
+    other: 'Шторм! Сбросьте {count} карты',
+  },
+  'discard.selectedCounter': 'Выбрано {selected} / {required}',
+  'discard.confirm': 'Сбросить',
+  'discard.addResource': 'Добавить к сбросу: {resource}',
+  'discard.removeResource': 'Убрать из сброса: {resource}',
 };
