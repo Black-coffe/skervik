@@ -1,0 +1,19 @@
+.setup-prompt {
+  position: absolute;
+  top: 64px; /* below `.notice-bar` (top: 12px) so a reject during setup never overlaps it */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-hud);
+  pointer-events: none; /* the empty live region never blocks the board */
+}
+
+.setup-prompt__text {
+  display: inline-block;
+  padding: 8px 14px;
+  border: 1px solid var(--primary);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.88rem;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 30%);
+}

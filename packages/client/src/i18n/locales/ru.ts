@@ -181,4 +181,9 @@ export const ru: Messages = {
   'lobby.beginMatchButton': 'Начать игру',
   'lobby.waitingForHost': 'Ожидаем, когда хост начнёт партию…',
   'lobby.waitingForPlayers': 'Ожидаем ещё игроков…',
+  // --- Setup-phase placement (S2.8.2) ---
+  'a11y.setupPrompt': 'Подсказка расстановки',
+  'setup.placeSettlement': 'Разместите поселение',
+  'setup.placeRoad': 'Разместите дорогу',
+  'setup.opponentTurn': 'Ход соперника',
 };

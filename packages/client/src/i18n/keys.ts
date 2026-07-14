@@ -154,6 +154,11 @@ export const TRANSLATION_KEYS = [
   'lobby.beginMatchButton',
   'lobby.waitingForHost',
   'lobby.waitingForPlayers',
+  // --- Setup-phase placement (S2.8.2) ---
+  'a11y.setupPrompt',
+  'setup.placeSettlement',
+  'setup.placeRoad',
+  'setup.opponentTurn',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];
