@@ -42,6 +42,7 @@ export const ru: Messages = {
   'hud.actionTrade': 'Торговать',
   'hud.actionVenture': 'Предприятие',
   'hud.actionEndTurn': 'Завершить ход',
+  'hud.actionRoll': 'Бросить кости',
   'hud.tideLotPlaceholder': 'Кости не брошены',
   'hud.log.title': 'Судовой журнал',
   'hud.log.empty': 'Журнал пока пуст — здесь появятся ходы и сделки',

@@ -32,6 +32,7 @@ export const TRANSLATION_KEYS = [
   'hud.actionTrade',
   'hud.actionVenture',
   'hud.actionEndTurn',
+  'hud.actionRoll',
   'hud.tideLotPlaceholder',
   'hud.log.title',
   'hud.log.empty',
