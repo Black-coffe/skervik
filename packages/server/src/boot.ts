@@ -52,6 +52,16 @@ import { registerMatchVerifyRoute } from './routes/matchVerify.js';
 export const DEFAULT_PORT = 2567;
 /** Default bind host — all interfaces (dev + container). */
 export const DEFAULT_HOST = '0.0.0.0';
+/**
+ * Dev-only default CORS allow-list — the Vite dev server origins. An explicit
+ * list (not reflect-all `true`) so credentialed CORS is safe by default. Prod
+ * overrides via the `CORS_ORIGIN` env var ({@link startServer}); never ship
+ * these localhost origins as the live allow-list.
+ */
+export const DEFAULT_DEV_CLIENT_ORIGINS = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
 
 export interface CreateHttpServerOptions {
   /** Durable ndjson match-log dir (S1.4.4b) passed through to every room. */
@@ -159,7 +169,20 @@ export async function createHttpServer(
 
   // Fastify owns the single HTTP server (REST + the mounted matchmaking route).
   const fastify = Fastify({ logger: false });
-  await fastify.register(cors, { origin: options.corsOrigin ?? true });
+  // CORS: the browser client (colyseus SDK) issues its cross-origin fetches in
+  // `credentials: 'include'` mode (dev = Vite on :5173; prod = the client's own
+  // origin) — regardless of our auth being a Bearer session token, not a cookie —
+  // so the browser BLOCKS the response unless the server returns
+  // `Access-Control-Allow-Credentials: true`. Hence we must set it. But it MUST
+  // NOT be paired with a reflect-all origin (`true`) — that lets ANY site make
+  // credentialed calls and read the responses. So credentials are enabled ONLY
+  // when `origin` is an explicit allow-list (dev default below; prod via
+  // `CORS_ORIGIN`, see `startServer`), NEVER when it is `true`/`false`.
+  const corsOrigin = options.corsOrigin ?? DEFAULT_DEV_CLIENT_ORIGINS;
+  await fastify.register(cors, {
+    origin: corsOrigin,
+    credentials: corsOrigin !== true && corsOrigin !== false,
+  });
   registerHealthRoute(fastify);
   registerGuestAuthRoute(fastify, guestStore, signToken);
   // The provably-fair verify endpoint (S1.7.3) reads the revealed seed sidecar
@@ -284,9 +307,29 @@ export async function startServer(): Promise<HttpServerHandle> {
   const host = process.env['HOST'] ?? DEFAULT_HOST;
   const matchesDir = process.env['MATCHES_DIR'];
   const databaseUrl = process.env['DATABASE_URL'];
+  // Prod CORS allow-list — comma-separated exact client origins (e.g.
+  // `https://skervik.com`). Unset in dev → `createHttpServer` falls back to the
+  // localhost dev origins. An explicit list keeps credentialed CORS safe.
+  const rawCorsOrigin = process.env['CORS_ORIGIN'];
+  const corsOrigin = rawCorsOrigin
+    ?.split(',')
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0);
+  // Loud on a misconfigured prod: `CORS_ORIGIN` present but empty-after-trim
+  // would silently fall back to the localhost dev allow-list and then REJECT the
+  // real client origin — a confusing "works locally, broken in prod" failure.
+  if (
+    rawCorsOrigin !== undefined &&
+    (corsOrigin === undefined || corsOrigin.length === 0)
+  ) {
+    console.warn(
+      '[skervik/server] CORS_ORIGIN is set but empty after trimming — falling back to localhost dev origins; the real client origin will be REJECTED. Set CORS_ORIGIN to your client origin(s).',
+    );
+  }
   const handle = await createHttpServer({
     ...(matchesDir !== undefined ? { matchesDir } : {}),
     ...(databaseUrl !== undefined ? { databaseUrl } : {}),
+    ...(corsOrigin !== undefined && corsOrigin.length > 0 ? { corsOrigin } : {}),
   });
   const bound = await handle.listen(port, host);
   console.log(
