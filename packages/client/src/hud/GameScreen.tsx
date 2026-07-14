@@ -12,12 +12,16 @@ import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
 import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
-import { useUiStore } from './store.js';
+import { canShowTradeDock, useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
 import { TradeZone } from './TradeZone.js';
 
 export function GameScreen() {
   const gameState = useUiStore((state) => state.gameState);
+  // S2.7.1: the trade dock is legal only in phase 'main' — gate it out of the
+  // DOM entirely elsewhere (not just visually) and offset the board so it
+  // never renders under the dock's footprint while the dock IS shown.
+  const dockVisible = canShowTradeDock(gameState.phase);
 
   return (
     <div className="game-screen">
@@ -28,8 +32,8 @@ export function GameScreen() {
         <PlayersRail />
       </div>
       <div className="game-screen__chart">
-        <GameTable state={gameState} />
-        <TradeZone />
+        <GameTable state={gameState} dockVisible={dockVisible} />
+        {dockVisible ? <TradeZone /> : null}
         <NoticeBar />
       </div>
       <div className="game-screen__log">

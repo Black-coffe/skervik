@@ -257,6 +257,18 @@ export function shouldShowGame(phase: GameState['phase']): boolean {
   return phase !== 'lobby';
 }
 
+/**
+ * S2.7.1: `true` only in the `'main'` phase — the sole phase p2p/bank trade
+ * intents are legal in (`packages/core` `validate.ts`). Gates the whole trade
+ * dock (offer builder + incoming-offer card, both live inside `<TradeZone>`)
+ * out of the DOM in every other phase, so it never covers the Chart with an
+ * offer builder that has nothing legal to propose (DESIGN.md §6/§7). Pure so
+ * `GameScreen.tsx`'s gating is unit-tested without a React render.
+ */
+export function canShowTradeDock(phase: GameState['phase']): boolean {
+  return phase === 'main';
+}
+
 /** Stable seat order for the current `gameState` — never reorder mid-match (DESIGN.md §6). */
 export function selectSeatOrder(state: GameState): readonly PlayerId[] {
   return state.playerOrder ?? state.players.map((p) => p.id);
