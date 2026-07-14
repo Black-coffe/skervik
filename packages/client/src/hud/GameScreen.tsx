@@ -11,6 +11,8 @@ import { TradeDemoControls } from '../dev/TradeDemoControls.js';
 import { useTranslation } from '../i18n/index.js';
 import type { TranslationKey } from '../i18n/keys.js';
 import { BottomDeck } from './BottomDeck.js';
+import { owesDiscard } from './discardActions.js';
+import { DiscardPanel } from './DiscardPanel.js';
 import { LogPanel } from './LogPanel.js';
 import { NoticeBar } from './NoticeBar.js';
 import { PlayersRail } from './PlayersRail.js';
@@ -35,6 +37,7 @@ const BUILD_PROMPT_KEY: Readonly<Record<Exclude<BuildPrompt, null>, TranslationK
 export function GameScreen() {
   const { t } = useTranslation();
   const gameState = useUiStore((state) => state.gameState);
+  const myPlayerId = useUiStore((state) => state.myPlayerId);
   // S2.7.1: the trade dock is legal only in phase 'main' — gate it out of the
   // DOM entirely elsewhere (not just visually) and offset the board so it
   // never renders under the dock's footprint while the dock IS shown.
@@ -46,6 +49,11 @@ export function GameScreen() {
   const isSetupPhase = gameState.phase === 'setup';
   const isMainPhase = gameState.phase === 'main';
   const isRobberPhase = gameState.phase === 'robber';
+  // S2.8.4b: the over-7 discard picker is owed by `playersToDiscard` membership,
+  // NOT by turn/phase — it must show even on an opponent's turn (the one
+  // off-turn-active HUD surface). While owed, the S2.8.4a robber-move UI is
+  // already inert (it gates on a non-empty `playersToDiscard`), so no conflict.
+  const owesCardDiscard = owesDiscard(gameState, myPlayerId);
   const setup = useSetupPlacement();
   const build = useBuildPlacement();
   const robber = useRobberPlacement();
@@ -94,6 +102,7 @@ export function GameScreen() {
             onCancelVictim={robber.onCancelVictim}
           />
         ) : null}
+        {owesCardDiscard ? <DiscardPanel /> : null}
         <NoticeBar />
       </div>
       <div className="game-screen__log">

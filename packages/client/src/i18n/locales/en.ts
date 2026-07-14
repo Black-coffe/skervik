@@ -187,4 +187,14 @@ export const en: Messages = {
   'a11y.robberVictims': 'Choose whom to rob',
   'robber.promptMove': 'Move the Privateer to another island',
   'robber.promptChooseVictim': 'Choose whom to rob',
+  // --- Over-7 discard picker (S2.8.4b) ---
+  'discard.title': 'Discard cards',
+  'discard.prompt': {
+    one: 'Storm! Discard {count} card',
+    other: 'Storm! Discard {count} cards',
+  },
+  'discard.selectedCounter': 'Selected {selected} / {required}',
+  'discard.confirm': 'Discard',
+  'discard.addResource': 'Add {resource} to discard',
+  'discard.removeResource': 'Remove {resource} from discard',
 };

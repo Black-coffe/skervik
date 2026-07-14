@@ -198,4 +198,16 @@ export const uk: Messages = {
   'a11y.robberVictims': 'Оберіть, кого пограбувати',
   'robber.promptMove': 'Перемістіть Капера на інший острів',
   'robber.promptChooseVictim': 'Оберіть, кого пограбувати',
+  // --- Over-7 discard picker (S2.8.4b) ---
+  'discard.title': 'Скидання карток',
+  'discard.prompt': {
+    one: 'Шторм! Скиньте {count} картку',
+    few: 'Шторм! Скиньте {count} картки',
+    many: 'Шторм! Скиньте {count} карток',
+    other: 'Шторм! Скиньте {count} картки',
+  },
+  'discard.selectedCounter': 'Обрано {selected} / {required}',
+  'discard.confirm': 'Скинути',
+  'discard.addResource': 'Додати до скидання: {resource}',
+  'discard.removeResource': 'Прибрати зі скидання: {resource}',
 };

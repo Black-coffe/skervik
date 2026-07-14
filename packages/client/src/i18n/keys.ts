@@ -172,6 +172,13 @@ export const TRANSLATION_KEYS = [
   'a11y.robberVictims',
   'robber.promptMove',
   'robber.promptChooseVictim',
+  // --- Over-7 discard picker (S2.8.4b) ---
+  'discard.title',
+  'discard.prompt',
+  'discard.selectedCounter',
+  'discard.confirm',
+  'discard.addResource',
+  'discard.removeResource',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];
