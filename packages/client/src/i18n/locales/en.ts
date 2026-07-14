@@ -142,6 +142,9 @@ export const en: Messages = {
   'lobby.preset.twoPlayer.name': 'Two-player',
   'lobby.preset.twoPlayer.description':
     'For exactly two captains — neutral settlements force you to contest the board.',
+  'lobby.preset.expanded.name': 'Grand Chart',
+  'lobby.preset.expanded.description':
+    'An expanded archipelago for 5–6 captains — more isles and lighthouses.',
   'lobby.botCountLabel': 'Bot crew',
   'a11y.botCountSelector': 'Bot count selector',
   'lobby.botCount': {

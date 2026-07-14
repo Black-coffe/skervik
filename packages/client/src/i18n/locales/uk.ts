@@ -151,6 +151,9 @@ export const uk: Messages = {
   'lobby.preset.twoPlayer.name': 'На двох',
   'lobby.preset.twoPlayer.description':
     'Рівно для двох капітанів — нейтральні поселення змушують боротися за місце на карті.',
+  'lobby.preset.expanded.name': 'Велика лоція',
+  'lobby.preset.expanded.description':
+    'Розширений архіпелаг для 5–6 капітанів — більше островів і маяків.',
   'lobby.botCountLabel': 'Команда ботів',
   'a11y.botCountSelector': 'Вибір кількості ботів',
   'lobby.botCount': {
