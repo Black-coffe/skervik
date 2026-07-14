@@ -48,6 +48,14 @@ const INACTIVE_VIEW: RobberPlacementView = {
  * pending tile → pause board picking and show the victim picker
  * (`prompt:'chooseVictim'`). Tiles aren't a `setLegalTargets` kind, so
  * `legalTargets` is always `null` (highlight is the S2.8.1 hover ring only).
+ *
+ * Defense-in-depth (S2.8.4a review nit): if `pendingTileId` is set but that
+ * tile's `stealVictims` comes back EMPTY (e.g. a stale pending tile the
+ * store's `applyEventBatch` phase-out clear somehow missed, or a board change
+ * mid-choice), fall back to tile-picking rather than rendering an empty
+ * `chooseVictim` picker — self-heals instead of showing a zero-button prompt
+ * (DESIGN.md §6: buttons disable, never disappear — a picker with NO buttons
+ * is the same defect).
  */
 export function deriveRobberPlacement(
   gameState: GameState,
@@ -59,15 +67,13 @@ export function deriveRobberPlacement(
   if (gameState.playersToDiscard && gameState.playersToDiscard.length > 0) {
     return INACTIVE_VIEW;
   }
-  if (pendingTileId === null) {
-    return { pickMode: 'tile', legalTargets: null, prompt: 'moveRobber', victims: [] };
+  if (pendingTileId !== null) {
+    const victims = stealVictims(gameState, TOPOLOGY, pendingTileId, myPlayerId);
+    if (victims.length > 0) {
+      return { pickMode: 'none', legalTargets: null, prompt: 'chooseVictim', victims };
+    }
   }
-  return {
-    pickMode: 'none',
-    legalTargets: null,
-    prompt: 'chooseVictim',
-    victims: stealVictims(gameState, TOPOLOGY, pendingTileId, myPlayerId),
-  };
+  return { pickMode: 'tile', legalTargets: null, prompt: 'moveRobber', victims: [] };
 }
 
 /** The outcome of resolving a robber tile pick: dispatch now, or await a victim choice. */

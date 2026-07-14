@@ -1,6 +1,7 @@
 import type {
   GameState,
   ResourcesProducedEvent,
+  RobberMovedEvent,
   TradeExecutedEvent,
   TradeOffer,
   TradeOfferedEvent,
@@ -243,6 +244,43 @@ describe('applySnapshot / applyEventBatch — the live wire', () => {
     const before = useUiStore.getState().gameState;
     useUiStore.getState().applyEventBatch([]);
     expect(useUiStore.getState().gameState).toBe(before);
+  });
+});
+
+describe('robberPendingTile phase-out clear (S2.8.4a review nit)', () => {
+  it('clears the UI-only pending tile when a folded batch exits the robber phase', () => {
+    const robberState: GameState = { ...devFixtureState, phase: 'robber' };
+    useUiStore.setState({
+      gameState: robberState,
+      myPlayerId: devFixtureState.playerOrder?.[0] ?? 'player-1',
+      robberPendingTile: 't-0-0',
+    });
+    const base = robberState.eventIndex;
+    const moved: RobberMovedEvent = {
+      type: 'robber.moved',
+      index: base,
+      playerId: robberState.currentPlayerId,
+      tileId: 't-1-0',
+      nextPhase: 'main',
+    };
+    useUiStore.getState().applyEventBatch([moved]);
+    expect(useUiStore.getState().gameState.phase).toBe('main');
+    expect(useUiStore.getState().robberPendingTile).toBeNull();
+  });
+
+  it('does NOT clear the pending tile for a batch that stays inside the robber phase', () => {
+    const robberState: GameState = { ...devFixtureState, phase: 'robber' };
+    useUiStore.setState({
+      gameState: robberState,
+      myPlayerId: devFixtureState.playerOrder?.[0] ?? 'player-1',
+      robberPendingTile: 't-0-0',
+    });
+    const base = robberState.eventIndex;
+    // A batch that does NOT change phase at all (a no-op resource grant) —
+    // an in-progress victim choice must survive an unrelated fold.
+    useUiStore.getState().applyEventBatch([RP(base, {})]);
+    expect(useUiStore.getState().gameState.phase).toBe('robber');
+    expect(useUiStore.getState().robberPendingTile).toBe('t-0-0');
   });
 });
 

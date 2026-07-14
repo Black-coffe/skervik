@@ -273,7 +273,17 @@ export const useUiStore = create<UiStore>((set, get) => ({
       const pendingSeal = batchSealsPending(state.pendingSeal, events, state.myPlayerId)
         ? null
         : state.pendingSeal;
-      return { gameState, pendingSeal };
+      // S2.8.4a review nit: the robber phase can end WITHOUT the local player
+      // completing their victim pick (the ~35s turn-timer force-resolves it
+      // server-side, or the mover was someone else). Clear the UI-only
+      // `robberPendingTile` on the phase-OUT transition ONLY (previous state
+      // was 'robber', next state isn't) — never while still IN 'robber' (that
+      // would wipe an in-progress victim choice mid-phase).
+      const robberPendingTile =
+        state.gameState.phase === 'robber' && gameState.phase !== 'robber'
+          ? null
+          : state.robberPendingTile;
+      return { gameState, pendingSeal, robberPendingTile };
     }),
   setConnectionStatus: (status, versionMismatch = null) =>
     set({ connectionStatus: status, versionMismatch }),

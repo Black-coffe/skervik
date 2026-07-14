@@ -99,6 +99,17 @@ describe('deriveRobberPlacement', () => {
     expect(view.prompt).toBe('chooseVictim');
     expect(view.victims).toEqual([OPPONENT_ID]);
   });
+
+  it('self-heals a stale pending tile with 0 victims back to tile-picking (review nit)', () => {
+    // pendingTileId is set (e.g. a stale leftover the store's phase-out clear
+    // somehow missed), but `stealVictims` for it is empty — must NOT render an
+    // empty chooseVictim picker (DESIGN.md §6: no zero-button picker).
+    const state = baseState({ buildings: { settlements: {}, roads: {} }, players: [] });
+    const view = deriveRobberPlacement(state, MY_ID, OTHER_TILE.id);
+    expect(view.pickMode).toBe('tile');
+    expect(view.prompt).toBe('moveRobber');
+    expect(view.victims).toEqual([]);
+  });
 });
 
 describe('resolveRobberTilePick', () => {
