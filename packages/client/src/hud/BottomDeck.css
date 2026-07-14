@@ -25,6 +25,9 @@
 }
 
 .bottom-deck__tide-lot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   color: var(--muted);
   font-size: 0.875rem;
   padding: 0 16px;
@@ -36,4 +39,40 @@
   display: flex;
   gap: 12px;
   margin-left: auto;
+  /* Anchor the build-type selector popover without disturbing the fixed
+     action-button row (DESIGN.md §6 — buttons never shift). */
+  position: relative;
+}
+
+/* S2.8.3b: the build-type chooser floats ABOVE the action row as a unit, so
+   opening/closing it never reflows the fixed «Строить»/«Торговать»/… buttons. */
+.bottom-deck__build-selector {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 30%);
+}
+
+.bottom-deck__build-type-name {
+  display: block;
+}
+
+.bottom-deck__build-type-cost {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 4px;
+  font-size: 0.75rem;
+}
+
+.bottom-deck__build-type-cost-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }

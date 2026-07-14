@@ -9,16 +9,19 @@
 // send and reconciles `pendingSeal` on the server's echo (§7.6 server-truth).
 
 import type {
+  EdgeId,
   GameEvent,
   GameState,
   PlayerId,
   PlayerIntent,
   RejectReason,
+  TileId,
   TradeOffer,
 } from '@skervik/core';
 import { reduce } from '@skervik/core';
 import { create } from 'zustand';
 
+import type { BuildMode } from '../board/buildLegality.js';
 import { devFixtureState } from '../dev/devFixture.js';
 import type { ConnectionStatus, VersionMismatchInfo } from '../net/connection.js';
 import type { WsClientHandle } from '../net/wsClient.js';
@@ -76,7 +79,70 @@ export interface UiStore {
    * (quick match's default) before any snapshot arrives.
    */
   readonly isPrivateRoom: boolean;
+  /**
+   * S2.8.3b: the MAIN-phase build submode — UI-ONLY (which piece kind's board
+   * picking is armed), never part of `gameState` and never sent to the server.
+   * Lives here (not in a component) because two sibling HUD pieces share it:
+   * `BottomDeck` (the «Строить» selector) SETS it, `GameScreen`/`useBuildPlacement`
+   * READS it to arm board picking. `'none'` = no active build.
+   */
+  readonly buildMode: BuildMode;
+  /**
+   * S2.8.4a: the tile awaiting a robber steal-victim choice — UI-ONLY (set when
+   * the human clicks a tile that has ≥1 eligible victim, cleared once the
+   * `intent.moveRobber` is dispatched or «Отмена» is pressed). Never part of
+   * `gameState`, never sent except inside the resolved `moveRobber`. Lives here
+   * (not in a component) so it survives `GameScreen`'s phase re-routing between
+   * board picking and the victim picker; cleared on `applySnapshot` (a fresh
+   * match join) — NOT on `setGameState`/event folds — so a stale pending tile
+   * can never leak across matches (the S2.8.3b review nit). `null` = no pending
+   * tile (board picking active).
+   */
+  readonly robberPendingTile: TileId | null;
+  /**
+   * S2.8.5a: whether the «Предприятие» (Venture) hand panel is open —
+   * UI-ONLY, never part of `gameState`, never sent to the server. Lives here
+   * (not in a component) for the same "two sibling HUD pieces share it"
+   * reason as `buildMode`: `BottomDeck` (the «Предприятие» toggle) SETS it,
+   * `GameScreen` READS it to render `<VenturePanel/>`. `false` = closed.
+   */
+  readonly ventureOpen: boolean;
+  /**
+   * S2.8.5b: which board-pick Venture play is armed — UI-ONLY, never part of
+   * `gameState`, never sent to the server (it only shapes the eventual
+   * `intent.playDevCard` dispatch). `'none'` = no armed play (the phase-driven
+   * build picker has the board). Set by `VenturePanel`'s «Разыграть» on the
+   * knight/roadBuilding rows; read by `useVenturePlacement` to override the
+   * `main`-phase build picker while armed.
+   */
+  readonly venturePlayMode: 'none' | 'knight' | 'roadBuilding';
+  /**
+   * S2.8.5b: the tile awaiting a KNIGHT steal-victim choice — mirrors
+   * `robberPendingTile`'s role but deliberately a SEPARATE field: a knight
+   * play is armed OUTSIDE the `robber` phase (it's a `main`-phase play), so
+   * `robberPendingTile`'s phase-keyed fold-clear (keyed on the `robber`
+   * phase) would never fire for it. `null` = no pending tile.
+   */
+  readonly knightPendingTile: TileId | null;
+  /**
+   * S2.8.5b: the 0–2 edges picked so far for an armed road-building play —
+   * UI-ONLY, cleared on dispatch/cancel/fold-out-of-validity. Never part of
+   * `gameState`, never sent except inside the resolved `roadBuilding` intent.
+   */
+  readonly roadBuildingEdges: readonly EdgeId[];
   readonly setGameState: (next: GameState) => void;
+  /** Set (or clear with `'none'`) the UI-only build submode. Never touches `gameState`. */
+  readonly setBuildMode: (mode: BuildMode) => void;
+  /** Set (or clear with `null`) the UI-only pending robber tile. Never touches `gameState`. */
+  readonly setRobberPendingTile: (tileId: TileId | null) => void;
+  /** Open/close the UI-only Venture hand panel. Never touches `gameState`. */
+  readonly setVentureOpen: (open: boolean) => void;
+  /** Arm (or clear with `'none'`) the UI-only Venture board-pick play. Never touches `gameState`. */
+  readonly setVenturePlayMode: (mode: 'none' | 'knight' | 'roadBuilding') => void;
+  /** Set (or clear with `null`) the UI-only pending knight-steal tile. Never touches `gameState`. */
+  readonly setKnightPendingTile: (tileId: TileId | null) => void;
+  /** Set (replace) the UI-only road-building edge picks. Never touches `gameState`. */
+  readonly setRoadBuildingEdges: (edges: readonly EdgeId[]) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
    * produces a typed {@link PlayerIntent} handed here. It records the intent as
@@ -182,7 +248,19 @@ export const useUiStore = create<UiStore>((set, get) => ({
   notice: null,
   isHost: false,
   isPrivateRoom: false,
+  buildMode: 'none',
+  robberPendingTile: null,
+  ventureOpen: false,
+  venturePlayMode: 'none',
+  knightPendingTile: null,
+  roadBuildingEdges: [],
   setGameState: (next) => set({ gameState: next }),
+  setBuildMode: (mode) => set({ buildMode: mode }),
+  setRobberPendingTile: (tileId) => set({ robberPendingTile: tileId }),
+  setVentureOpen: (open) => set({ ventureOpen: open }),
+  setVenturePlayMode: (mode) => set({ venturePlayMode: mode }),
+  setKnightPendingTile: (tileId) => set({ knightPendingTile: tileId }),
+  setRoadBuildingEdges: (edges) => set({ roadBuildingEdges: edges }),
   dispatchIntent: (intent) => {
     set((state) => {
       const entry = tradeLogEntryFromIntent(
@@ -219,7 +297,24 @@ export const useUiStore = create<UiStore>((set, get) => ({
       ],
     })),
   applySnapshot: (next, myPlayerId, isHost, isPrivate) =>
-    set({ gameState: next, myPlayerId, isHost, isPrivateRoom: isPrivate }),
+    set({
+      gameState: next,
+      myPlayerId,
+      isHost,
+      isPrivateRoom: isPrivate,
+      // Clear UI-only pending robber tile on a fresh join — never leak across
+      // matches (heeding the S2.8.3b review nit: clear on JOIN, not on every
+      // event fold via `setGameState`).
+      robberPendingTile: null,
+      // Same discipline for the Venture panel (S2.8.5a) — never leave it open
+      // across a fresh match join.
+      ventureOpen: false,
+      // Same discipline for an armed Venture board-pick play (S2.8.5b) — a
+      // fresh join can never carry over a stale knight/road-building pick.
+      venturePlayMode: 'none',
+      knightPendingTile: null,
+      roadBuildingEdges: [],
+    }),
   applyEventBatch: (events) =>
     set((state) => {
       const first = events[0];
@@ -234,7 +329,39 @@ export const useUiStore = create<UiStore>((set, get) => ({
       const pendingSeal = batchSealsPending(state.pendingSeal, events, state.myPlayerId)
         ? null
         : state.pendingSeal;
-      return { gameState, pendingSeal };
+      // S2.8.4a review nit: the robber phase can end WITHOUT the local player
+      // completing their victim pick (the ~35s turn-timer force-resolves it
+      // server-side, or the mover was someone else). Clear the UI-only
+      // `robberPendingTile` on the phase-OUT transition ONLY (previous state
+      // was 'robber', next state isn't) — never while still IN 'robber' (that
+      // would wipe an in-progress victim choice mid-phase).
+      const robberPendingTile =
+        state.gameState.phase === 'robber' && gameState.phase !== 'robber'
+          ? null
+          : state.robberPendingTile;
+      // S2.8.5b: the same phase-out-clear discipline for an armed Venture
+      // board-pick play — a completed play (server sets
+      // `devCardPlayedThisTurn`), a turn-timeout, or the turn ending all make
+      // the armed play no longer valid. Clear ONLY on the transition OUT of
+      // validity (never while still valid — that would wipe an in-progress
+      // pick), and only when a play is actually armed (`venturePlayMode !==
+      // 'none'`).
+      const stillValidVenture =
+        gameState.phase === 'main' &&
+        gameState.currentPlayerId === state.myPlayerId &&
+        !gameState.devCardPlayedThisTurn;
+      const ventureNowInvalid = state.venturePlayMode !== 'none' && !stillValidVenture;
+      const venturePlayMode = ventureNowInvalid ? 'none' : state.venturePlayMode;
+      const knightPendingTile = ventureNowInvalid ? null : state.knightPendingTile;
+      const roadBuildingEdges = ventureNowInvalid ? [] : state.roadBuildingEdges;
+      return {
+        gameState,
+        pendingSeal,
+        robberPendingTile,
+        venturePlayMode,
+        knightPendingTile,
+        roadBuildingEdges,
+      };
     }),
   setConnectionStatus: (status, versionMismatch = null) =>
     set({ connectionStatus: status, versionMismatch }),
@@ -255,6 +382,18 @@ export const useUiStore = create<UiStore>((set, get) => ({
  */
 export function shouldShowGame(phase: GameState['phase']): boolean {
   return phase !== 'lobby';
+}
+
+/**
+ * S2.7.1: `true` only in the `'main'` phase — the sole phase p2p/bank trade
+ * intents are legal in (`packages/core` `validate.ts`). Gates the whole trade
+ * dock (offer builder + incoming-offer card, both live inside `<TradeZone>`)
+ * out of the DOM in every other phase, so it never covers the Chart with an
+ * offer builder that has nothing legal to propose (DESIGN.md §6/§7). Pure so
+ * `GameScreen.tsx`'s gating is unit-tested without a React render.
+ */
+export function canShowTradeDock(phase: GameState['phase']): boolean {
+  return phase === 'main';
 }
 
 /** Stable seat order for the current `gameState` — never reorder mid-match (DESIGN.md §6). */

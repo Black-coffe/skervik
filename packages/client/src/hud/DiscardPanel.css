@@ -1,0 +1,54 @@
+/* S2.8.4b: the over-7 discard picker — a docked panel centered over the Chart
+   like `.robber-prompt`/`.setup-prompt` but INTERACTIVE (the steppers + confirm
+   must receive clicks, so no `pointer-events:none`). Flat `--surface` fill, 1px
+   `--line` border, 8px radius, the one floating-layer shadow (§4). The board
+   stays visible behind it (§6/§7 — a docked panel, never a hard modal). It
+   reuses the `.trade-*` stepper classes (`components/trade.css`) for the rows. */
+.discard-panel {
+  position: absolute;
+  top: 64px; /* below `.notice-bar` (top: 12px), same as `.robber-prompt` */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-hud);
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  max-width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.5);
+  pointer-events: auto;
+}
+
+.discard-panel__prompt {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.discard-panel__rows {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 14px;
+}
+
+.discard-panel__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.discard-panel__counter {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  font-feature-settings: 'tnum';
+}
+
+.discard-panel__foot .btn {
+  margin-left: auto;
+}

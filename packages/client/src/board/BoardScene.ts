@@ -6,12 +6,30 @@
 // DESIGN.md §2 tokens and driven by real `TileDescriptor`s instead of
 // ad-hoc proto data (DESIGN.md §12).
 
+import type { BoardTopology } from '@skervik/core';
 import { Application, Color, Container, FillGradient, Graphics, Text } from 'pixi.js';
 
 import { CANVAS_COLORS } from '../theme/canvasColors.js';
 import type { FlotillaId } from '../theme/flotillaColors.js';
 import type { TileDescriptor } from './boardModel.js';
-import { EXTRUDE_DEPTH, HEX_SIZE, hexCorners, type Point } from './hexGeometry.js';
+import {
+  axialToPixel,
+  edgeToPixel,
+  EXTRUDE_DEPTH,
+  HEX_SIZE,
+  hexCorners,
+  parseTileId,
+  type Point,
+  vertexToPixel,
+} from './hexGeometry.js';
+import {
+  type LegalTargets,
+  nearestEdge,
+  nearestVertex,
+  type Pick,
+  type PickMode,
+  tileAt,
+} from './picking.js';
 import type {
   BuildingDescriptors,
   PieceDescriptor,
@@ -31,8 +49,53 @@ const CORNERS = hexCorners(HEX_SIZE * GAP_SCALE);
 /** Sea backdrop radius — comfortably covers the 19-tile field plus margin. */
 const SEA_RADIUS = HEX_SIZE * 9;
 
+/**
+ * S2.7.1: horizontal space to reserve for the trade dock when it's visible,
+ * so the board's default (un-panned) centre never sits under it. Mirrors the
+ * dock's own CSS geometry (`TradeZone.css`: `left: 16px; width: 372px`) plus
+ * a small gutter — duplicated here because Pixi can't read CSS custom
+ * properties. Centering the board within what's LEFT of the chart after that
+ * reserve shifts the default centre right by half of it (see `setDockVisible`).
+ */
+const TRADE_DOCK_RESERVE_PX = 372 + 16 + 20;
+const TRADE_DOCK_OFFSET_PX = TRADE_DOCK_RESERVE_PX / 2;
+
+/** S2.8.1: pick radii in world px (pre-zoom — `toWorldPoint` already divides out `world.scale`). Vertices sit closer together than edges read comfortably at, so edge picking gets a slightly tighter radius. */
+const VERTEX_PICK_RADIUS_PX = HEX_SIZE * 0.45;
+const EDGE_PICK_RADIUS_PX = HEX_SIZE * 0.3;
+/** A pointerdown->pointerup movement below this (screen px) is a click, not a pan drag. */
+const CLICK_MOVE_THRESHOLD_PX = 5;
+
+export type { LegalTargets, Pick, PickMode } from './picking.js';
+
 export interface BoardSceneHandle {
   readonly app: Application;
+  /**
+   * S2.7.1: repositions the board for the trade dock showing/hiding, by
+   * shifting `world`'s CURRENT position (not recomputing from scratch) — so
+   * the user's pan/zoom survives the toggle. Idempotent; safe to call with
+   * the same value repeatedly.
+   */
+  setDockVisible(visible: boolean): void;
+  /**
+   * S2.8.1: switches picking behavior. `'none'` (the default) is the
+   * pre-S2.8.1 board — no hover highlight, no click resolution, pan/zoom
+   * only. Idempotent.
+   */
+  setPickMode(mode: PickMode): void;
+  /**
+   * S2.8.1: (re)binds the pick callback, replacing any previous one —
+   * settable repeatedly so a caller (React) can rebind a changing callback
+   * without remounting the scene. Fires only on a genuine click (not a pan
+   * drag) that resolves to a real target under the current pick mode.
+   */
+  onPick(callback: (pick: Pick) => void): void;
+  /**
+   * S2.8.2: (re)draws the PERSISTENT legal-target layer — distinct from the
+   * transient hover highlight above it (`drawHighlight`/`highlightLayer`).
+   * `null` clears it. Idempotent to call with the same targets repeatedly.
+   */
+  setLegalTargets(targets: LegalTargets | null): void;
   /** Cleans up ticker/listeners and destroys the Pixi application. Safe to call once. */
   destroy(): void;
 }
@@ -426,6 +489,7 @@ function prefersReducedMotion(): boolean {
  */
 export async function createBoardScene(
   mountEl: HTMLElement,
+  topology: BoardTopology,
   descriptors: readonly TileDescriptor[],
   buildings: BuildingDescriptors,
   ports: readonly PortDescriptor[],
@@ -483,6 +547,20 @@ export async function createBoardScene(
   for (const port of ports) piecesLayer.addChild(buildPortMarker(port));
   world.addChild(piecesLayer);
 
+  // S2.8.2: persistent legal-target layer — the setup-placement advisory hint
+  // (`useSetupPlacement`), redrawn only when the caller's target SET changes
+  // (never per-frame, unlike the hover highlight below). Sits BELOW the
+  // S2.8.1 hover highlight so a hover ring is never occluded by a marker.
+  // Empty by default, so it's invisible and inert unless a caller opts in.
+  const legalLayer = new Graphics();
+  world.addChild(legalLayer);
+
+  // S2.8.1: hover-highlight overlay — above everything else, redrawn (never
+  // rebuilt) per pointer move while a pick mode is active. Empty by default
+  // (`pickMode: 'none'`), so it's invisible and inert unless a caller opts in.
+  const highlightLayer = new Graphics();
+  world.addChild(highlightLayer);
+
   const reducedMotionQuery =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -507,27 +585,155 @@ export async function createBoardScene(
   }
   reducedMotionQuery?.addEventListener('change', onReducedMotionChange);
 
+  // --- S2.8.1: pick mode + hover/click resolution. ---
+  let pickMode: PickMode = 'none';
+  let pickCallback: ((pick: Pick) => void) | null = null;
+
+  /** Screen (client) coords -> world/board coords, reading `world.x/y/scale` LIVE at call time — correct under any pan/zoom, including mid-drag or after S2.7.2's auto-fit-zoom. */
+  function toWorldPoint(e: PointerEvent): Point {
+    const rect = app.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    return {
+      x: (screenX - world.x) / world.scale.x,
+      y: (screenY - world.y) / world.scale.y,
+    };
+  }
+
+  function resolvePick(worldPoint: Point): Pick | null {
+    switch (pickMode) {
+      case 'vertex': {
+        const id = nearestVertex(worldPoint, topology, VERTEX_PICK_RADIUS_PX);
+        return id === null ? null : { kind: 'vertex', id };
+      }
+      case 'edge': {
+        const id = nearestEdge(worldPoint, topology, EDGE_PICK_RADIUS_PX);
+        return id === null ? null : { kind: 'edge', id };
+      }
+      case 'tile': {
+        const id = tileAt(worldPoint, topology);
+        return id === null ? null : { kind: 'tile', id };
+      }
+      case 'none':
+        return null;
+    }
+  }
+
+  function drawHighlight(pick: Pick | null): void {
+    highlightLayer.clear();
+    if (pick === null) return;
+    switch (pick.kind) {
+      case 'vertex': {
+        const p = vertexToPixel(pick.id);
+        highlightLayer
+          .circle(p.x, p.y, HEX_SIZE * 0.16)
+          .stroke({ width: 3, color: CANVAS_COLORS.accent });
+        break;
+      }
+      case 'edge': {
+        const { a, b } = edgeToPixel(pick.id, topology);
+        highlightLayer
+          .moveTo(a.x, a.y)
+          .lineTo(b.x, b.y)
+          .stroke({ width: HEX_SIZE * 0.18, color: CANVAS_COLORS.accent, cap: 'round' });
+        break;
+      }
+      case 'tile': {
+        const center = axialToPixel(parseTileId(pick.id));
+        const corners = hexCorners(HEX_SIZE).map((c) => ({
+          x: c.x + center.x,
+          y: c.y + center.y,
+        }));
+        highlightLayer
+          .poly(pointsToFlat(corners))
+          .stroke({ width: 3, color: CANVAS_COLORS.accent });
+        break;
+      }
+    }
+  }
+
+  function setPickMode(mode: PickMode): void {
+    if (pickMode === mode) return;
+    pickMode = mode;
+    highlightLayer.clear();
+  }
+
+  function onPick(callback: (pick: Pick) => void): void {
+    pickCallback = callback;
+  }
+
+  /**
+   * S2.8.2: draws each legal target as a filled marker in `CANVAS_COLORS.primary`
+   * — shape + token distinct from the hover highlight's stroke-only
+   * `CANVAS_COLORS.accent` ring/line (a11y §10: never hue-only), and subtle
+   * enough not to fight it.
+   */
+  function drawLegalTargets(targets: LegalTargets | null): void {
+    legalLayer.clear();
+    if (targets === null) return;
+    if (targets.kind === 'vertex') {
+      for (const id of targets.ids) {
+        const p = vertexToPixel(id);
+        legalLayer
+          .circle(p.x, p.y, HEX_SIZE * 0.13)
+          .fill({ color: CANVAS_COLORS.primary, alpha: 0.85 })
+          .stroke({ width: 1.5, color: CANVAS_COLORS.onPrimary, alpha: 0.6 });
+      }
+    } else {
+      for (const id of targets.ids) {
+        const { a, b } = edgeToPixel(id, topology);
+        legalLayer
+          .moveTo(a.x, a.y)
+          .lineTo(b.x, b.y)
+          .stroke({
+            width: HEX_SIZE * 0.12,
+            color: CANVAS_COLORS.primary,
+            alpha: 0.7,
+            cap: 'round',
+          });
+      }
+    }
+  }
+
+  function setLegalTargets(targets: LegalTargets | null): void {
+    drawLegalTargets(targets);
+  }
+
   // --- Drag-pan + wheel-zoom on the world container (plain pointer events). ---
   let dragging = false;
   let lastX = 0;
   let lastY = 0;
+  // S2.8.1: pointerdown origin, kept separate from `lastX/lastY` (which
+  // mutate every drag tick) so pointerup can measure TOTAL movement since
+  // press — a click, not a pan drag, per the movement threshold.
+  let downX = 0;
+  let downY = 0;
 
   function onPointerDown(e: PointerEvent): void {
     dragging = true;
     lastX = e.clientX;
     lastY = e.clientY;
+    downX = e.clientX;
+    downY = e.clientY;
   }
 
   function onPointerMove(e: PointerEvent): void {
-    if (!dragging) return;
-    world.x += e.clientX - lastX;
-    world.y += e.clientY - lastY;
-    lastX = e.clientX;
-    lastY = e.clientY;
+    if (dragging) {
+      world.x += e.clientX - lastX;
+      world.y += e.clientY - lastY;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    }
+    if (pickMode !== 'none') drawHighlight(resolvePick(toWorldPoint(e)));
   }
 
-  function onPointerUp(): void {
+  function onPointerUp(e: PointerEvent): void {
     dragging = false;
+    if (pickMode === 'none') return;
+    const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    if (moved >= CLICK_MOVE_THRESHOLD_PX) return; // a pan drag, not a click
+    const pick = resolvePick(toWorldPoint(e));
+    if (pick !== null) pickCallback?.(pick);
   }
 
   function onWheel(e: WheelEvent): void {
@@ -551,9 +757,25 @@ export async function createBoardScene(
   window.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
+  // --- S2.7.1: trade-dock inset (0 = hidden, TRADE_DOCK_OFFSET_PX = shown). ---
+  let dockOffsetPx = 0;
+
+  function setDockVisible(visible: boolean): void {
+    const nextOffset = visible ? TRADE_DOCK_OFFSET_PX : 0;
+    if (nextOffset === dockOffsetPx) return;
+    // Shift by the DELTA, not an absolute recompute — preserves whatever pan
+    // offset the user already applied to `world.x`.
+    world.x += nextOffset - dockOffsetPx;
+    dockOffsetPx = nextOffset;
+  }
+
   let destroyed = false;
   return {
     app,
+    setDockVisible,
+    setPickMode,
+    onPick,
+    setLegalTargets,
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
