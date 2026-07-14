@@ -1,0 +1,177 @@
+/* S2.8.5a: the Venture hand panel — docked over the Chart like
+   `.discard-panel`/`.robber-prompt` but INTERACTIVE (no `pointer-events:none`).
+   Docked on the RIGHT (mirrors `.trade-zone`'s left dock) — the trade dock is
+   ALSO visible for the whole `main` phase, so a shared side would collide;
+   the board must stay visible behind both (§6/§7 — docked panels, never a
+   hard modal). */
+.venture-panel {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  z-index: var(--z-trade);
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-height: calc(100% - 28px);
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.5);
+  pointer-events: auto;
+}
+
+.venture-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.venture-panel__header-title {
+  font-weight: 600;
+}
+
+.venture-panel__buy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.venture-panel__buy-cost {
+  display: flex;
+  gap: 8px;
+}
+
+.venture-panel__buy-cost-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.75rem;
+  font-feature-settings: 'tnum';
+}
+
+.venture-panel__deck-remaining {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-feature-settings: 'tnum';
+}
+
+.venture-panel__empty {
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.venture-panel__rows {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 14px;
+}
+
+.venture-panel__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.venture-panel__row:last-child {
+  border-bottom: none;
+}
+
+.venture-panel__row-name {
+  flex: 1 1 auto;
+  font-size: 0.8125rem;
+}
+
+.venture-panel__row-count {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  font-feature-settings: 'tnum';
+}
+
+.venture-panel__hint {
+  flex-basis: 100%;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+.venture-panel__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.venture-panel__foot .btn {
+  margin-left: auto;
+}
+
+/* --- Pickers (year-of-plenty / monopoly) --- */
+
+.venture-panel__picker {
+  display: flex;
+  flex-direction: column;
+}
+
+.venture-panel__prompt {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+
+.venture-panel__counter {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  font-feature-settings: 'tnum';
+}
+
+.venture-panel__monopoly-options {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 14px;
+}
+
+.venture-panel__monopoly-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  margin: 4px 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.venture-panel__monopoly-option:hover {
+  background: var(--line);
+}
+
+.venture-panel__monopoly-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.venture-panel__monopoly-option[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}

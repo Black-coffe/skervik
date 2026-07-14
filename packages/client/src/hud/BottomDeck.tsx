@@ -1,9 +1,10 @@
 // BottomDeck — DESIGN.md §6/§7: MY hand as icon+count Pills (full
 // breakdown, icon-first for colorblind read), action buttons in FIXED
 // positions (build/trade/venture/end turn), and a tide-lot/die placeholder.
-// S2.8.3a wires the two resource-free turn actions (roll + end turn); Build/
-// Trade/Venture stay disabled (later stories: S2.8.3b, S2.7.1 dock focus,
-// S2.8.5). Buttons disable, they never disappear or shift (§6).
+// S2.8.3a wires the two resource-free turn actions (roll + end turn);
+// S2.8.3b wires Build; S2.8.5a wires the Venture toggle (opens
+// `<VenturePanel/>`, rendered by `GameScreen`). Trade stays disabled (S2.7.1
+// dock focus). Buttons disable, they never disappear or shift (§6).
 import './BottomDeck.css';
 
 import { useState } from 'react';
@@ -58,6 +59,8 @@ export function BottomDeck() {
   const dispatchIntent = useUiStore((state) => state.dispatchIntent);
   const buildMode = useUiStore((state) => state.buildMode);
   const setBuildMode = useUiStore((state) => state.setBuildMode);
+  const ventureOpen = useUiStore((state) => state.ventureOpen);
+  const setVentureOpen = useUiStore((state) => state.setVentureOpen);
   // Selector visibility is local UI (which piece is ARMED lives in the store as
   // `buildMode`; whether the chooser is open is this component's own concern).
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -69,6 +72,7 @@ export function BottomDeck() {
   const closeBuild = () => {
     setSelectorOpen(false);
     setBuildMode('none');
+    setVentureOpen(false);
   };
 
   return (
@@ -157,7 +161,12 @@ export function BottomDeck() {
         <Button variant="quiet" disabled>
           {t('hud.actionTrade')}
         </Button>
-        <Button variant="quiet" disabled>
+        <Button
+          variant="quiet"
+          disabled={!canBuild}
+          aria-expanded={ventureOpen}
+          onClick={() => setVentureOpen(!ventureOpen)}
+        >
           {t('hud.actionVenture')}
         </Button>
         <Button
