@@ -1,0 +1,34 @@
+/* S2.8.4a: the robber prompt + victim picker, centered over the Chart like
+   `.setup-prompt` but INTERACTIVE (the picker buttons must receive clicks, so
+   no `pointer-events:none`). The status line reuses `.setup-prompt__text`. */
+.robber-prompt {
+  position: absolute;
+  top: 64px; /* below `.notice-bar` (top: 12px), same as `.setup-prompt` */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-hud);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.robber-prompt__victims {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 30%);
+}
+
+.robber-prompt__victim-name {
+  display: block;
+}
+
+.robber-prompt__victim-cards {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.75rem;
+}

@@ -194,4 +194,8 @@ export const uk: Messages = {
   'build.promptSettlement': 'Оберіть місце для поселення',
   'build.promptRoad': 'Оберіть місце для дороги',
   'build.promptCity': 'Оберіть поселення для розвитку',
+  // --- Robber move + steal (S2.8.4a) ---
+  'a11y.robberVictims': 'Оберіть, кого пограбувати',
+  'robber.promptMove': 'Перемістіть Капера на інший острів',
+  'robber.promptChooseVictim': 'Оберіть, кого пограбувати',
 };

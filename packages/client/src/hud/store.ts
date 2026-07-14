@@ -14,6 +14,7 @@ import type {
   PlayerId,
   PlayerIntent,
   RejectReason,
+  TileId,
   TradeOffer,
 } from '@skervik/core';
 import { reduce } from '@skervik/core';
@@ -85,9 +86,23 @@ export interface UiStore {
    * READS it to arm board picking. `'none'` = no active build.
    */
   readonly buildMode: BuildMode;
+  /**
+   * S2.8.4a: the tile awaiting a robber steal-victim choice — UI-ONLY (set when
+   * the human clicks a tile that has ≥1 eligible victim, cleared once the
+   * `intent.moveRobber` is dispatched or «Отмена» is pressed). Never part of
+   * `gameState`, never sent except inside the resolved `moveRobber`. Lives here
+   * (not in a component) so it survives `GameScreen`'s phase re-routing between
+   * board picking and the victim picker; cleared on `applySnapshot` (a fresh
+   * match join) — NOT on `setGameState`/event folds — so a stale pending tile
+   * can never leak across matches (the S2.8.3b review nit). `null` = no pending
+   * tile (board picking active).
+   */
+  readonly robberPendingTile: TileId | null;
   readonly setGameState: (next: GameState) => void;
   /** Set (or clear with `'none'`) the UI-only build submode. Never touches `gameState`. */
   readonly setBuildMode: (mode: BuildMode) => void;
+  /** Set (or clear with `null`) the UI-only pending robber tile. Never touches `gameState`. */
+  readonly setRobberPendingTile: (tileId: TileId | null) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
    * produces a typed {@link PlayerIntent} handed here. It records the intent as
@@ -194,8 +209,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   isHost: false,
   isPrivateRoom: false,
   buildMode: 'none',
+  robberPendingTile: null,
   setGameState: (next) => set({ gameState: next }),
   setBuildMode: (mode) => set({ buildMode: mode }),
+  setRobberPendingTile: (tileId) => set({ robberPendingTile: tileId }),
   dispatchIntent: (intent) => {
     set((state) => {
       const entry = tradeLogEntryFromIntent(
@@ -232,7 +249,16 @@ export const useUiStore = create<UiStore>((set, get) => ({
       ],
     })),
   applySnapshot: (next, myPlayerId, isHost, isPrivate) =>
-    set({ gameState: next, myPlayerId, isHost, isPrivateRoom: isPrivate }),
+    set({
+      gameState: next,
+      myPlayerId,
+      isHost,
+      isPrivateRoom: isPrivate,
+      // Clear UI-only pending robber tile on a fresh join — never leak across
+      // matches (heeding the S2.8.3b review nit: clear on JOIN, not on every
+      // event fold via `setGameState`).
+      robberPendingTile: null,
+    }),
   applyEventBatch: (events) =>
     set((state) => {
       const first = events[0];

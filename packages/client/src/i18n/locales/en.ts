@@ -183,4 +183,8 @@ export const en: Messages = {
   'build.promptSettlement': 'Choose a spot for the settlement',
   'build.promptRoad': 'Choose a spot for the road',
   'build.promptCity': 'Choose a settlement to upgrade',
+  // --- Robber move + steal (S2.8.4a) ---
+  'a11y.robberVictims': 'Choose whom to rob',
+  'robber.promptMove': 'Move the Privateer to another island',
+  'robber.promptChooseVictim': 'Choose whom to rob',
 };
