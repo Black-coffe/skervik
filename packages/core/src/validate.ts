@@ -6,13 +6,13 @@
 import { drawBalancedRoll } from './balancedDeck.js';
 import {
   type BoardTopology,
-  buildTopology,
   type EdgeId,
   type EdgeTopology,
   findEdge,
   findTile,
   findVertex,
   type TileId,
+  topologyForRadius,
   type VertexId,
   type VertexTopology,
 } from './board.js';
@@ -125,13 +125,16 @@ export const GAMEPLAY_SLOT = {
   // 3-7 still reserved for later same-event draws.
 } as const;
 
-// `buildTopology()` is pure and its result never changes for a given board
-// radius (see its docstring: "callers should memoize the result") — cached
-// once per module rather than rebuilt on every `validate` call.
-let cachedTopology: BoardTopology | undefined;
-function topology(): BoardTopology {
-  cachedTopology ??= buildTopology();
-  return cachedTopology;
+// The board topology follows the MATCH's profile (ADR-0013): Classic is radius
+// 2, the expanded 5–6 player board radius 3. Resolved per-state from
+// `state.profileId` (defaulting to Classic for a genesis/legacy state) and
+// memoized per-radius by `topologyForRadius` — pure, no wall-clock, no
+// process-global Classic singleton. `portSlotCount` is always the profile's
+// `board.ports.length` (one source of truth). Classic resolves byte-identically
+// to the former singleton.
+function topology(state: GameState): BoardTopology {
+  const { board } = loadRuleProfile(state.profileId ?? 'classic');
+  return topologyForRadius(board.radius, board.ports.length);
 }
 
 /**
@@ -215,6 +218,7 @@ function touchesOwnNetwork(
   edge: EdgeTopology,
   playerId: PlayerId,
   buildings: BuildingsState,
+  topo: BoardTopology,
 ): boolean {
   return edge.vertexIds.some((vertexId) => {
     if (buildings.settlements[vertexId] === playerId) return true;
@@ -222,7 +226,7 @@ function touchesOwnNetwork(
     // Enemy-cut: an opponent building here severs the network — an incident
     // own road can't reach through it, so this endpoint offers no connection.
     if (vertexHasOpponentBuilding(vertexId, playerId, buildings)) return false;
-    const vertex = findVertex(topology(), vertexId);
+    const vertex = findVertex(topo, vertexId);
     return (
       vertex?.edgeIds.some((edgeId) => buildings.roads[edgeId] === playerId) ?? false
     );
@@ -247,7 +251,7 @@ function longestRoadLength(state: GameState, playerId: PlayerId): number {
   const buildings: BuildingsState | undefined = state.buildings;
   if (!buildings) return 0;
   const known: BuildingsState = buildings;
-  const topo = topology();
+  const topo = topology(state);
 
   const ownEdgeIds = Object.keys(known.roads).filter(
     (edgeId) => known.roads[edgeId] === playerId,
@@ -691,8 +695,9 @@ function ownedPortContents(state: GameState, playerId: PlayerId): readonly PortC
   const buildings = state.buildings;
   if (!board || !buildings) return [];
   const owned: PortContent[] = [];
-  topology().portSlots.forEach((slot, index) => {
-    const edge = findEdge(topology(), slot.edgeId);
+  const topo = topology(state);
+  topo.portSlots.forEach((slot, index) => {
+    const edge = findEdge(topo, slot.edgeId);
     const ownsEndpoint =
       edge?.vertexIds.some(
         (vertexId) =>
@@ -857,7 +862,7 @@ function resolveRobberMove(
   if (tileId === board.robberTileId) {
     return { ok: false, reason: 'ROBBER_SAME_TILE' };
   }
-  const tile = findTile(topology(), tileId);
+  const tile = findTile(topology(state), tileId);
   if (!tile) {
     return { ok: false, reason: 'MALFORMED_INTENT' };
   }
@@ -968,7 +973,7 @@ function computeProduction(state: GameState, total: number): ProductionResult {
   // across every producing, unblocked tile of that resource.
   const owed: Record<ResourceType, Record<PlayerId, number>> = {};
   if (board && buildings) {
-    for (const tile of topology().tiles) {
+    for (const tile of topology(state).tiles) {
       const kind = board.tileKinds[tile.id];
       if (kind === undefined || kind === 'desert') continue;
       if (board.tileTokens[tile.id] !== total) continue;
@@ -1267,7 +1272,7 @@ export function validate(
       if (state.pendingRoadVertexId !== undefined) {
         return reject('WRONG_PHASE');
       }
-      const vertex = findVertex(topology(), intent.vertexId);
+      const vertex = findVertex(topology(state), intent.vertexId);
       if (!vertex) {
         return reject('MALFORMED_INTENT');
       }
@@ -1304,7 +1309,7 @@ export function validate(
       if (pendingVertexId === undefined) {
         return reject('WRONG_PHASE');
       }
-      const edge = findEdge(topology(), intent.edgeId);
+      const edge = findEdge(topology(state), intent.edgeId);
       if (!edge) {
         return reject('MALFORMED_INTENT');
       }
@@ -1342,7 +1347,7 @@ export function validate(
       return { ok: true, events: [event] };
     }
     case 'intent.buildRoad': {
-      const edge = findEdge(topology(), intent.edgeId);
+      const edge = findEdge(topology(state), intent.edgeId);
       if (!edge) {
         return reject('MALFORMED_INTENT');
       }
@@ -1351,7 +1356,7 @@ export function validate(
       if (buildings.roads[intent.edgeId] !== undefined) {
         return reject('OCCUPIED');
       }
-      if (!touchesOwnNetwork(edge, playerId, buildings)) {
+      if (!touchesOwnNetwork(edge, playerId, buildings, topology(state))) {
         return reject('NOT_CONNECTED');
       }
       if (countOwned(buildings.roads, playerId) >= profile.build.supply.roads) {
@@ -1375,7 +1380,7 @@ export function validate(
       return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buildSettlement': {
-      const vertex = findVertex(topology(), intent.vertexId);
+      const vertex = findVertex(topology(state), intent.vertexId);
       if (!vertex) {
         return reject('MALFORMED_INTENT');
       }
@@ -1419,7 +1424,7 @@ export function validate(
       return { ok: true, events: appendAwardsAndVictory(state, [event], playerId) };
     }
     case 'intent.buildCity': {
-      const vertex = findVertex(topology(), intent.vertexId);
+      const vertex = findVertex(topology(state), intent.vertexId);
       if (!vertex) {
         return reject('MALFORMED_INTENT');
       }
@@ -1558,18 +1563,23 @@ export function validate(
           const edgeIds: EdgeId[] = [];
           for (const edgeId of intent.edgeIds) {
             if (edgeIds.length >= 2) break; // road-building grants at most 2 roads
-            const edge = findEdge(topology(), edgeId);
+            const edge = findEdge(topology(state), edgeId);
             if (!edge) {
               return reject('MALFORMED_INTENT');
             }
             if (workingRoads[edgeId] !== undefined) continue; // occupied — place fewer
             if (ownedRoads >= profile.build.supply.roads) break; // supply exhausted
             if (
-              !touchesOwnNetwork(edge, playerId, {
-                settlements: buildings.settlements,
-                roads: workingRoads,
-                ...(buildings.cities ? { cities: buildings.cities } : {}),
-              })
+              !touchesOwnNetwork(
+                edge,
+                playerId,
+                {
+                  settlements: buildings.settlements,
+                  roads: workingRoads,
+                  ...(buildings.cities ? { cities: buildings.cities } : {}),
+                },
+                topology(state),
+              )
             ) {
               continue; // detached from the network so far — place fewer
             }

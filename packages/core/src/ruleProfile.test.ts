@@ -21,6 +21,7 @@ import {
   BALANCED_PROFILE,
   BLITZ_PROFILE,
   CLASSIC_PROFILE,
+  EXPANDED_PROFILE,
   loadRuleProfile,
   type RuleProfile,
   type RuleProfileId,
@@ -289,5 +290,42 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
       catchUp: { ...CLASSIC_PROFILE.catchUp, robinHoodExchangeRate: 0 },
     };
     expect(() => validateRuleProfile(violating)).toThrow(/robinHoodExchangeRate/);
+  });
+
+  // G4 (S2.1.7a / ADR-0013 invariant 6) — a mis-sized board array would make
+  // `generateBoard` zip mismatched-length arrays and silently drop/undefine
+  // tiles at runtime. These two tests bind each falsifiable length clause
+  // independently (mirroring the G1/G3 "one test per leg" style) against the
+  // radius-3 EXPANDED_PROFILE, so each fails ALONE if its own clause is
+  // deleted. NOTE: the guard's third (`ports.length`) clause is NOT covered
+  // here — `ruleProfile.ts` recomputes the expected count via
+  // `buildTopology(radius, ports.length).portSlots.length`, and
+  // `buildTopology` builds exactly `portSlotCount` (= the input `ports.length`
+  // itself) slots, so that comparison is tautological (`N !== N`) and cannot
+  // be made to throw by corrupting `ports`'s length alone — confirmed by
+  // running a slice-based variant of this test, which failed to throw. This
+  // is the same "guard exists, property isn't bound" shape as
+  // [[unbound-invariant-comments]]; flagging for the Queen/story owner, not
+  // fixing (out of this story's scope — "do NOT change the G4 guard itself").
+  it('G4 rejects board.tileMix with the wrong length for the profile radius (36, not 37 for radius 3)', () => {
+    const violating: RuleProfile = {
+      ...EXPANDED_PROFILE,
+      board: {
+        ...EXPANDED_PROFILE.board,
+        tileMix: EXPANDED_PROFILE.board.tileMix.slice(0, 36),
+      },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/tileMix\.length must be 37/);
+  });
+
+  it('G4 rejects board.tokens with a length that does not match the non-desert tile count', () => {
+    const violating: RuleProfile = {
+      ...EXPANDED_PROFILE,
+      board: {
+        ...EXPANDED_PROFILE.board,
+        tokens: EXPANDED_PROFILE.board.tokens.slice(0, 35),
+      },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/tokens\.length must be 36/);
   });
 });

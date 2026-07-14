@@ -132,6 +132,8 @@ export const TRANSLATION_KEYS = [
   'lobby.preset.blitz.description',
   'lobby.preset.twoPlayer.name',
   'lobby.preset.twoPlayer.description',
+  'lobby.preset.expanded.name',
+  'lobby.preset.expanded.description',
   'lobby.botCountLabel',
   'a11y.botCountSelector',
   'lobby.botCount',

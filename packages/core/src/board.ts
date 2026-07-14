@@ -72,11 +72,16 @@ export interface BoardTopology {
   readonly portSlots: readonly PortSlot[];
 }
 
-/** Board radius in rings around the center tile — 2 rings = 19 tiles (the Classic profile board). */
-const RADIUS = 2;
+/**
+ * Default board radius in rings around the center tile — 2 rings = 19 tiles
+ * (the Classic profile board). `buildTopology` takes `radius` as a parameter
+ * (ADR-0013): radius 3 = 37 tiles (the expanded 5–6 player board). The default
+ * keeps every existing no-arg caller byte-identical at radius 2.
+ */
+const DEFAULT_RADIUS = 2;
 
-/** Fixed count of coastal port slots (the classic 9-port layout). */
-const PORT_SLOT_COUNT = 9;
+/** Default coastal port-slot count (the Classic 9-port layout). */
+const DEFAULT_PORT_SLOT_COUNT = 9;
 
 /**
  * The 6 axial neighbor direction vectors, in a fixed rotational order.
@@ -118,16 +123,17 @@ function makeEdgeId(vertexIds: readonly [VertexId, VertexId]): EdgeId {
 }
 
 /**
- * Enumerates the radius-2 hexagon's 19 tile coords in a fixed deterministic
+ * Enumerates the radius-`radius` hexagon's tile coords in a fixed deterministic
  * ring-spiral order: the center tile, then ring 1 (6 tiles), then ring 2 (12
- * tiles) — each ring walked starting `ring` steps along `AXIAL_DIRECTIONS[4]`
- * and stepping through the 6 directions in order (the standard hex-ring walk,
- * see redblobgames.com/grids/hexagons/#rings). Same order on every call —
- * nothing here iterates a `Set`/`Map`, so there is no ambient ordering risk.
+ * tiles), … up to `radius` — each ring walked starting `ring` steps along
+ * `AXIAL_DIRECTIONS[4]` and stepping through the 6 directions in order (the
+ * standard hex-ring walk, see redblobgames.com/grids/hexagons/#rings). Same
+ * order on every call — nothing here iterates a `Set`/`Map`, so there is no
+ * ambient ordering risk. `radius` 2 = 19 tiles (Classic), 3 = 37 (expanded).
  */
-function enumerateTileCoords(): AxialCoord[] {
+function enumerateTileCoords(radius: number): AxialCoord[] {
   const coords: AxialCoord[] = [{ q: 0, r: 0 }];
-  for (let ring = 1; ring <= RADIUS; ring++) {
+  for (let ring = 1; ring <= radius; ring++) {
     const start = AXIAL_DIRECTIONS[4] as AxialCoord;
     let hex: AxialCoord = { q: start.q * ring, r: start.r * ring };
     for (let side = 0; side < 6; side++) {
@@ -151,13 +157,19 @@ function sortTileCoords(
 }
 
 /**
- * Builds the full radius-2 {@link BoardTopology} from scratch. Pure and
- * deterministic — calling it twice yields deep-equal results (no object
+ * Builds the full {@link BoardTopology} for a hexagon of `radius` rings with
+ * `portSlotCount` coastal port slots (ADR-0013). Pure and deterministic —
+ * calling it twice with the same args yields deep-equal results (no object
  * identity or iteration-order dependence anywhere in the construction).
- * Callers should memoize the result; it never changes.
+ * Callers should memoize the result (see {@link topologyForRadius}); it never
+ * changes. `buildTopology(2, 9)` is byte-identical to the pre-parameterisation
+ * radius-2/9-port Classic topology — every existing no-arg caller is unaffected.
  */
-export function buildTopology(): BoardTopology {
-  const tileCoords = enumerateTileCoords();
+export function buildTopology(
+  radius: number = DEFAULT_RADIUS,
+  portSlotCount: number = DEFAULT_PORT_SLOT_COUNT,
+): BoardTopology {
+  const tileCoords = enumerateTileCoords(radius);
   const onBoardTileIds = tileCoords.map(tileId);
 
   // ---- Vertices: each tile's 6 corners are the triples {tile, tile+dir[i],
@@ -250,12 +262,35 @@ export function buildTopology(): BoardTopology {
     }
   }
 
-  const portSlots: PortSlot[] = Array.from({ length: PORT_SLOT_COUNT }, (_, index) => {
-    const boundaryIndex = Math.floor((index * boundaryEdgeIds.length) / PORT_SLOT_COUNT);
+  const portSlots: PortSlot[] = Array.from({ length: portSlotCount }, (_, index) => {
+    const boundaryIndex = Math.floor((index * boundaryEdgeIds.length) / portSlotCount);
     return { edgeId: boundaryEdgeIds[boundaryIndex] as EdgeId, index };
   });
 
   return { tiles, vertices, edges, portSlots };
+}
+
+/**
+ * Per-radius {@link BoardTopology} cache (ADR-0013 invariant 2). `buildTopology`
+ * is pure and its result never changes for a given `(radius, portSlotCount)`, so
+ * each distinct board size is built at most once per process — a pure `Map`
+ * cache, no wall-clock, no ambient state. This replaces the former
+ * `validate.ts` single-topology singleton so the engine can follow a match's
+ * profile (radius 2 for Classic, 3 for the expanded 5–6 player board).
+ *
+ * `portSlotCount` is ALWAYS the active profile's `board.ports.length` — the one
+ * source of truth (never a second constant). The registry maps each radius to
+ * exactly one board, so keying the cache by `radius` alone is unambiguous.
+ */
+const topologyByRadius = new Map<number, BoardTopology>();
+
+export function topologyForRadius(radius: number, portSlotCount: number): BoardTopology {
+  let topo = topologyByRadius.get(radius);
+  if (topo === undefined) {
+    topo = buildTopology(radius, portSlotCount);
+    topologyByRadius.set(radius, topo);
+  }
+  return topo;
 }
 
 /** Finds a tile by id in an already-built topology. Pure lookup, no caching. */

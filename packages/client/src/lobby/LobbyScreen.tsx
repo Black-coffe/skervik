@@ -46,6 +46,10 @@ const PRESET_KEYS: Record<
     name: 'lobby.preset.twoPlayer.name',
     description: 'lobby.preset.twoPlayer.description',
   },
+  expanded: {
+    name: 'lobby.preset.expanded.name',
+    description: 'lobby.preset.expanded.description',
+  },
 };
 
 /** [0, 1, ..., MAX_LOBBY_BOTS] — the selectable bot-count options. */

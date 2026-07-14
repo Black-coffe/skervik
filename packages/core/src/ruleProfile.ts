@@ -12,22 +12,38 @@
 //
 // Zero runtime deps (ADR-0003): pure data + a pure total loader.
 
+import { buildTopology } from './board.js';
 import type { DevCardKind, PortContent, ResourceType, TileKind } from './types.js';
 
 /**
- * The selectable rule-profile ids (CLAUDE.md's `classic | balanced | blitz`,
- * plus the S2.1.6 `twoPlayer` mode). `'deep'` is reserved for M4 and
- * deliberately NOT added yet.
+ * The registered rule-profile ids (CLAUDE.md's `classic | balanced | blitz`,
+ * the S2.1.6 `twoPlayer` mode, and the S2.1.7a `expanded` 5–6 player board).
+ * `'deep'` is reserved for M4 and deliberately NOT added yet.
+ *
+ * `'expanded'` is a real, resolvable {@link RuleProfileId} (so a live 5–6p
+ * match's `GameState.profileId` typechecks and `loadRuleProfile('expanded')`
+ * resolves), but it is deliberately ABSENT from {@link SHIPPING_PROFILE_IDS}
+ * (the lobby-selectable allow-list) and the protocol's `ShippingProfileIdSchema`
+ * — it is registered CORE-only and unreachable from any client until S2.1.7b
+ * wires server seats + lobby routing to it (ADR-0013).
  */
-export type RuleProfileId = 'classic' | 'balanced' | 'blitz' | 'twoPlayer';
+export type RuleProfileId = 'classic' | 'balanced' | 'blitz' | 'twoPlayer' | 'expanded';
 
-/** Classic board composition (tile mix, token multiset, port mix) — `boardgen.ts`. */
+/** Board composition (radius + tile mix, token multiset, port mix) — `boardgen.ts`. */
 export interface BoardProfile {
-  /** 19 tile kinds shuffled onto the 19 tiles. */
+  /**
+   * Board radius in hex rings (ADR-0013): 2 = Classic (19 tiles / 9 ports),
+   * 3 = expanded 5–6 player board (37 tiles / 11 ports). The topology geometry
+   * derives entirely from this via `buildTopology(radius, ports.length)`. This
+   * is a PROFILE field, never a field of the `board.generated` event — Classic's
+   * `radius: 2` is additive, so the M1 golden bytes are unchanged.
+   */
+  readonly radius: number;
+  /** Tile kinds shuffled onto the tiles (length `3·r²+3·r+1` for radius `r`). */
   readonly tileMix: readonly TileKind[];
-  /** 18 number tokens shuffled onto the 18 non-desert tiles. */
+  /** Number tokens shuffled onto the non-desert tiles (one per non-desert tile). */
   readonly tokens: readonly number[];
-  /** 9 port contents shuffled onto the 9 fixed port slots. */
+  /** Port contents shuffled onto the fixed coastal port slots (length = port slots). */
   readonly ports: readonly PortContent[];
 }
 
@@ -310,6 +326,38 @@ export function validateRuleProfile(profile: RuleProfile): void {
         `${profile.catchUp.robinHoodExchangeRate}.`,
     );
   }
+  // G4 (S2.1.7a / ADR-0013 invariant 6) — the board arrays must be internally
+  // consistent for the profile's `radius`, or `generateBoard` would zip
+  // mismatched-length arrays and silently drop/undefine tiles. Checked at import
+  // for EVERY registered profile (the loop below `PROFILE_REGISTRY`), so a
+  // mis-sized expanded board fails at module load, never at turn 200 of a match.
+  const { radius, tileMix, tokens, ports } = profile.board;
+  // tile count for a radius-r hexagon is 3r² + 3r + 1 (r=2 → 19, r=3 → 37).
+  const expectedTiles = 3 * radius * radius + 3 * radius + 1;
+  if (tileMix.length !== expectedTiles) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.tileMix.length must be ${expectedTiles} ` +
+        `(3·r²+3·r+1 for radius ${radius}), got ${tileMix.length}.`,
+    );
+  }
+  // one token per NON-desert tile.
+  const nonDesertTiles = tileMix.filter((kind) => kind !== 'desert').length;
+  if (tokens.length !== nonDesertTiles) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.tokens.length must be ${nonDesertTiles} ` +
+        `(one per non-desert tile), got ${tokens.length}.`,
+    );
+  }
+  // ports.length must equal the port slots the topology carves for this radius —
+  // `buildTopology` carves exactly `ports.length` slots (ports.length is the one
+  // source of truth for portSlotCount), so this binds the geometry to the config.
+  const portSlots = buildTopology(radius, ports.length).portSlots.length;
+  if (ports.length !== portSlots) {
+    throw new Error(
+      `Rule profile "${profile.id}": board.ports.length (${ports.length}) must equal ` +
+        `the ${portSlots} port slots the radius-${radius} topology carves.`,
+    );
+  }
 }
 
 /**
@@ -328,6 +376,8 @@ export const CLASSIC_PROFILE: RuleProfile = {
   // their `...CLASSIC_PROFILE` spread; no shipping preset opens parallel offers.
   parallelTrade: false,
   board: {
+    // radius 2 → 19 tiles / 54 vertices / 72 edges / 9 port slots (byte-frozen).
+    radius: 2,
     // 19 tile kinds (4 timber / 3 clay / 4 fleece / 4 barley / 3 iron / 1 desert).
     tileMix: [
       'timber',
@@ -546,13 +596,108 @@ export const TWO_PLAYER_PROFILE: RuleProfile = {
 };
 
 /**
- * The four shipping preset ids, in display order (S2.5.4) — the runtime
+ * The expanded 5–6 player board (ADR-0013 Decision 2): a radius-3 hexagon —
+ * 37 tiles / 96 vertices / 132 edges / 42 boundary edges / 11 port slots. The
+ * geometry derives entirely from `radius: 3` via `buildTopology(3, 11)`; the
+ * arrays below only need the RIGHT LENGTHS (37 / 36 / 11 — the load-bearing
+ * part) — the exact mix is v1 balance, tunable against 5–6p telemetry in M3
+ * without a schema change. `validateRuleProfile` G4 checks the lengths at import.
+ */
+export const EXPANDED_BOARD: BoardProfile = {
+  radius: 3,
+  // 37 tiles: timber×8, clay×6, fleece×8, barley×8, iron×6, desert×1 — Classic's
+  // 4:3:4:4:3 resource ratio doubled (clay + iron stay the scarce premiums).
+  tileMix: [
+    'timber',
+    'timber',
+    'timber',
+    'timber',
+    'timber',
+    'timber',
+    'timber',
+    'timber',
+    'clay',
+    'clay',
+    'clay',
+    'clay',
+    'clay',
+    'clay',
+    'fleece',
+    'fleece',
+    'fleece',
+    'fleece',
+    'fleece',
+    'fleece',
+    'fleece',
+    'fleece',
+    'barley',
+    'barley',
+    'barley',
+    'barley',
+    'barley',
+    'barley',
+    'barley',
+    'barley',
+    'iron',
+    'iron',
+    'iron',
+    'iron',
+    'iron',
+    'iron',
+    'desert',
+  ],
+  // 36 tokens (one per non-desert tile): symmetric flattened-triangular spread,
+  // 8 red (6/8) tokens — pairwise-non-adjacent-placeable on 37 tiles, so the
+  // bounded red-token retry in boardgen stays satisfiable. No 7.
+  tokens: [
+    2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 8, 8, 8, 8, 9, 9, 9, 9, 10, 10,
+    10, 10, 11, 11, 11, 11, 12, 12,
+  ],
+  // 11 ports: generic 3:1 ×6 + one 2:1 per resource (the Classic fairness
+  // invariant — one 2:1 per resource — carried onto the larger coastline).
+  ports: [
+    { kind: 'generic', rate: 3 },
+    { kind: 'generic', rate: 3 },
+    { kind: 'generic', rate: 3 },
+    { kind: 'generic', rate: 3 },
+    { kind: 'generic', rate: 3 },
+    { kind: 'generic', rate: 3 },
+    { kind: 'resource', rate: 2, resource: 'timber' },
+    { kind: 'resource', rate: 2, resource: 'clay' },
+    { kind: 'resource', rate: 2, resource: 'fleece' },
+    { kind: 'resource', rate: 2, resource: 'barley' },
+    { kind: 'resource', rate: 2, resource: 'iron' },
+  ],
+};
+
+/**
+ * Expanded — Classic rules on the radius-3 {@link EXPANDED_BOARD} (ADR-0013
+ * Decision 3). The board is the ONLY divergence from Classic (no rule branch,
+ * Law 2): every gameplay value — dice randomness, catch-up off, supply 15/5/4,
+ * `vpToWin: 10` — is inherited via the `...CLASSIC_PROFILE` spread. Registered
+ * and resolvable CORE-only; NOT lobby-selectable until S2.1.7b (see
+ * {@link RuleProfileId} / {@link SHIPPING_PROFILE_IDS}).
+ */
+export const EXPANDED_PROFILE: RuleProfile = {
+  ...CLASSIC_PROFILE,
+  id: 'expanded',
+  name: 'Expanded',
+  board: EXPANDED_BOARD,
+};
+
+/**
+ * The lobby-selectable preset ids, in display order (S2.5.4) — the runtime
  * counterpart of {@link RuleProfileId} a caller can enumerate without
  * importing the profile bodies themselves. This is the ALLOW-LIST a lobby
  * (client) and the authoritative wire boundary (server, `GameRoom.onAuth`)
  * check a join's requested `profileId` against, since {@link PROFILE_REGISTRY}
  * below is keyed by `string` and additionally resolves six measurement-only
  * ids (`EXPERIMENTAL_PROFILE_IDS`) that must never be reachable from a client.
+ *
+ * `'expanded'` is a registered {@link RuleProfileId} (resolvable via
+ * {@link loadRuleProfile}) but deliberately EXCLUDED here: it is not
+ * lobby-selectable until S2.1.7b wires 5–6 seats + routing (ADR-0013). So this
+ * list is a CURATED SUBSET of `RuleProfileId`, not one entry per id.
  */
 export const SHIPPING_PROFILE_IDS: readonly RuleProfileId[] = [
   'classic',
@@ -561,12 +706,18 @@ export const SHIPPING_PROFILE_IDS: readonly RuleProfileId[] = [
   'twoPlayer',
 ];
 
-/** The shipping profiles — one entry per {@link RuleProfileId} (exhaustive). */
+/**
+ * The resolvable presets — one entry per {@link RuleProfileId} (exhaustive, so
+ * `loadRuleProfile` is total over the id union). Note `expanded` is here (a real
+ * resolvable profile) even though it is NOT in {@link SHIPPING_PROFILE_IDS}
+ * (the narrower lobby-selectable subset) — see that export's docstring.
+ */
 const SHIPPING_PROFILES: Readonly<Record<RuleProfileId, RuleProfile>> = {
   classic: CLASSIC_PROFILE,
   balanced: BALANCED_PROFILE,
   blitz: BLITZ_PROFILE,
   twoPlayer: TWO_PLAYER_PROFILE,
+  expanded: EXPANDED_PROFILE,
 };
 
 /**

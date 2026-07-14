@@ -152,6 +152,9 @@ export const ru: Messages = {
   'lobby.preset.twoPlayer.name': 'На двоих',
   'lobby.preset.twoPlayer.description':
     'Ровно для двух капитанов — нейтральные поселения вынуждают бороться за место на карте.',
+  'lobby.preset.expanded.name': 'Большая лоция',
+  'lobby.preset.expanded.description':
+    'Расширенный архипелаг для 5–6 капитанов — больше островов и маяков.',
   'lobby.botCountLabel': 'Команда ботов',
   'a11y.botCountSelector': 'Выбор числа ботов',
   'lobby.botCount': {
