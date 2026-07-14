@@ -34,6 +34,7 @@ export const en: Messages = {
   'hud.actionTrade': 'Trade',
   'hud.actionVenture': 'Venture',
   'hud.actionEndTurn': 'End turn',
+  'hud.actionRoll': 'Roll dice',
   'hud.tideLotPlaceholder': 'Dice not rolled',
   'hud.log.title': "Ship's log",
   'hud.log.empty': 'The log is empty — moves and trades will appear here',

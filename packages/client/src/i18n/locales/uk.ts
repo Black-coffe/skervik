@@ -41,6 +41,7 @@ export const uk: Messages = {
   'hud.actionTrade': 'Торгувати',
   'hud.actionVenture': 'Підприємство',
   'hud.actionEndTurn': 'Завершити хід',
+  'hud.actionRoll': 'Кинути кістки',
   'hud.tideLotPlaceholder': 'Кістки не кинуті',
   'hud.log.title': 'Судновий журнал',
   'hud.log.empty': 'Журнал поки порожній — тут з’являться ходи та угоди',

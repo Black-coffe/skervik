@@ -1,8 +1,9 @@
 // BottomDeck — DESIGN.md §6/§7: MY hand as icon+count Pills (full
 // breakdown, icon-first for colorblind read), action buttons in FIXED
-// positions (build/trade/venture/end turn) — ALL DISABLED this story (no
-// interaction until S1.6.5, S1.6.4 owns the trade panel), and a tide-lot/die
-// placeholder. Buttons disable, they never disappear or shift (§6).
+// positions (build/trade/venture/end turn), and a tide-lot/die placeholder.
+// S2.8.3a wires the two resource-free turn actions (roll + end turn); Build/
+// Trade/Venture stay disabled (later stories: S2.8.3b, S2.7.1 dock focus,
+// S2.8.5). Buttons disable, they never disappear or shift (§6).
 import './BottomDeck.css';
 
 import { useTranslation } from '../i18n/index.js';
@@ -11,6 +12,7 @@ import { Pill } from './components/Pill.js';
 import { ResourceGlyph } from './resourceGlyphs.js';
 import { RESOURCE_KEY } from './resourceLabels.js';
 import { useUiStore } from './store.js';
+import { canEndTurn, canRoll } from './turnActions.js';
 
 // Resource colors mirror `theme/tokens.css` §2.3 — used ONLY to tint each
 // resource's distinct `ResourceGlyph` SILHOUETTE (never a bare color swatch
@@ -35,6 +37,7 @@ export function BottomDeck() {
   const { t, formatNumber } = useTranslation();
   const gameState = useUiStore((state) => state.gameState);
   const myPlayerId = useUiStore((state) => state.myPlayerId);
+  const dispatchIntent = useUiStore((state) => state.dispatchIntent);
 
   const me = gameState.players.find((p) => p.id === myPlayerId);
   const resources = me?.resources ?? {};
@@ -65,7 +68,18 @@ export function BottomDeck() {
         </div>
       </div>
 
-      <div className="bottom-deck__tide-lot">{t('hud.tideLotPlaceholder')}</div>
+      <div className="bottom-deck__tide-lot">
+        <span>{t('hud.tideLotPlaceholder')}</span>
+        <Button
+          variant="primary"
+          disabled={!canRoll(gameState, myPlayerId)}
+          onClick={() =>
+            dispatchIntent({ type: 'intent.rollDice', playerId: myPlayerId })
+          }
+        >
+          {t('hud.actionRoll')}
+        </Button>
+      </div>
 
       <div className="bottom-deck__actions">
         <Button variant="quiet" disabled>
@@ -77,7 +91,11 @@ export function BottomDeck() {
         <Button variant="quiet" disabled>
           {t('hud.actionVenture')}
         </Button>
-        <Button variant="primary" disabled>
+        <Button
+          variant="primary"
+          disabled={!canEndTurn(gameState, myPlayerId)}
+          onClick={() => dispatchIntent({ type: 'intent.endTurn', playerId: myPlayerId })}
+        >
           {t('hud.actionEndTurn')}
         </Button>
       </div>
