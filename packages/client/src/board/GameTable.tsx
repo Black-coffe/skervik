@@ -9,6 +9,7 @@ import { buildTopology } from '@skervik/core';
 import { useEffect, useRef } from 'react';
 
 import { buildTileDescriptors } from './boardModel.js';
+import type { BoardSceneHandle } from './BoardScene.js';
 import { createBoardScene } from './BoardScene.js';
 import { buildBuildingDescriptors, buildPortDescriptors } from './pieceModel.js';
 
@@ -18,10 +19,18 @@ const TOPOLOGY = buildTopology();
 
 export interface GameTableProps {
   readonly state: GameState;
+  /** S2.7.1: true while the trade dock is shown (`main` phase only) — the board offsets right so no tile sits under it. */
+  readonly dockVisible: boolean;
 }
 
-export function GameTable({ state }: GameTableProps) {
+export function GameTable({ state, dockVisible }: GameTableProps) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<BoardSceneHandle | null>(null);
+  // S2.7.1: read the LATEST `dockVisible` from inside the scene-creation
+  // effect below without adding it to that effect's deps — a ref, not state,
+  // so a dock toggle never remounts the Pixi scene (loses pan/zoom, flickers).
+  const dockVisibleRef = useRef(dockVisible);
+  dockVisibleRef.current = dockVisible;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -39,14 +48,25 @@ export function GameTable({ state }: GameTableProps) {
         scene.destroy();
         return;
       }
+      // Apply whatever dockVisible is current NOW (may have changed while
+      // this scene was still loading) before it's ever painted.
+      scene.setDockVisible(dockVisibleRef.current);
+      sceneRef.current = scene;
       destroyScene = scene.destroy;
     });
 
     return () => {
       cancelled = true;
+      sceneRef.current = null;
       destroyScene?.();
     };
   }, [state.board, state.buildings, state.playerOrder, state.players]);
+
+  // S2.7.1: react to the dock showing/hiding by repositioning the EXISTING
+  // scene's world container (see BoardScene.setDockVisible) — no remount.
+  useEffect(() => {
+    sceneRef.current?.setDockVisible(dockVisible);
+  }, [dockVisible]);
 
   return (
     <div ref={hostRef} style={{ position: 'relative', width: '100%', height: '100%' }} />

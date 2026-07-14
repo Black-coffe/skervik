@@ -31,8 +31,26 @@ const CORNERS = hexCorners(HEX_SIZE * GAP_SCALE);
 /** Sea backdrop radius — comfortably covers the 19-tile field plus margin. */
 const SEA_RADIUS = HEX_SIZE * 9;
 
+/**
+ * S2.7.1: horizontal space to reserve for the trade dock when it's visible,
+ * so the board's default (un-panned) centre never sits under it. Mirrors the
+ * dock's own CSS geometry (`TradeZone.css`: `left: 16px; width: 372px`) plus
+ * a small gutter — duplicated here because Pixi can't read CSS custom
+ * properties. Centering the board within what's LEFT of the chart after that
+ * reserve shifts the default centre right by half of it (see `setDockVisible`).
+ */
+const TRADE_DOCK_RESERVE_PX = 372 + 16 + 20;
+const TRADE_DOCK_OFFSET_PX = TRADE_DOCK_RESERVE_PX / 2;
+
 export interface BoardSceneHandle {
   readonly app: Application;
+  /**
+   * S2.7.1: repositions the board for the trade dock showing/hiding, by
+   * shifting `world`'s CURRENT position (not recomputing from scratch) — so
+   * the user's pan/zoom survives the toggle. Idempotent; safe to call with
+   * the same value repeatedly.
+   */
+  setDockVisible(visible: boolean): void;
   /** Cleans up ticker/listeners and destroys the Pixi application. Safe to call once. */
   destroy(): void;
 }
@@ -551,9 +569,22 @@ export async function createBoardScene(
   window.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
+  // --- S2.7.1: trade-dock inset (0 = hidden, TRADE_DOCK_OFFSET_PX = shown). ---
+  let dockOffsetPx = 0;
+
+  function setDockVisible(visible: boolean): void {
+    const nextOffset = visible ? TRADE_DOCK_OFFSET_PX : 0;
+    if (nextOffset === dockOffsetPx) return;
+    // Shift by the DELTA, not an absolute recompute — preserves whatever pan
+    // offset the user already applied to `world.x`.
+    world.x += nextOffset - dockOffsetPx;
+    dockOffsetPx = nextOffset;
+  }
+
   let destroyed = false;
   return {
     app,
+    setDockVisible,
     destroy: () => {
       if (destroyed) return;
       destroyed = true;

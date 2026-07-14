@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { devFixtureState } from '../dev/devFixture.js';
 import {
+  canShowTradeDock,
   selectIsIncomingToMe,
   selectIsMyOutgoing,
   selectIsMyTurn,
@@ -57,6 +58,20 @@ describe('shouldShowGame (S2.5.2) — the uniform phase-based transition signal,
     expect(shouldShowGame('main')).toBe(true);
     expect(shouldShowGame('robber')).toBe(true);
     expect(shouldShowGame('finished')).toBe(true);
+  });
+});
+
+describe('canShowTradeDock (S2.7.1) — phase-gates the trade dock, pure', () => {
+  it("[forcing] returns true only for phase 'main' — the sole phase trade intents are legal in", () => {
+    expect(canShowTradeDock('main')).toBe(true);
+  });
+
+  it('[forcing] returns false for every other phase — lobby/setup/roll/robber/finished all hide the dock', () => {
+    expect(canShowTradeDock('lobby')).toBe(false);
+    expect(canShowTradeDock('setup')).toBe(false);
+    expect(canShowTradeDock('roll')).toBe(false);
+    expect(canShowTradeDock('robber')).toBe(false);
+    expect(canShowTradeDock('finished')).toBe(false);
   });
 });
 
