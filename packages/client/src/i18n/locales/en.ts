@@ -220,4 +220,9 @@ export const en: Messages = {
   'a11y.ventureYearOfPlenty': 'Bountiful Tide: choose goods',
   'venture.monopolyPrompt': 'Buyout: choose a good',
   'a11y.ventureMonopoly': 'Buyout: choose a good',
+  // --- Ventures: knight + road-building board-pick plays (S2.8.5b) ---
+  'venture.knightMove': 'Move the Privateer with the Convoy: choose an isle',
+  'venture.knightChooseVictim': 'Convoy: choose who to plunder',
+  'venture.roadBuildingFirst': 'Fair Wind: choose a lane (1 of 2)',
+  'venture.roadBuildingSecond': 'Fair Wind: choose the second lane (or confirm)',
 };

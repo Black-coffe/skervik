@@ -13,8 +13,10 @@
 // picker. Reuses the Trade UI's bounded −/+ stepper (`.trade-*` CSS,
 // `trade.ts` helpers) and the `justDispatched` double-dispatch guard.
 //
-// NO board picking here (S2.8.5b's knight/road-building are deferred) — every
-// dispatch below is resource-picker-only, exactly the S2.8.5a scope line.
+// The two resource-picker plays (yearOfPlenty/monopoly) dispatch straight
+// from here. The two board-pick plays (knight/roadBuilding, S2.8.5b) instead
+// ARM `venturePlayMode` (`hud/store.ts`) and close this panel — the actual
+// board click + dispatch happens in `useVenturePlacement`/`GameScreen`.
 import './VenturePanel.css';
 import './components/trade.css';
 
@@ -64,13 +66,19 @@ const VENTURE_KIND_KEY: Readonly<Record<DevCardKind, TranslationKey>> = {
   victoryPoint: 'venture.kind.victoryPoint',
 };
 
-// The only two kinds S2.8.5a wires a play action for (S2.8.5b: knight/
-// roadBuilding are board-pick plays — their rows show a count, no button;
-// choosing to OMIT rather than render a disabled dead button, per the story's
-// "state your choice").
+// The two kinds whose play opens an in-panel resource picker (S2.8.5a).
+// Knight/roadBuilding (S2.8.5b) instead arm a board-pick play — see
+// `KIND_PLAY_MODE` below.
 function isResourcePickerKind(kind: DevCardKind): kind is 'yearOfPlenty' | 'monopoly' {
   return kind === 'yearOfPlenty' || kind === 'monopoly';
 }
+
+/** The two board-pick Ventures (S2.8.5b) — maps a row's kind to the `venturePlayMode` it arms. */
+const KIND_PLAY_MODE: Readonly<Partial<Record<DevCardKind, 'knight' | 'roadBuilding'>>> =
+  {
+    knight: 'knight',
+    roadBuilding: 'roadBuilding',
+  };
 
 type VentureView = 'list' | 'yearOfPlenty' | 'monopoly';
 
@@ -80,6 +88,7 @@ export function VenturePanel() {
   const myPlayerId = useUiStore((s) => s.myPlayerId);
   const dispatchIntent = useUiStore((s) => s.dispatchIntent);
   const setVentureOpen = useUiStore((s) => s.setVentureOpen);
+  const setVenturePlayMode = useUiStore((s) => s.setVenturePlayMode);
 
   const [view, setView] = useState<VentureView>('list');
   const [yopSelection, setYopSelection] = useState<Record<ClassicResource, number>>(() =>
@@ -119,6 +128,13 @@ export function VenturePanel() {
 
   function openPicker(kind: 'yearOfPlenty' | 'monopoly') {
     setView(kind);
+  }
+
+  // S2.8.5b: arms the board-pick play and closes this panel so the board is
+  // clear for picking — the actual dispatch happens from `useVenturePlacement`.
+  function armBoardPickPlay(kind: 'knight' | 'roadBuilding') {
+    setVenturePlayMode(kind);
+    setVentureOpen(false);
   }
 
   function backToList() {
@@ -335,6 +351,15 @@ export function VenturePanel() {
                     variant="quiet"
                     disabled={!canPlayVenture(gameState, myPlayerId, kind)}
                     onClick={() => openPicker(kind)}
+                  >
+                    {t('venture.play')}
+                  </Button>
+                ) : null}
+                {KIND_PLAY_MODE[kind] ? (
+                  <Button
+                    variant="quiet"
+                    disabled={!canPlayVenture(gameState, myPlayerId, kind)}
+                    onClick={() => armBoardPickPlay(KIND_PLAY_MODE[kind]!)}
                   >
                     {t('venture.play')}
                   </Button>

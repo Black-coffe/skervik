@@ -199,6 +199,11 @@ export const TRANSLATION_KEYS = [
   'a11y.ventureYearOfPlenty',
   'venture.monopolyPrompt',
   'a11y.ventureMonopoly',
+  // --- Ventures: knight + road-building board-pick plays (S2.8.5b) ---
+  'venture.knightMove',
+  'venture.knightChooseVictim',
+  'venture.roadBuildingFirst',
+  'venture.roadBuildingSecond',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];

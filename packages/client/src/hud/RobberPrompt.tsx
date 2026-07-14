@@ -9,6 +9,7 @@
 import './RobberPrompt.css';
 
 import { useTranslation } from '../i18n/index.js';
+import type { TranslationKey } from '../i18n/keys.js';
 import { flotillaForPlayer } from '../theme/flotillaColors.js';
 import { Button } from './components/Button.js';
 import { FLOTILLA_KEY } from './flotillaLabels.js';
@@ -24,6 +25,13 @@ export interface RobberPromptProps {
   readonly victims: UseRobberPlacementResult['victims'];
   readonly onChooseVictim: UseRobberPlacementResult['onChooseVictim'];
   readonly onCancelVictim: UseRobberPlacementResult['onCancelVictim'];
+  /**
+   * S2.8.5b: optional prompt-label overrides so the knight play (Конвой) can
+   * reuse this exact picker with knight-flavored copy — defaults to the
+   * robber's own keys, so the robber's own usage is UNCHANGED.
+   */
+  readonly moveKey?: TranslationKey;
+  readonly chooseKey?: TranslationKey;
 }
 
 export function RobberPrompt({
@@ -31,6 +39,8 @@ export function RobberPrompt({
   victims,
   onChooseVictim,
   onCancelVictim,
+  moveKey = 'robber.promptMove',
+  chooseKey = 'robber.promptChooseVictim',
 }: RobberPromptProps) {
   const { t } = useTranslation();
   const gameState = useUiStore((state) => state.gameState);
@@ -39,7 +49,7 @@ export function RobberPrompt({
   if (prompt === 'moveRobber') {
     return (
       <div className="setup-prompt" role="status" aria-live="polite">
-        <span className="setup-prompt__text">{t('robber.promptMove')}</span>
+        <span className="setup-prompt__text">{t(moveKey)}</span>
       </div>
     );
   }
@@ -47,7 +57,7 @@ export function RobberPrompt({
   if (prompt === 'chooseVictim') {
     return (
       <div className="robber-prompt" role="group" aria-label={t('a11y.robberVictims')}>
-        <span className="setup-prompt__text">{t('robber.promptChooseVictim')}</span>
+        <span className="setup-prompt__text">{t(chooseKey)}</span>
         <div className="robber-prompt__victims">
           {victims.map((victimId) => {
             const flotilla = flotillaForPlayer(victimId, seatOrder);
