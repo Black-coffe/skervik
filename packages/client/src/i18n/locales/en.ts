@@ -175,4 +175,12 @@ export const en: Messages = {
   'setup.placeSettlement': 'Place a settlement',
   'setup.placeRoad': 'Place a road',
   'setup.opponentTurn': "Opponent's turn",
+  // --- Main-phase building (S2.8.3b) ---
+  'a11y.buildSelector': 'Choose what to build',
+  'build.typeSettlement': 'Settlement',
+  'build.typeRoad': 'Road',
+  'build.typeCity': 'City',
+  'build.promptSettlement': 'Choose a spot for the settlement',
+  'build.promptRoad': 'Choose a spot for the road',
+  'build.promptCity': 'Choose a settlement to upgrade',
 };

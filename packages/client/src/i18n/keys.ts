@@ -160,6 +160,14 @@ export const TRANSLATION_KEYS = [
   'setup.placeSettlement',
   'setup.placeRoad',
   'setup.opponentTurn',
+  // --- Main-phase building (S2.8.3b) ---
+  'a11y.buildSelector',
+  'build.typeSettlement',
+  'build.typeRoad',
+  'build.typeCity',
+  'build.promptSettlement',
+  'build.promptRoad',
+  'build.promptCity',
 ] as const;
 
 export type TranslationKey = (typeof TRANSLATION_KEYS)[number];
