@@ -186,4 +186,12 @@ export const uk: Messages = {
   'setup.placeSettlement': 'Розмістіть поселення',
   'setup.placeRoad': 'Розмістіть дорогу',
   'setup.opponentTurn': 'Хід суперника',
+  // --- Main-phase building (S2.8.3b) ---
+  'a11y.buildSelector': 'Оберіть, що будувати',
+  'build.typeSettlement': 'Поселення',
+  'build.typeRoad': 'Дорога',
+  'build.typeCity': 'Місто',
+  'build.promptSettlement': 'Оберіть місце для поселення',
+  'build.promptRoad': 'Оберіть місце для дороги',
+  'build.promptCity': 'Оберіть поселення для розвитку',
 };

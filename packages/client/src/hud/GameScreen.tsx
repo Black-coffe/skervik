@@ -8,6 +8,8 @@ import './GameScreen.css';
 
 import { GameTable } from '../board/GameTable.js';
 import { TradeDemoControls } from '../dev/TradeDemoControls.js';
+import { useTranslation } from '../i18n/index.js';
+import type { TranslationKey } from '../i18n/keys.js';
 import { BottomDeck } from './BottomDeck.js';
 import { LogPanel } from './LogPanel.js';
 import { NoticeBar } from './NoticeBar.js';
@@ -16,21 +18,34 @@ import { SetupPrompt } from './SetupPrompt.js';
 import { canShowTradeDock, useUiStore } from './store.js';
 import { TopBar } from './TopBar.js';
 import { TradeZone } from './TradeZone.js';
+import type { BuildPrompt } from './useBuildPlacement.js';
+import { useBuildPlacement } from './useBuildPlacement.js';
 import { useSetupPlacement } from './useSetupPlacement.js';
 
+// S2.8.3b: the build prompt reuses the setup-prompt status-line visuals (over
+// the Chart) — same "tell the human what to click" role, one phase later.
+const BUILD_PROMPT_KEY: Readonly<Record<Exclude<BuildPrompt, null>, TranslationKey>> = {
+  buildSettlement: 'build.promptSettlement',
+  buildRoad: 'build.promptRoad',
+  buildCity: 'build.promptCity',
+};
+
 export function GameScreen() {
+  const { t } = useTranslation();
   const gameState = useUiStore((state) => state.gameState);
   // S2.7.1: the trade dock is legal only in phase 'main' — gate it out of the
   // DOM entirely elsewhere (not just visually) and offset the board so it
   // never renders under the dock's footprint while the dock IS shown.
   const dockVisible = canShowTradeDock(gameState.phase);
-  // S2.8.2: the setup-phase placement orchestrator — 'none'/null outside
-  // `phase==='setup'` (`deriveSetupPlacement`), so this is only ever wired
-  // onto `<GameTable>` DURING setup below; every other phase leaves
-  // `pickMode`/`onPick`/`legalTargets` `undefined`, keeping the S2.8.1 dev
-  // harness available there (`GameTable`'s `isDevHarnessEligible`).
+  // S2.8.2/S2.8.3b: a SINGLE active pick source at a time, selected by phase —
+  // setup → setup placement, main → build placement (inert until a build
+  // submode is armed). Every other phase feeds NO pick props, keeping the
+  // S2.8.1 dev harness available there (`GameTable`'s `isDevHarnessEligible`).
   const isSetupPhase = gameState.phase === 'setup';
+  const isMainPhase = gameState.phase === 'main';
   const setup = useSetupPlacement();
+  const build = useBuildPlacement();
+  const placement = isSetupPhase ? setup : isMainPhase ? build : null;
 
   return (
     <div className="game-screen">
@@ -44,16 +59,23 @@ export function GameScreen() {
         <GameTable
           state={gameState}
           dockVisible={dockVisible}
-          {...(isSetupPhase
+          {...(placement
             ? {
-                pickMode: setup.pickMode,
-                onPick: setup.onPick,
-                legalTargets: setup.legalTargets,
+                pickMode: placement.pickMode,
+                onPick: placement.onPick,
+                legalTargets: placement.legalTargets,
               }
             : {})}
         />
         {dockVisible ? <TradeZone /> : null}
         {isSetupPhase ? <SetupPrompt prompt={setup.prompt} /> : null}
+        {isMainPhase && build.prompt ? (
+          <div className="setup-prompt" role="status" aria-live="polite">
+            <span className="setup-prompt__text">
+              {t(BUILD_PROMPT_KEY[build.prompt])}
+            </span>
+          </div>
+        ) : null}
         <NoticeBar />
       </div>
       <div className="game-screen__log">

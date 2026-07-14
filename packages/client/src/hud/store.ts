@@ -19,6 +19,7 @@ import type {
 import { reduce } from '@skervik/core';
 import { create } from 'zustand';
 
+import type { BuildMode } from '../board/buildLegality.js';
 import { devFixtureState } from '../dev/devFixture.js';
 import type { ConnectionStatus, VersionMismatchInfo } from '../net/connection.js';
 import type { WsClientHandle } from '../net/wsClient.js';
@@ -76,7 +77,17 @@ export interface UiStore {
    * (quick match's default) before any snapshot arrives.
    */
   readonly isPrivateRoom: boolean;
+  /**
+   * S2.8.3b: the MAIN-phase build submode — UI-ONLY (which piece kind's board
+   * picking is armed), never part of `gameState` and never sent to the server.
+   * Lives here (not in a component) because two sibling HUD pieces share it:
+   * `BottomDeck` (the «Строить» selector) SETS it, `GameScreen`/`useBuildPlacement`
+   * READS it to arm board picking. `'none'` = no active build.
+   */
+  readonly buildMode: BuildMode;
   readonly setGameState: (next: GameState) => void;
+  /** Set (or clear with `'none'`) the UI-only build submode. Never touches `gameState`. */
+  readonly setBuildMode: (mode: BuildMode) => void;
   /**
    * The scope seam (S1.6.4 → S1.6.5). Composing/responding in the Trade UI
    * produces a typed {@link PlayerIntent} handed here. It records the intent as
@@ -182,7 +193,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   notice: null,
   isHost: false,
   isPrivateRoom: false,
+  buildMode: 'none',
   setGameState: (next) => set({ gameState: next }),
+  setBuildMode: (mode) => set({ buildMode: mode }),
   dispatchIntent: (intent) => {
     set((state) => {
       const entry = tradeLogEntryFromIntent(
