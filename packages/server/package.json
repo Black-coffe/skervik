@@ -31,9 +31,9 @@
     "@colyseus/sdk": "^0.17.43",
     "@colyseus/testing": "^0.17.11",
     "@electric-sql/pglite": "^0.5.4",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.20.1",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8",
-    "typescript": "^5"
+    "typescript": "^7"
   }
 }
