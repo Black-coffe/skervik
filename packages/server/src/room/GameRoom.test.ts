@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import {
+  type BoardGeneratedEvent,
   buildTopology,
   type EdgeId,
   type GameEndedEvent,
@@ -1261,6 +1262,64 @@ describe('GameRoom', () => {
     const { room, sink } = await seatFullRoom(3);
     expect(room.gameState.profileId).toBe('classic');
     expect(sink.events.some((e) => e.type === 'neutral.placed')).toBe(false);
+  });
+
+  // --- S2.1.7b D1/D2: seats + topology derive from the profile --------------
+  // `maxClients` now defaults from `loadRuleProfile(profileId).maxSeats`
+  // instead of a hardcoded constant, and `#startMatch` resolves its genesis
+  // topology via `topologyForRadius(board.radius, board.ports.length)` — the
+  // SAME memoized per-radius seam `@skervik/core` exposes — instead of the old
+  // always-radius-2 `buildTopology()`, so an `expanded` room's genesis board is
+  // actually radius-3/37-tile, not silently radius-2/19-tile.
+
+  it("an 'expanded' room defaults maxClients to the profile's own maxSeats (6) with no maxSeats option passed at all", async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      profileId: 'expanded',
+      seed: MATCH_START_SEED,
+    });
+    expect(loadRuleProfile('expanded').maxSeats).toBe(6);
+    expect(room.maxClients).toBe(6);
+  });
+
+  it('an explicit maxSeats option still overrides the profile default, even for expanded (D1: an override, never a removal) — mirrors the existing 1-4 seat override cases', async () => {
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      profileId: 'expanded',
+      maxSeats: 2,
+      seed: MATCH_START_SEED,
+    });
+    expect(room.maxClients).toBe(2);
+  });
+
+  it("[forcing] an 'expanded' room generates a 37-tile board, and a classic room created in the SAME process still generates 19 — proves topologyForRadius's per-radius memo serves two live rooms correctly (the old process-global buildTopology() singleton, always radius-2, could not). This test fails if GameRoom goes back to a no-arg buildTopology() call.", async () => {
+    const classic = await seatFullRoom(3);
+    const classicBoard = classic.sink.events.find(
+      (e): e is BoardGeneratedEvent => e.type === 'board.generated',
+    );
+    expect(classicBoard).toBeDefined();
+    expect(Object.keys(classicBoard?.tileKinds ?? {})).toHaveLength(19);
+
+    const expandedSink = new InMemoryEventSink();
+    const expandedRoom = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      profileId: 'expanded',
+      seed: MATCH_START_SEED,
+      sink: expandedSink,
+    });
+    for (let i = 0; i < 6; i++) {
+      await testServer.connectTo(expandedRoom, CONNECT_OPTS);
+    }
+    await nextTick();
+
+    expect(expandedRoom.gameState.phase).toBe('setup');
+    expect(expandedRoom.gameState.profileId).toBe('expanded');
+    const expandedBoard = expandedSink.events.find(
+      (e): e is BoardGeneratedEvent => e.type === 'board.generated',
+    );
+    expect(expandedBoard).toBeDefined();
+    expect(Object.keys(expandedBoard?.tileKinds ?? {})).toHaveLength(37);
+
+    // Same fixed seed, different profile -> genuinely different layouts, not a
+    // stale radius-2 board silently reused for the expanded room.
+    expect(expandedBoard?.tileKinds).not.toEqual(classicBoard?.tileKinds);
   });
 
   // --- S2.3.1: reconnect grace ("no karmic bans") -------------------------

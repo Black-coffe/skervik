@@ -289,15 +289,23 @@ export const PlayerIntentSchema = z.discriminatedUnion('type', [
 ]);
 
 /**
- * The four SHIPPING rule-profile ids (S2.1.1..S2.1.6) — deliberately a local
- * literal, not imported from `@skervik/core`'s `SHIPPING_PROFILE_IDS`: that
- * export is a plain `readonly RuleProfileId[]`, not the `[string, ...string[]]`
- * tuple shape `z.enum` needs, and this file already re-derives wire-only
- * shapes locally (see the intent schemas above). Reused below by both the
- * OUTBOUND `match.started` event payload and the INBOUND `JoinLobbySelectionSchema`
- * (S2.5.4) so the two never drift apart.
+ * The five SHIPPING rule-profile ids (S2.1.1..S2.1.6, S2.1.7b) — deliberately
+ * a local literal, not imported from `@skervik/core`'s `SHIPPING_PROFILE_IDS`:
+ * that export is a plain `readonly RuleProfileId[]`, not the
+ * `[string, ...string[]]` tuple shape `z.enum` needs, and this file already
+ * re-derives wire-only shapes locally (see the intent schemas above). Reused
+ * below by both the OUTBOUND `match.started` event payload and the INBOUND
+ * `JoinLobbySelectionSchema` (S2.5.4) so the two never drift apart.
+ * `'expanded'` (S2.1.7b) is the 5-6 seat / 37-tile preset — choosing it IS
+ * choosing a bigger room (plan D3); seats stay server-owned, never a wire field.
  */
-const ShippingProfileIdSchema = z.enum(['classic', 'balanced', 'blitz', 'twoPlayer']);
+const ShippingProfileIdSchema = z.enum([
+  'classic',
+  'balanced',
+  'blitz',
+  'twoPlayer',
+  'expanded',
+]);
 
 // --- outbound event payload variants ---------------------------------------
 
@@ -684,16 +692,22 @@ export type ConnectOptions = z.infer<typeof ConnectOptionsSchema>;
  * 🔴 Security requirement: `@skervik/core`'s `PROFILE_REGISTRY` is keyed by
  * `string` and additionally resolves SIX measurement-only profile ids
  * (`EXPERIMENTAL_PROFILE_IDS`) that must never be reachable from a client. This
- * is the explicit allow-list — `profileId` accepts ONLY the four SHIPPING ids
+ * is the explicit allow-list — `profileId` accepts ONLY the five SHIPPING ids
  * (`ShippingProfileIdSchema`); an experimental or unknown id fails `safeParse`,
  * so it can never reach `onCreate`/`loadRuleProfile`.
  *
  * `bots` reuses the EXISTING `GameRoomOptions.bots` shape (`{difficulty}` per
- * seat) — no new bot machinery — capped at 3 so a wire join can never request
- * more bots than a 4-seat Classic room can ever seat around at least one
- * human. `reconnectGraceSeconds`, if present, is floored to the ≥120s "no
- * karmic bans" product-law minimum by `onAuth` before the room ever reads it
- * (discharges the S2.3.1 nit) — never trusted as-is.
+ * seat) — no new bot machinery — capped at 5 (S2.1.7b: widened from 3 so a
+ * wire join can request enough bots to fill an `expanded` room's 6 seats
+ * around at least one human; a WIDENING is additive, so every previously-valid
+ * payload still parses). This schema-level cap alone is not profile-aware —
+ * `GameRoom.onAuth` additionally rejects `bots.length > maxSeats(profileId) - 1`
+ * for whichever profile was selected, so a `{profileId:'classic', bots:5}`
+ * payload (structurally ≤5, but more bots than a 4-seat Classic room has
+ * non-host seats for) is still refused. `reconnectGraceSeconds`, if present,
+ * is floored to the ≥120s "no karmic bans" product-law minimum by `onAuth`
+ * before the room ever reads it (discharges the S2.3.1 nit) — never trusted
+ * as-is.
  *
  * `isPrivate` (S2.5.3): a host's `client.create(...)` may request the room be
  * excluded from `joinOrCreate`/listing (`GameRoom.onCreate` → `this.setPrivate`).
@@ -706,7 +720,7 @@ export const JoinLobbySelectionSchema = z.object({
   profileId: ShippingProfileIdSchema.optional(),
   bots: z
     .array(z.object({ difficulty: z.enum(['easy', 'medium', 'hard']) }))
-    .max(3)
+    .max(5)
     .optional(),
   reconnectGraceSeconds: z.number().positive().optional(),
   isPrivate: z.boolean().optional(),

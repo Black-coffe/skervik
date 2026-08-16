@@ -10,7 +10,6 @@
 import { type Bot, createHeuristicBot, type Difficulty } from '@skervik/bots';
 import {
   type BoardGeneratedEvent,
-  buildTopology,
   type GameEndedEvent,
   type GameEvent,
   type GameState,
@@ -25,6 +24,7 @@ import {
   type RuleProfileId,
   type Seed,
   type TimerProfile,
+  topologyForRadius,
   validate,
 } from '@skervik/core';
 import {
@@ -53,9 +53,6 @@ import { createRoomSchema, RoomSchema, SeatSchema } from '../schema/RoomSchema.j
 import { generateSeed, sha256Hex } from '../seed.js';
 import { FsEventSink, type GameEventSink, InMemoryEventSink } from './eventSink.js';
 import { resolveForcedAction } from './forcedAction.js';
-
-/** Classic seat cap for M1 (3-4 players) — a room option, not a hardcoded rule. */
-const DEFAULT_MAX_SEATS = 4;
 
 /**
  * The default seat-hold grace window in seconds (S2.3.1, "no karmic bans"
@@ -159,14 +156,26 @@ export type VerifySessionToken = (
 ) => Promise<{ userId: string; displayName: string } | null>;
 
 export interface GameRoomOptions {
+  /**
+   * Explicit seat-count OVERRIDE (server-side only — never reachable from the
+   * wire, `JoinOptionsSchema.strict()` rejects the key, see `onAuth`'s doc).
+   * When omitted (the production default), `onCreate` derives the seat cap
+   * from the resolved profile's `loadRuleProfile(profileId).maxSeats` (S2.1.7b
+   * D1) — Classic/Balanced/Blitz stay 4, `twoPlayer` is 2, `expanded` is 6.
+   * Existing tests that pass this explicitly (e.g. `maxSeats: 2` for a
+   * `twoPlayer` room) keep winning over the profile default unchanged.
+   */
   readonly maxSeats?: number;
   /**
-   * The rule profile this match runs under (S2.1.1/S2.1.6). Defaults to
-   * `'classic'` — the M1 behavior, unchanged: lobby mode SELECTION is S2.5.4, so
-   * production rooms stay Classic/4 until that lands. A test/room can set
-   * `'twoPlayer'` (with `maxSeats: 2`) to run the 2-player mode, which places the
-   * profile's `neutralSettlements` neutral blockers at genesis (S2.1.6). Carried
-   * into `match.started` so replay/verify resolve the same rules (event-sourcing).
+   * The rule profile this match runs under (S2.1.1/S2.1.6/S2.1.7b). Defaults
+   * to `'classic'` — the M1 behavior, unchanged: lobby mode SELECTION is
+   * S2.5.4, so production rooms stay Classic/4 until that lands. A test/room
+   * can set `'twoPlayer'` (with `maxSeats: 2`) to run the 2-player mode, which
+   * places the profile's `neutralSettlements` neutral blockers at genesis
+   * (S2.1.6), or `'expanded'` for the 5-6 seat / 37-tile board (S2.1.7b) —
+   * `maxSeats` and the genesis topology both derive from THIS profile unless
+   * `maxSeats` is explicitly overridden above. Carried into `match.started` so
+   * replay/verify resolve the same rules (event-sourcing).
    */
   readonly profileId?: RuleProfileId;
   /**
@@ -471,7 +480,19 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
   #verifySessionToken?: VerifySessionToken;
 
   override async onCreate(options?: GameRoomOptions): Promise<void> {
-    this.maxClients = options?.maxSeats ?? DEFAULT_MAX_SEATS;
+    // The match's rule profile (S2.1.1/S2.1.6/S2.1.7b) — Classic by default
+    // (production has no lobby mode selection yet, S2.5.4); a `twoPlayer` room
+    // places neutral blockers at genesis (`#startMatch`), an `expanded` room
+    // seats 5-6 on the 37-tile board. Byte-unchanged for the default. Resolved
+    // BEFORE `maxClients` below (S2.1.7b ordering fix — seats are now
+    // profile-derived, so the profile must be known first).
+    this.#profileId = options?.profileId ?? 'classic';
+    // Seat cap (S2.1.7b D1): an explicit `options.maxSeats` override wins (every
+    // existing `maxSeats`-passing test, e.g. `twoPlayer` rooms, is unaffected);
+    // otherwise the CAP comes from the resolved profile's own `maxSeats` — so
+    // `profileId:'expanded'` yields a 6-seat room with no caller needing to pass
+    // `maxSeats` at all, and Classic/Balanced/Blitz keep the M1 default of 4.
+    this.maxClients = options?.maxSeats ?? loadRuleProfile(this.#profileId).maxSeats;
     // S2.6.2a: the session-token verifier is a define-time server option (bound
     // to the resolved secret in `boot.ts`), stored here for `onAuth`. A client
     // cannot inject it — `JoinOptionsSchema.strict()` forbids the key on the
@@ -479,10 +500,6 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     if (options?.verifySessionToken !== undefined) {
       this.#verifySessionToken = options.verifySessionToken;
     }
-    // The match's rule profile (S2.1.1/S2.1.6) — Classic by default (production
-    // has no lobby mode selection yet, S2.5.4); a `twoPlayer` room places
-    // neutral blockers at genesis (`#startMatch`). Byte-unchanged for the default.
-    this.#profileId = options?.profileId ?? 'classic';
     // Private rooms (S2.5.3): excludes this room from `joinOrCreate`'s listing
     // so only a `client.joinById(roomId)` holding this room's own id can reach
     // it. `onCreate` is now `async` (colyseus's `MatchMaker` already awaits its
@@ -737,10 +754,18 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // (ADR-0003). The board sub-profile comes from the resolved rule profile —
     // `twoPlayer` uses the standard Classic board (S2.1.6: phantom on the
     // standard board, no topology divergence), so this is byte-identical to the
-    // M1 path for every current profile. `board.generated`'s index continues
-    // from the post-start `eventIndex`, so both events form one contiguous batch.
+    // M1 path for every profile except `expanded` (S2.1.7b), whose radius-3
+    // board needs the matching radius-3 topology. `board.generated`'s index
+    // continues from the post-start `eventIndex`, so both events form one
+    // contiguous batch.
     const profile = loadRuleProfile(this.#profileId);
-    const topology = buildTopology();
+    // S2.1.7b (plan D2): route through core's memoized per-radius seam instead
+    // of the old no-arg `buildTopology()`, which always built the radius-2
+    // topology regardless of the room's actual profile — silently wrong for a
+    // room running `expanded`. `topologyForRadius` is memoized by
+    // `(radius, portSlotCount)`, so two live rooms (one classic, one expanded)
+    // each get their OWN correct topology from the same process-wide cache.
+    const topology = topologyForRadius(profile.board.radius, profile.board.ports.length);
     const layout = generateBoard(this.#seed, topology, profile.board);
     const boardGenerated: BoardGeneratedEvent = {
       type: 'board.generated',
@@ -965,6 +990,23 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       // client-side change was needed to correctly NOT report this as a
       // version mismatch.
       throw new ServerError(INVALID_LOBBY_SELECTION_CODE, 'invalid lobby selection');
+    }
+
+    // S2.1.7b: `JoinLobbySelectionSchema.bots` is capped at 5 by the schema
+    // ALONE (widened from 3 so an `expanded` room's 6 seats can be bot-filled
+    // around one human) — but that schema-level cap is not profile-aware, so
+    // a structurally-valid `{profileId:'classic', bots:5}` would still ask for
+    // more bots than a 4-seat Classic room has non-host seats for. Reject any
+    // roster that would exceed the SELECTED profile's own seat headroom
+    // (`maxSeats - 1`, reserving at least one seat for the joining human),
+    // same rejection reason/code as any other invalid lobby selection.
+    const selectedProfileId = lobby.data.profileId ?? 'classic';
+    const requestedBots = lobby.data.bots?.length ?? 0;
+    if (requestedBots > loadRuleProfile(selectedProfileId).maxSeats - 1) {
+      throw new ServerError(
+        INVALID_LOBBY_SELECTION_CODE,
+        'too many bots for the selected profile',
+      );
     }
 
     if (!JoinOptionsSchema.safeParse(options).success) {

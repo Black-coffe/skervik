@@ -174,6 +174,55 @@ describe('lobby preset selection + bot fill over the wire (S2.5.4)', () => {
     await room.leave();
   });
 
+  // --- S2.1.7b (AC2): bots capped by the SELECTED profile's own headroom ----
+  // `JoinLobbySelectionSchema.bots` widened its schema-level cap from 3 to 5
+  // (S2.1.7b) so an `expanded` room's 6 seats can be bot-filled around one
+  // human — but that schema cap alone is NOT profile-aware. `GameRoom.onAuth`
+  // additionally rejects a roster bigger than `maxSeats - 1` for whichever
+  // profile was actually selected, so a structurally-valid-but-semantically-
+  // impossible `{profileId:'classic', bots:5}` still refuses.
+
+  const FIVE_BOTS = Array.from({ length: 5 }, () => ({ difficulty: 'medium' as const }));
+
+  it("[forcing] {profileId:'classic', bots:5} is refused — 5 bots exceeds a 4-seat Classic room's 3 non-host seats, even though the wire schema alone (max 5) accepts the shape. This test fails if GameRoom.onAuth stops clamping bots to maxSeats-1 for the selected profile.", async () => {
+    await expect(
+      testServer.sdk.joinOrCreate(GAME_ROOM_NAME, {
+        ...CONNECT_OPTS,
+        profileId: 'classic',
+        bots: FIVE_BOTS,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("the SAME 5-bot roster is accepted for profileId:'expanded' (maxSeats 6, so 5 is exactly the 6-1 headroom) — proves the clamp is profile-aware, not a flat cap", async () => {
+    const room = await testServer.sdk.joinOrCreate(GAME_ROOM_NAME, {
+      ...CONNECT_OPTS,
+      profileId: 'expanded',
+      bots: FIVE_BOTS,
+    });
+    await nextTick();
+
+    const serverRoom = matchMaker.getLocalRoomById(room.roomId) as GameRoom;
+    expect(serverRoom.state.seats).toHaveLength(6);
+    expect(serverRoom.gameState.phase).toBe('setup');
+
+    await room.leave();
+  });
+
+  it('the server is still healthy after the refused 5-bot classic join above — a normal join right after succeeds', async () => {
+    await expect(
+      testServer.sdk.joinOrCreate(GAME_ROOM_NAME, {
+        ...CONNECT_OPTS,
+        profileId: 'classic',
+        bots: FIVE_BOTS,
+      }),
+    ).rejects.toThrow();
+
+    const room = await testServer.sdk.joinOrCreate(GAME_ROOM_NAME, CONNECT_OPTS);
+    expect(room.roomId).toBeTruthy();
+    await room.leave();
+  });
+
   // --- 6. reconnectGraceSeconds arriving from the wire is floored -----------
 
   it('[forcing] reconnectGraceSeconds arriving from the wire is floored at the >=120s product-law minimum (discharges the S2.3.1 nit) — a test passing 60 observes 120', async () => {

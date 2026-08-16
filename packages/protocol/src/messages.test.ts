@@ -17,6 +17,7 @@ import {
   ErrorEnvelopeSchema,
   EventBatchEnvelopeSchema,
   GameEventSchema,
+  JoinLobbySelectionSchema,
   JoinOptionsSchema,
   PlayerIntentSchema,
   RejectEnvelopeSchema,
@@ -540,6 +541,51 @@ describe('JoinOptionsSchema (the FULL strict wire allow-list, security follow-up
         somethingNew: true,
       }).success,
     ).toBe(false);
+  });
+});
+
+// --- S2.1.7b: `expanded` joins the SHIPPING allow-list, bots cap widens -----
+
+describe('JoinLobbySelectionSchema (S2.1.7b: expanded profile + widened bots cap)', () => {
+  it("accepts profileId:'expanded'", () => {
+    const parsed = JoinLobbySelectionSchema.safeParse({ profileId: 'expanded' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.profileId).toBe('expanded');
+  });
+
+  it('accepts a 5-bot roster (widened .max(3) -> .max(5), a superset — every previously-valid 3-bot payload still parses)', () => {
+    const fiveBots = Array.from({ length: 5 }, () => ({ difficulty: 'medium' as const }));
+    expect(JoinLobbySelectionSchema.safeParse({ bots: fiveBots }).success).toBe(true);
+    const threeBots = fiveBots.slice(0, 3);
+    expect(JoinLobbySelectionSchema.safeParse({ bots: threeBots }).success).toBe(true);
+  });
+
+  it('still rejects a 6-bot roster (schema-level cap stays at 5, not unbounded)', () => {
+    const sixBots = Array.from({ length: 6 }, () => ({ difficulty: 'medium' as const }));
+    expect(JoinLobbySelectionSchema.safeParse({ bots: sixBots }).success).toBe(false);
+  });
+
+  it("still rejects an unknown/experimental profileId (the allow-list gained a member, it wasn't opened up)", () => {
+    expect(JoinLobbySelectionSchema.safeParse({ profileId: 'nonsense' }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('GameEventSchema — match.started carries the expanded profileId (S2.1.7b)', () => {
+  it("round-trips profileId:'expanded'", () => {
+    const parsed = GameEventSchema.safeParse({
+      type: 'match.started',
+      index: 0,
+      matchId: 'm1',
+      seedHash: 'deadbeef',
+      playerIds: ['p1', 'p2', 'p3', 'p4', 'p5'],
+      profileId: 'expanded',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'match.started') {
+      expect(parsed.data.profileId).toBe('expanded');
+    }
   });
 });
 
