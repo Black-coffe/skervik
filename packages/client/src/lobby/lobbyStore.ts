@@ -5,7 +5,7 @@
 // false and `<GameScreen>` once it flips — either because the human pressed
 // Start, or because `main.tsx` detected a resumable match on a cold load and
 // skipped the lobby entirely (S2.3.2a resume-first, never re-applying a pick).
-import type { RuleProfileId } from '@skervik/core';
+import { loadRuleProfile, type RuleProfileId } from '@skervik/core';
 import { create } from 'zustand';
 
 import type {
@@ -15,8 +15,15 @@ import type {
   WsClientHandle,
 } from '../net/wsClient.js';
 
-/** Mirrors the server's wire-level cap (`JoinLobbySelectionSchema.bots`, protocol/src/messages.ts) — a 4-seat Classic room around at least one human. */
-export const MAX_LOBBY_BOTS = 3;
+/**
+ * The bot-count ceiling for a given preset (S2.1.7b-05) — one human seat is
+ * always reserved, so the cap is `maxSeats - 1` (3 for Classic/Balanced/Blitz,
+ * 1 for twoPlayer, 5 for Grand Chart/`expanded`). Replaces the old fixed
+ * `MAX_LOBBY_BOTS = 3`, which silently assumed every room was 4-seat Classic.
+ */
+export function maxBotsForProfile(profileId: RuleProfileId): number {
+  return loadRuleProfile(profileId).maxSeats - 1;
+}
 
 /**
  * Bot difficulty tuning is explicitly OUT OF SCOPE for this story's UI (only
@@ -29,7 +36,7 @@ export type LobbyJoinModeChoice = 'quickMatch' | 'createPrivate' | 'joinByCode';
 
 export interface LobbyStore {
   readonly profileId: RuleProfileId;
-  /** 0..{@link MAX_LOBBY_BOTS} — clamped on every write. */
+  /** 0..{@link maxBotsForProfile}(profileId) — clamped on every write, including a preset switch that lowers the cap below the current count. */
   readonly botCount: number;
   /** Quick match / create a private room / join an existing one by its code (S2.5.3). */
   readonly joinMode: LobbyJoinModeChoice;
@@ -44,14 +51,22 @@ export interface LobbyStore {
   readonly start: () => void;
 }
 
-export const useLobbyStore = create<LobbyStore>((set) => ({
+export const useLobbyStore = create<LobbyStore>((set, get) => ({
   profileId: 'classic',
   botCount: 0,
   joinMode: 'quickMatch',
   roomCode: '',
   started: false,
-  setProfileId: (profileId) => set({ profileId }),
-  setBotCount: (count) => set({ botCount: Math.max(0, Math.min(MAX_LOBBY_BOTS, count)) }),
+  // Switching presets re-clamps the held botCount against the NEW cap — a
+  // 4-5 bot pick made under Grand Chart must not survive a switch back to
+  // Classic (max 3) as a stale, invalid-on-send value.
+  setProfileId: (profileId) =>
+    set((state) => ({
+      profileId,
+      botCount: Math.min(state.botCount, maxBotsForProfile(profileId)),
+    })),
+  setBotCount: (count) =>
+    set({ botCount: Math.max(0, Math.min(maxBotsForProfile(get().profileId), count)) }),
   setJoinMode: (joinMode) => set({ joinMode }),
   setRoomCode: (roomCode) => set({ roomCode }),
   start: () => set({ started: true }),

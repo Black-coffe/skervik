@@ -8,4 +8,6 @@ export const FLOTILLA_KEY: Readonly<Record<FlotillaId, TranslationKey>> = {
   orca: 'hud.flotilla.orca',
   walrus: 'hud.flotilla.walrus',
   narwhal: 'hud.flotilla.narwhal',
+  moray: 'hud.flotilla.moray',
+  manta: 'hud.flotilla.manta',
 };

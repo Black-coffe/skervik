@@ -9,7 +9,7 @@ import './LobbyScreen.css';
 
 import { type RuleProfileId, SHIPPING_PROFILE_IDS } from '@skervik/core';
 import type { ChangeEvent, KeyboardEvent } from 'react';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 
 import { Button } from '../hud/components/Button.js';
 import { useUiStore } from '../hud/store.js';
@@ -19,7 +19,7 @@ import type { JoinMode, LobbyJoinFields } from '../net/wsClient.js';
 import {
   deriveLobbyViewState,
   type LobbyJoinModeChoice,
-  MAX_LOBBY_BOTS,
+  maxBotsForProfile,
   selectJoinMode,
   selectLobbySelection,
   useLobbyStore,
@@ -52,8 +52,10 @@ const PRESET_KEYS: Record<
   },
 };
 
-/** [0, 1, ..., MAX_LOBBY_BOTS] — the selectable bot-count options. */
-const BOT_COUNT_OPTIONS = Array.from({ length: MAX_LOBBY_BOTS + 1 }, (_, i) => i);
+/** [0, 1, ..., maxBotsForProfile(profileId)] — the selectable bot-count options, preset-dependent (S2.1.7b-05). */
+function botCountOptionsFor(profileId: RuleProfileId): readonly number[] {
+  return Array.from({ length: maxBotsForProfile(profileId) + 1 }, (_, i) => i);
+}
 
 /** The three join-mode choices (S2.5.3), in display/keyboard-cycle order. */
 const JOIN_MODES: readonly LobbyJoinModeChoice[] = [
@@ -104,6 +106,10 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
   const isPrivateRoom = useUiStore((state) => state.isPrivateRoom);
   const [copied, setCopied] = useState(false);
 
+  // Preset-dependent (S2.1.7b-05): recomputed only when the selected preset
+  // changes, not on every render.
+  const botCountOptions = useMemo(() => botCountOptionsFor(profileId), [profileId]);
+
   const joinModeRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const presetRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const botRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -139,13 +145,13 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
   function handleBotKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number | undefined;
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      nextIndex = (index + 1) % BOT_COUNT_OPTIONS.length;
+      nextIndex = (index + 1) % botCountOptions.length;
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      nextIndex = (index - 1 + BOT_COUNT_OPTIONS.length) % BOT_COUNT_OPTIONS.length;
+      nextIndex = (index - 1 + botCountOptions.length) % botCountOptions.length;
     }
     if (nextIndex === undefined) return;
     event.preventDefault();
-    const next = BOT_COUNT_OPTIONS[nextIndex] as number;
+    const next = botCountOptions[nextIndex] as number;
     setBotCount(next);
     botRefs.current[nextIndex]?.focus();
   }
@@ -299,7 +305,7 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
                   role="radiogroup"
                   aria-label={t('a11y.botCountSelector')}
                 >
-                  {BOT_COUNT_OPTIONS.map((count, index) => {
+                  {botCountOptions.map((count, index) => {
                     const active = count === botCount;
                     return (
                       <button

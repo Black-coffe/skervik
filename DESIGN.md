@@ -69,10 +69,17 @@ flotilla emblem glyph (a11y invariant: symbol + color).
 | Косатка / Orca       | `--fl-orca`    | `oklch(0.95 0 0)`      | `#eeeeee` | orca fin (black on white) |
 | Морж / Walrus        | `--fl-walrus`  | `oklch(0.60 0.14 45)`  | `#c26030` | walrus tusks              |
 | Нарвал / Narwhal     | `--fl-narwhal` | `oklch(0.78 0.10 190)` | `#60ccc5` | narwhal horn              |
+| Мурена / Moray       | `--fl-moray`   | `oklch(0.62 0.13 145)` | `#4f9257` | moray silhouette          |
+| Манта / Manta        | `--fl-manta`   | `oklch(0.55 0.14 330)` | `#a1548f` | manta ray silhouette      |
+
+Seats 5-6 of the `expanded` (Grand Chart) 5-6 player board (S2.1.7b-05).
 
 Separability: petrel vs narwhal differ in lightness (0.60 vs 0.78), not just
-hue — verified for deutan/protan reads. Orca is achromatic. On the canvas,
-pieces additionally differ by flag shape per flotilla when budget allows.
+hue — verified for deutan/protan reads. Moray (hue 145, L 0.62) vs narwhal
+(hue 190, L 0.78) are likewise separated by lightness, not hue alone — the
+two closest hues on the wheel. Manta (hue 330) occupies its own unused hue
+region. Orca is achromatic. On the canvas, pieces additionally differ by
+flag shape per flotilla when budget allows.
 
 ### 2.3 Resource colors — data palette
 

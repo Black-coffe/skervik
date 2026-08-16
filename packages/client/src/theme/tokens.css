@@ -26,6 +26,8 @@
   --fl-orca: oklch(0.95 0 0);
   --fl-walrus: oklch(0.6 0.14 45);
   --fl-narwhal: oklch(0.78 0.1 190);
+  --fl-moray: oklch(0.62 0.13 145);
+  --fl-manta: oklch(0.55 0.14 330);
 
   /* §2.3 Resource colors */
   --res-timber: oklch(0.55 0.1 150);

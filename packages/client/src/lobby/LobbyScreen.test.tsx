@@ -1,7 +1,8 @@
 // LobbyScreen render smoke — `renderToStaticMarkup` (no jsdom), mirrors
 // `hud/NoticeBar.test.tsx`. Asserts the default (quick match) render:
-// three radiogroups, all four shipping presets, a Start button, and that
-// Start never fires on render alone. The store-driven CONDITIONAL sections
+// three radiogroups, all five shipping presets (S2.1.7b-05 adds `expanded` /
+// Grand Chart), a Start button, and that Start never fires on render alone.
+// The store-driven CONDITIONAL sections
 // (join-by-code hides the rule selectors, the invite link, Start-disabled)
 // are proven separately + purely by `lobbyStore.test.ts`'s
 // `deriveLobbyViewState` tests — NOT here: zustand v5's SSR `getServerSnapshot`
@@ -15,7 +16,7 @@ import { I18nProvider } from '../i18n/index.js';
 import { LobbyScreen } from './LobbyScreen.js';
 
 describe('LobbyScreen', () => {
-  it('renders the join-mode, preset, and bot-count radiogroups, all four shipping presets, and a Start button — onStart never fires on render alone', () => {
+  it('renders the join-mode, preset, and bot-count radiogroups, all five shipping presets, and a Start button — onStart never fires on render alone', () => {
     const onStart = vi.fn();
     // `ru` is DEFAULT_LOCALE (`i18n/locale.ts`) — assert the RU copy, same as
     // every other component's default-render smoke test in this codebase.
@@ -30,11 +31,12 @@ describe('LobbyScreen', () => {
     expect(html).toContain('Быстрый поиск');
     expect(html).toContain('Создать приватную');
     expect(html).toContain('По коду');
-    // All four shipping preset names present.
+    // All five shipping preset names present (S2.1.7b-05: expanded/Grand Chart).
     expect(html).toContain('Классика');
     expect(html).toContain('Баланс');
     expect(html).toContain('Блиц');
     expect(html).toContain('На двоих');
+    expect(html).toContain('Большая лоция');
     // Quick match + Classic are the default selections.
     expect(html.match(/aria-checked="true"/g)?.length).toBeGreaterThanOrEqual(2);
     // Bot-count options 0..3.

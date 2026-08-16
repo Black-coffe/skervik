@@ -44,6 +44,8 @@ export const TRANSLATION_KEYS = [
   'hud.flotilla.orca',
   'hud.flotilla.walrus',
   'hud.flotilla.narwhal',
+  'hud.flotilla.moray',
+  'hud.flotilla.manta',
   'resource.timber',
   'resource.clay',
   'resource.fleece',

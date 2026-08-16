@@ -88,6 +88,30 @@ describe('buildBuildingDescriptors', () => {
     expect(colors.size).toBe(4);
     expect(flotillaIds.size).toBe(4);
   });
+
+  it('[S2.1.7b-05] every 6-flotilla mapping is distinguishable: 6 distinct colors for 6 distinct owners on a 5-6 seat (expanded) room', () => {
+    const sixSeatOrder = [
+      'player-1',
+      'player-2',
+      'player-3',
+      'player-4',
+      'player-5',
+      'player-6',
+    ];
+    const vertices = topology.vertices.slice(0, 6).map((v) => v.id);
+    const settlements: Record<string, string> = {};
+    sixSeatOrder.forEach((playerId, i) => {
+      settlements[vertices[i] as string] = playerId;
+    });
+    const buildings: BuildingsState = { settlements, roads: {} };
+
+    const { pieces } = buildBuildingDescriptors(topology, buildings, sixSeatOrder);
+    expect(pieces).toHaveLength(6);
+    const colors = new Set(pieces.map((p) => p.color));
+    const flotillaIds = new Set(pieces.map((p) => p.flotillaId));
+    expect(colors.size).toBe(6);
+    expect(flotillaIds.size).toBe(6);
+  });
 });
 
 describe('buildPortDescriptors', () => {

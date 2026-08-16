@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   deriveLobbyViewState,
-  MAX_LOBBY_BOTS,
+  maxBotsForProfile,
   selectJoinMode,
   selectLobbySelection,
   shouldMarkConnected,
@@ -49,9 +49,34 @@ describe('setBotCount', () => {
     expect(useLobbyStore.getState().botCount).toBe(0);
   });
 
-  it(`clamps above ${MAX_LOBBY_BOTS} to ${MAX_LOBBY_BOTS} (matches the server's wire-level cap)`, () => {
+  it('clamps above the current preset cap to that cap (default preset is classic, cap 3)', () => {
     useLobbyStore.getState().setBotCount(99);
-    expect(useLobbyStore.getState().botCount).toBe(MAX_LOBBY_BOTS);
+    expect(useLobbyStore.getState().botCount).toBe(maxBotsForProfile('classic'));
+  });
+
+  it('[forcing] under the expanded preset (cap 5), accepts up to 5 bots', () => {
+    useLobbyStore.getState().setProfileId('expanded');
+    useLobbyStore.getState().setBotCount(5);
+    expect(useLobbyStore.getState().botCount).toBe(5);
+    expect(maxBotsForProfile('expanded')).toBe(5);
+  });
+});
+
+describe('setProfileId — switch-down clamp (S2.1.7b-05)', () => {
+  it('[forcing] switching from expanded (5 bots picked) back to classic clamps botCount down to 3, never sending an invalid selection', () => {
+    useLobbyStore.getState().setProfileId('expanded');
+    useLobbyStore.getState().setBotCount(5);
+    expect(useLobbyStore.getState().botCount).toBe(5);
+
+    useLobbyStore.getState().setProfileId('classic');
+    expect(useLobbyStore.getState().profileId).toBe('classic');
+    expect(useLobbyStore.getState().botCount).toBe(maxBotsForProfile('classic'));
+  });
+
+  it('switching to a preset with a HIGHER cap leaves an in-range botCount untouched', () => {
+    useLobbyStore.getState().setBotCount(2);
+    useLobbyStore.getState().setProfileId('expanded');
+    expect(useLobbyStore.getState().botCount).toBe(2);
   });
 });
 
