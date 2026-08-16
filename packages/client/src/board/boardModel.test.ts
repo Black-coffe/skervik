@@ -1,11 +1,12 @@
-import type { BoardState } from '@skervik/core';
-import { buildTopology, generateBoard } from '@skervik/core';
+import type { BoardState, RuleProfileId } from '@skervik/core';
+import { generateBoard, loadRuleProfile } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
 import { CANVAS_COLORS, DESERT_COLOR, RESOURCE_COLORS } from '../theme/canvasColors.js';
 import { buildTileDescriptors } from './boardModel.js';
+import { topologyForProfile } from './matchTopology.js';
 
-const topology = buildTopology();
+const topology = topologyForProfile('classic');
 const SEED = 'boardmodel-test-seed';
 
 function realBoard(): BoardState {
@@ -23,11 +24,32 @@ describe('buildTileDescriptors', () => {
     expect(buildTileDescriptors(topology, undefined)).toEqual([]);
   });
 
-  it('returns exactly 19 descriptors, one per topology tile, for a generated board', () => {
-    const descriptors = buildTileDescriptors(topology, realBoard());
-    expect(descriptors).toHaveLength(19);
-    expect(new Set(descriptors.map((d) => d.tileId)).size).toBe(19);
-  });
+  // S2.1.7b-03: parameterized over both shipping board sizes — Classic
+  // (radius 2) and the expanded 5–6 player board (radius 3) — proving
+  // `buildTileDescriptors` is genuinely topology-driven, not hardcoded to 19.
+  it.each([
+    { profileId: 'classic' as RuleProfileId, tiles: 19, vertices: 54, edges: 72 },
+    { profileId: 'expanded' as RuleProfileId, tiles: 37, vertices: 96, edges: 132 },
+  ])(
+    'returns exactly $tiles descriptors, one per topology tile, for $profileId ($vertices vertices / $edges edges)',
+    ({ profileId, tiles, vertices, edges }) => {
+      const topo = topologyForProfile(profileId);
+      expect(topo.tiles.length).toBe(tiles);
+      expect(topo.vertices.length).toBe(vertices);
+      expect(topo.edges.length).toBe(edges);
+
+      const layout = generateBoard(SEED, topo, loadRuleProfile(profileId).board);
+      const board: BoardState = {
+        tileKinds: layout.tileKinds,
+        tileTokens: layout.tileTokens,
+        portContents: layout.portContents,
+        robberTileId: layout.robberTileId,
+      };
+      const descriptors = buildTileDescriptors(topo, board);
+      expect(descriptors).toHaveLength(tiles);
+      expect(new Set(descriptors.map((d) => d.tileId)).size).toBe(tiles);
+    },
+  );
 
   it('maps each resource kind to its §2.3 canvas color', () => {
     const board = realBoard();

@@ -16,6 +16,7 @@ import {
   selectIsMyOutgoing,
   selectIsMyTurn,
   selectOpenOffer,
+  selectProfileId,
   selectSeatOrder,
   shouldShowGame,
   useUiStore,
@@ -85,6 +86,19 @@ describe('selectSeatOrder', () => {
     const { playerOrder: _playerOrder, ...rest } = devFixtureState;
     const state: GameState = rest;
     expect(selectSeatOrder(state)).toEqual(state.players.map((p) => p.id));
+  });
+});
+
+describe('selectProfileId', () => {
+  it("defaults to 'classic' when GameState.profileId is absent (before match.started carries it)", () => {
+    const { profileId: _profileId, ...rest } = devFixtureState;
+    const state: GameState = rest;
+    expect(selectProfileId(state)).toBe('classic');
+  });
+
+  it('returns the active match profileId once match.started set it', () => {
+    const state: GameState = { ...devFixtureState, profileId: 'expanded' };
+    expect(selectProfileId(state)).toBe('expanded');
   });
 });
 

@@ -10,16 +10,18 @@
 // `state.playersToDiscard` is non-empty (`intent.moveRobber` would be rejected
 // `MUST_DISCARD_FIRST`). Knight-triggered robber moves are S2.8.5.
 
-import type { GameState, MoveRobberIntent, PlayerId, TileId } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
+import type {
+  BoardTopology,
+  GameState,
+  MoveRobberIntent,
+  PlayerId,
+  TileId,
+} from '@skervik/core';
 
 import type { LegalTargets, Pick, PickMode } from '../board/BoardScene.js';
+import { useMatchTopology } from '../board/matchTopology.js';
 import { stealVictims } from '../board/robberLegality.js';
 import { useUiStore } from './store.js';
-
-// Board geometry never changes — computed once, cached module-level (same
-// convention as `useSetupPlacement.ts`/`useBuildPlacement.ts`).
-const TOPOLOGY = buildTopology();
 
 /** What the robber prompt line should say (`hud/RobberPrompt.tsx` maps this to a `t()` key). */
 export type RobberPrompt = 'moveRobber' | 'chooseVictim' | null;
@@ -59,6 +61,7 @@ const INACTIVE_VIEW: RobberPlacementView = {
  */
 export function deriveRobberPlacement(
   gameState: GameState,
+  topology: BoardTopology,
   myPlayerId: PlayerId,
   pendingTileId: TileId | null,
 ): RobberPlacementView {
@@ -68,7 +71,7 @@ export function deriveRobberPlacement(
     return INACTIVE_VIEW;
   }
   if (pendingTileId !== null) {
-    const victims = stealVictims(gameState, TOPOLOGY, pendingTileId, myPlayerId);
+    const victims = stealVictims(gameState, topology, pendingTileId, myPlayerId);
     if (victims.length > 0) {
       return { pickMode: 'none', legalTargets: null, prompt: 'chooseVictim', victims };
     }
@@ -89,7 +92,7 @@ export type RobberTilePickResult =
  */
 export function resolveRobberTilePick(
   state: GameState,
-  topology: ReturnType<typeof buildTopology>,
+  topology: BoardTopology,
   tileId: TileId,
   myPlayerId: PlayerId,
 ): RobberTilePickResult {
@@ -137,8 +140,9 @@ export function useRobberPlacement(): UseRobberPlacementResult {
   const dispatchIntent = useUiStore((state) => state.dispatchIntent);
   const robberPendingTile = useUiStore((state) => state.robberPendingTile);
   const setRobberPendingTile = useUiStore((state) => state.setRobberPendingTile);
+  const topology = useMatchTopology();
 
-  const view = deriveRobberPlacement(gameState, myPlayerId, robberPendingTile);
+  const view = deriveRobberPlacement(gameState, topology, myPlayerId, robberPendingTile);
 
   return {
     pickMode: view.pickMode,
@@ -147,7 +151,7 @@ export function useRobberPlacement(): UseRobberPlacementResult {
     victims: view.victims,
     onPick: (pick) => {
       if (pick.kind !== 'tile') return;
-      const result = resolveRobberTilePick(gameState, TOPOLOGY, pick.id, myPlayerId);
+      const result = resolveRobberTilePick(gameState, topology, pick.id, myPlayerId);
       if ('dispatch' in result) {
         dispatchIntent(result.dispatch);
         setRobberPendingTile(null);

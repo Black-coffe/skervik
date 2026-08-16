@@ -49,7 +49,9 @@ function baseState(overrides: Partial<GameState>): GameState {
 
 describe('deriveVenturePlacement — inactive guards', () => {
   it('is inactive when no play is armed', () => {
-    expect(deriveVenturePlacement(baseState({}), MY_ID, 'none', null, [])).toEqual({
+    expect(
+      deriveVenturePlacement(baseState({}), topology, MY_ID, 'none', null, []),
+    ).toEqual({
       active: false,
       pickMode: 'none',
       legalTargets: null,
@@ -61,6 +63,7 @@ describe('deriveVenturePlacement — inactive guards', () => {
   it('is inactive outside the main phase', () => {
     const view = deriveVenturePlacement(
       baseState({ phase: 'roll' }),
+      topology,
       MY_ID,
       'knight',
       null,
@@ -72,6 +75,7 @@ describe('deriveVenturePlacement — inactive guards', () => {
   it("is inactive when it isn't my turn", () => {
     const view = deriveVenturePlacement(
       baseState({ currentPlayerId: OPPONENT_ID }),
+      topology,
       MY_ID,
       'knight',
       null,
@@ -83,6 +87,7 @@ describe('deriveVenturePlacement — inactive guards', () => {
   it('is inactive once a Venture has already been played this turn', () => {
     const view = deriveVenturePlacement(
       baseState({ devCardPlayedThisTurn: true }),
+      topology,
       MY_ID,
       'roadBuilding',
       null,
@@ -94,7 +99,14 @@ describe('deriveVenturePlacement — inactive guards', () => {
 
 describe('deriveVenturePlacement — knight', () => {
   it('arms tile picking (prompt knightMove) when no tile is pending', () => {
-    const view = deriveVenturePlacement(baseState({}), MY_ID, 'knight', null, []);
+    const view = deriveVenturePlacement(
+      baseState({}),
+      topology,
+      MY_ID,
+      'knight',
+      null,
+      [],
+    );
     expect(view.active).toBe(true);
     expect(view.pickMode).toBe('tile');
     expect(view.prompt).toBe('knightMove');
@@ -110,7 +122,14 @@ describe('deriveVenturePlacement — knight', () => {
       buildings,
       players: [player(MY_ID), player(OPPONENT_ID, { timber: 1 })],
     });
-    const view = deriveVenturePlacement(state, MY_ID, 'knight', OTHER_TILE.id, []);
+    const view = deriveVenturePlacement(
+      state,
+      topology,
+      MY_ID,
+      'knight',
+      OTHER_TILE.id,
+      [],
+    );
     expect(view.pickMode).toBe('none');
     expect(view.prompt).toBe('knightChooseVictim');
     expect(view.victims).toEqual([OPPONENT_ID]);
@@ -118,7 +137,14 @@ describe('deriveVenturePlacement — knight', () => {
 
   it('self-heals a stale pending tile with 0 victims back to tile-picking', () => {
     const state = baseState({ buildings: { settlements: {}, roads: {} }, players: [] });
-    const view = deriveVenturePlacement(state, MY_ID, 'knight', OTHER_TILE.id, []);
+    const view = deriveVenturePlacement(
+      state,
+      topology,
+      MY_ID,
+      'knight',
+      OTHER_TILE.id,
+      [],
+    );
     expect(view.pickMode).toBe('tile');
     expect(view.prompt).toBe('knightMove');
     expect(view.victims).toEqual([]);
@@ -127,7 +153,14 @@ describe('deriveVenturePlacement — knight', () => {
 
 describe('deriveVenturePlacement — roadBuilding', () => {
   it('arms edge picking with prompt roadBuildingFirst at 0 picked', () => {
-    const view = deriveVenturePlacement(baseState({}), MY_ID, 'roadBuilding', null, []);
+    const view = deriveVenturePlacement(
+      baseState({}),
+      topology,
+      MY_ID,
+      'roadBuilding',
+      null,
+      [],
+    );
     expect(view.active).toBe(true);
     expect(view.pickMode).toBe('edge');
     expect(view.prompt).toBe('roadBuildingFirst');
@@ -136,18 +169,27 @@ describe('deriveVenturePlacement — roadBuilding', () => {
   });
 
   it('shows prompt roadBuildingSecond once 1 edge is picked', () => {
-    const view = deriveVenturePlacement(baseState({}), MY_ID, 'roadBuilding', null, [
-      E1.id,
-    ]);
+    const view = deriveVenturePlacement(
+      baseState({}),
+      topology,
+      MY_ID,
+      'roadBuilding',
+      null,
+      [E1.id],
+    );
     expect(view.pickMode).toBe('edge');
     expect(view.prompt).toBe('roadBuildingSecond');
   });
 
   it('drops pickMode to none (and prompt to null) once 2 edges are picked (the cap)', () => {
-    const view = deriveVenturePlacement(baseState({}), MY_ID, 'roadBuilding', null, [
-      E0.id,
-      E1.id,
-    ]);
+    const view = deriveVenturePlacement(
+      baseState({}),
+      topology,
+      MY_ID,
+      'roadBuilding',
+      null,
+      [E0.id, E1.id],
+    );
     expect(view.active).toBe(true);
     expect(view.pickMode).toBe('none');
     expect(view.prompt).toBeNull();

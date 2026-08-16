@@ -8,16 +8,12 @@
 // `setState()`, see that file's doc comment) — with a thin hook on top that
 // wires them to the live store.
 
-import type { GameState, PlayerId, PlayerIntent } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
+import type { BoardTopology, GameState, PlayerId, PlayerIntent } from '@skervik/core';
 
 import type { LegalTargets, Pick, PickMode } from '../board/BoardScene.js';
+import { useMatchTopology } from '../board/matchTopology.js';
 import { legalSetupRoads, legalSetupSettlements } from '../board/setupLegality.js';
 import { useUiStore } from './store.js';
-
-// Board geometry never changes — computed once, cached module-level (same
-// convention as `board/GameTable.tsx`'s `TOPOLOGY`).
-const TOPOLOGY = buildTopology();
 
 /** What the turn-prompt status line should say (`hud/SetupPrompt.tsx` maps this to a `t()` key). */
 export type SetupPrompt = 'placeSettlement' | 'placeRoad' | 'opponentTurn' | null;
@@ -41,6 +37,7 @@ const INACTIVE_VIEW: SetupPlacementView = {
  */
 export function deriveSetupPlacement(
   gameState: GameState,
+  topology: BoardTopology,
   myPlayerId: PlayerId,
 ): SetupPlacementView {
   if (gameState.phase !== 'setup') return INACTIVE_VIEW;
@@ -50,7 +47,7 @@ export function deriveSetupPlacement(
   if (gameState.pendingRoadVertexId === undefined) {
     return {
       pickMode: 'vertex',
-      legalTargets: { kind: 'vertex', ids: legalSetupSettlements(gameState, TOPOLOGY) },
+      legalTargets: { kind: 'vertex', ids: legalSetupSettlements(gameState, topology) },
       prompt: 'placeSettlement',
     };
   }
@@ -58,7 +55,7 @@ export function deriveSetupPlacement(
     pickMode: 'edge',
     legalTargets: {
       kind: 'edge',
-      ids: legalSetupRoads(gameState, TOPOLOGY, gameState.pendingRoadVertexId),
+      ids: legalSetupRoads(gameState, topology, gameState.pendingRoadVertexId),
     },
     prompt: 'placeRoad',
   };
@@ -103,8 +100,9 @@ export function useSetupPlacement(): UseSetupPlacementResult {
   const gameState = useUiStore((state) => state.gameState);
   const myPlayerId = useUiStore((state) => state.myPlayerId);
   const dispatchIntent = useUiStore((state) => state.dispatchIntent);
+  const topology = useMatchTopology();
 
-  const view = deriveSetupPlacement(gameState, myPlayerId);
+  const view = deriveSetupPlacement(gameState, topology, myPlayerId);
 
   return {
     pickMode: view.pickMode,

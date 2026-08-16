@@ -5,8 +5,7 @@
 // (`deriveBuildPlacement`) + a pure resolver (`resolveBuildPick`), unit-tested
 // WITHOUT a React render, with a thin hook wiring them to the live store.
 
-import type { GameState, PlayerId, PlayerIntent } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
+import type { BoardTopology, GameState, PlayerId, PlayerIntent } from '@skervik/core';
 
 import type { LegalTargets, Pick, PickMode } from '../board/BoardScene.js';
 import type { BuildMode } from '../board/buildLegality.js';
@@ -15,11 +14,8 @@ import {
   legalBuildRoads,
   legalBuildSettlements,
 } from '../board/buildLegality.js';
+import { useMatchTopology } from '../board/matchTopology.js';
 import { useUiStore } from './store.js';
-
-// Board geometry never changes — computed once, cached module-level (same
-// convention as `useSetupPlacement.ts`'s `TOPOLOGY`).
-const TOPOLOGY = buildTopology();
 
 /** What the build-prompt line should say (mapped to a `t()` key in `GameScreen.tsx`). */
 export type BuildPrompt = 'buildSettlement' | 'buildRoad' | 'buildCity' | null;
@@ -44,6 +40,7 @@ const INACTIVE_VIEW: BuildPlacementView = {
  */
 export function deriveBuildPlacement(
   gameState: GameState,
+  topology: BoardTopology,
   myPlayerId: PlayerId,
   buildMode: BuildMode,
 ): BuildPlacementView {
@@ -54,7 +51,7 @@ export function deriveBuildPlacement(
       pickMode: 'vertex',
       legalTargets: {
         kind: 'vertex',
-        ids: legalBuildSettlements(gameState, TOPOLOGY, myPlayerId),
+        ids: legalBuildSettlements(gameState, topology, myPlayerId),
       },
       prompt: 'buildSettlement',
     };
@@ -64,7 +61,7 @@ export function deriveBuildPlacement(
       pickMode: 'edge',
       legalTargets: {
         kind: 'edge',
-        ids: legalBuildRoads(gameState, TOPOLOGY, myPlayerId),
+        ids: legalBuildRoads(gameState, topology, myPlayerId),
       },
       prompt: 'buildRoad',
     };
@@ -124,8 +121,9 @@ export function useBuildPlacement(): UseBuildPlacementResult {
   const buildMode = useUiStore((state) => state.buildMode);
   const dispatchIntent = useUiStore((state) => state.dispatchIntent);
   const setBuildMode = useUiStore((state) => state.setBuildMode);
+  const topology = useMatchTopology();
 
-  const view = deriveBuildPlacement(gameState, myPlayerId, buildMode);
+  const view = deriveBuildPlacement(gameState, topology, myPlayerId, buildMode);
 
   return {
     pickMode: view.pickMode,

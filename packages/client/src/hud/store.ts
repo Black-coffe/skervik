@@ -15,6 +15,7 @@ import type {
   PlayerId,
   PlayerIntent,
   RejectReason,
+  RuleProfileId,
   TileId,
   TradeOffer,
 } from '@skervik/core';
@@ -399,6 +400,19 @@ export function canShowTradeDock(phase: GameState['phase']): boolean {
 /** Stable seat order for the current `gameState` — never reorder mid-match (DESIGN.md §6). */
 export function selectSeatOrder(state: GameState): readonly PlayerId[] {
   return state.playerOrder ?? state.players.map((p) => p.id);
+}
+
+/**
+ * S2.1.7b-03: the active match's rule profile id, set once by `match.started`
+ * (`GameState.profileId`, folded through `applyEventBatch`'s `reduce` or
+ * seeded directly by `applySnapshot`) and defaulting to `'classic'` before a
+ * match starts — the SAME "absent → Classic" resolution every `packages/core`
+ * caller of `loadRuleProfile` uses, never a second convention here. Consumed
+ * by `board/matchTopology.ts`'s `useMatchTopology()` to resolve the active
+ * match's `BoardTopology`.
+ */
+export function selectProfileId(state: GameState): RuleProfileId {
+  return state.profileId ?? 'classic';
 }
 
 /** `true` when it's `myPlayerId`'s turn to act. */

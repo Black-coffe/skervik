@@ -14,6 +14,7 @@
 // scope note; pre-roll knight is a deferred follow-up).
 
 import type {
+  BoardTopology,
   EdgeId,
   GameState,
   PlayerId,
@@ -21,16 +22,12 @@ import type {
   PlayRoadBuildingIntent,
   TileId,
 } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
 
 import type { LegalTargets, Pick, PickMode } from '../board/BoardScene.js';
 import { legalBuildRoads } from '../board/buildLegality.js';
+import { useMatchTopology } from '../board/matchTopology.js';
 import { stealVictims } from '../board/robberLegality.js';
 import { useUiStore } from './store.js';
-
-// Board geometry never changes — computed once, cached module-level (same
-// convention as every sibling placement hook).
-const TOPOLOGY = buildTopology();
 
 /** The UI-only armed-play submode (mirrors `hud/store.ts`'s `venturePlayMode`). */
 export type VenturePlayMode = 'none' | 'knight' | 'roadBuilding';
@@ -81,6 +78,7 @@ const INACTIVE_VIEW: VenturePlacementView = {
  */
 export function deriveVenturePlacement(
   gameState: GameState,
+  topology: BoardTopology,
   myPlayerId: PlayerId,
   venturePlayMode: VenturePlayMode,
   knightPendingTile: TileId | null,
@@ -93,7 +91,7 @@ export function deriveVenturePlacement(
 
   if (venturePlayMode === 'knight') {
     if (knightPendingTile !== null) {
-      const victims = stealVictims(gameState, TOPOLOGY, knightPendingTile, myPlayerId);
+      const victims = stealVictims(gameState, topology, knightPendingTile, myPlayerId);
       if (victims.length > 0) {
         return {
           active: true,
@@ -126,7 +124,7 @@ export function deriveVenturePlacement(
   }
   const legalTargets: LegalTargets = {
     kind: 'edge',
-    ids: legalBuildRoads(gameState, TOPOLOGY, myPlayerId),
+    ids: legalBuildRoads(gameState, topology, myPlayerId),
   };
   const prompt: VenturePrompt =
     roadBuildingEdges.length === 0 ? 'roadBuildingFirst' : 'roadBuildingSecond';
@@ -147,7 +145,7 @@ export type KnightTilePickResult =
  */
 export function resolveKnightTilePick(
   state: GameState,
-  topology: ReturnType<typeof buildTopology>,
+  topology: BoardTopology,
   tileId: TileId,
   myPlayerId: PlayerId,
 ): KnightTilePickResult {
@@ -246,9 +244,11 @@ export function useVenturePlacement(): UseVenturePlacementResult {
   const setKnightPendingTile = useUiStore((state) => state.setKnightPendingTile);
   const roadBuildingEdges = useUiStore((state) => state.roadBuildingEdges);
   const setRoadBuildingEdges = useUiStore((state) => state.setRoadBuildingEdges);
+  const topology = useMatchTopology();
 
   const view = deriveVenturePlacement(
     gameState,
+    topology,
     myPlayerId,
     venturePlayMode,
     knightPendingTile,
@@ -271,7 +271,7 @@ export function useVenturePlacement(): UseVenturePlacementResult {
     onPick: (pick) => {
       if (venturePlayMode === 'knight') {
         if (pick.kind !== 'tile') return;
-        const result = resolveKnightTilePick(gameState, TOPOLOGY, pick.id, myPlayerId);
+        const result = resolveKnightTilePick(gameState, topology, pick.id, myPlayerId);
         if ('dispatch' in result) {
           dispatchIntent(result.dispatch);
           clearVenturePlay();

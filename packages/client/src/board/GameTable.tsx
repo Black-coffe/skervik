@@ -5,18 +5,14 @@
 // no interactivity (that's the play-loop stories).
 
 import type { GameState } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
 import { useEffect, useRef, useState } from 'react';
 
 import { PickDemoControls } from '../dev/PickDemoControls.js';
 import { buildTileDescriptors } from './boardModel.js';
 import type { BoardSceneHandle, LegalTargets, Pick, PickMode } from './BoardScene.js';
 import { createBoardScene } from './BoardScene.js';
+import { useMatchTopology } from './matchTopology.js';
 import { buildBuildingDescriptors, buildPortDescriptors } from './pieceModel.js';
-
-// Board geometry never changes — computed once, cached module-level
-// (per S1.6.1 spec: "call once, cache").
-const TOPOLOGY = buildTopology();
 
 export interface GameTableProps {
   readonly state: GameState;
@@ -46,6 +42,9 @@ export function GameTable({
   onPick,
   legalTargets,
 }: GameTableProps) {
+  // S2.1.7b-03: the active match's topology, not a hardcoded radius-2 board —
+  // referentially stable across renders for a given `profileId` (core's memo).
+  const topology = useMatchTopology();
   const hostRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<BoardSceneHandle | null>(null);
   // S2.7.1: read the LATEST `dockVisible` from inside the scene-creation
@@ -84,11 +83,11 @@ export function GameTable({
     let cancelled = false;
     let destroyScene: (() => void) | undefined;
 
-    const descriptors = buildTileDescriptors(TOPOLOGY, state.board);
+    const descriptors = buildTileDescriptors(topology, state.board);
     const seatOrder = state.playerOrder ?? state.players.map((p) => p.id);
-    const buildings = buildBuildingDescriptors(TOPOLOGY, state.buildings, seatOrder);
-    const ports = buildPortDescriptors(TOPOLOGY, state.board);
-    void createBoardScene(host, TOPOLOGY, descriptors, buildings, ports).then((scene) => {
+    const buildings = buildBuildingDescriptors(topology, state.buildings, seatOrder);
+    const ports = buildPortDescriptors(topology, state.board);
+    void createBoardScene(host, topology, descriptors, buildings, ports).then((scene) => {
       if (cancelled) {
         scene.destroy();
         return;
@@ -110,7 +109,7 @@ export function GameTable({
       sceneRef.current = null;
       destroyScene?.();
     };
-  }, [state.board, state.buildings, state.playerOrder, state.players]);
+  }, [state.board, state.buildings, state.playerOrder, state.players, topology]);
 
   // S2.7.1: react to the dock showing/hiding by repositioning the EXISTING
   // scene's world container (see BoardScene.setDockVisible) — no remount.

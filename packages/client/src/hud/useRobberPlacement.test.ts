@@ -43,7 +43,9 @@ function baseState(overrides: Partial<GameState>): GameState {
 
 describe('deriveRobberPlacement', () => {
   it('is inactive outside the robber phase', () => {
-    expect(deriveRobberPlacement(baseState({ phase: 'main' }), MY_ID, null)).toEqual({
+    expect(
+      deriveRobberPlacement(baseState({ phase: 'main' }), topology, MY_ID, null),
+    ).toEqual({
       pickMode: 'none',
       legalTargets: null,
       prompt: null,
@@ -54,6 +56,7 @@ describe('deriveRobberPlacement', () => {
   it("is inactive when it isn't my turn", () => {
     const view = deriveRobberPlacement(
       baseState({ currentPlayerId: OPPONENT_ID }),
+      topology,
       MY_ID,
       null,
     );
@@ -64,6 +67,7 @@ describe('deriveRobberPlacement', () => {
   it('is inactive while a discard is still outstanding (S2.8.4b territory)', () => {
     const view = deriveRobberPlacement(
       baseState({ playersToDiscard: [OPPONENT_ID] }),
+      topology,
       MY_ID,
       null,
     );
@@ -72,13 +76,18 @@ describe('deriveRobberPlacement', () => {
   });
 
   it('is active with an empty playersToDiscard array (nobody actually owes)', () => {
-    const view = deriveRobberPlacement(baseState({ playersToDiscard: [] }), MY_ID, null);
+    const view = deriveRobberPlacement(
+      baseState({ playersToDiscard: [] }),
+      topology,
+      MY_ID,
+      null,
+    );
     expect(view.pickMode).toBe('tile');
     expect(view.prompt).toBe('moveRobber');
   });
 
   it('arms tile picking (prompt moveRobber) when no tile is pending', () => {
-    const view = deriveRobberPlacement(baseState({}), MY_ID, null);
+    const view = deriveRobberPlacement(baseState({}), topology, MY_ID, null);
     expect(view.pickMode).toBe('tile');
     expect(view.prompt).toBe('moveRobber');
     expect(view.legalTargets).toBeNull();
@@ -94,7 +103,7 @@ describe('deriveRobberPlacement', () => {
       buildings,
       players: [player(MY_ID), player(OPPONENT_ID, { timber: 1 })],
     });
-    const view = deriveRobberPlacement(state, MY_ID, OTHER_TILE.id);
+    const view = deriveRobberPlacement(state, topology, MY_ID, OTHER_TILE.id);
     expect(view.pickMode).toBe('none');
     expect(view.prompt).toBe('chooseVictim');
     expect(view.victims).toEqual([OPPONENT_ID]);
@@ -105,7 +114,7 @@ describe('deriveRobberPlacement', () => {
     // somehow missed), but `stealVictims` for it is empty — must NOT render an
     // empty chooseVictim picker (DESIGN.md §6: no zero-button picker).
     const state = baseState({ buildings: { settlements: {}, roads: {} }, players: [] });
-    const view = deriveRobberPlacement(state, MY_ID, OTHER_TILE.id);
+    const view = deriveRobberPlacement(state, topology, MY_ID, OTHER_TILE.id);
     expect(view.pickMode).toBe('tile');
     expect(view.prompt).toBe('moveRobber');
     expect(view.victims).toEqual([]);

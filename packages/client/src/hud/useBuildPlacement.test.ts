@@ -34,7 +34,9 @@ function baseState(overrides: Partial<GameState>): GameState {
 
 describe('deriveBuildPlacement', () => {
   it('is inactive outside the main phase', () => {
-    expect(deriveBuildPlacement(baseState({ phase: 'roll' }), MY_ID, 'road')).toEqual({
+    expect(
+      deriveBuildPlacement(baseState({ phase: 'roll' }), topology, MY_ID, 'road'),
+    ).toEqual({
       pickMode: 'none',
       legalTargets: null,
       prompt: null,
@@ -44,6 +46,7 @@ describe('deriveBuildPlacement', () => {
   it("is inactive when it isn't my turn", () => {
     const view = deriveBuildPlacement(
       baseState({ currentPlayerId: OPPONENT_ID }),
+      topology,
       MY_ID,
       'settlement',
     );
@@ -52,7 +55,7 @@ describe('deriveBuildPlacement', () => {
   });
 
   it('is inactive when no build submode is armed', () => {
-    expect(deriveBuildPlacement(baseState({}), MY_ID, 'none')).toEqual({
+    expect(deriveBuildPlacement(baseState({}), topology, MY_ID, 'none')).toEqual({
       pickMode: 'none',
       legalTargets: null,
       prompt: null,
@@ -60,14 +63,14 @@ describe('deriveBuildPlacement', () => {
   });
 
   it('arms vertex picking for the settlement submode', () => {
-    const view = deriveBuildPlacement(baseState({}), MY_ID, 'settlement');
+    const view = deriveBuildPlacement(baseState({}), topology, MY_ID, 'settlement');
     expect(view.pickMode).toBe('vertex');
     expect(view.prompt).toBe('buildSettlement');
     expect(view.legalTargets?.kind).toBe('vertex');
   });
 
   it('arms edge picking for the road submode', () => {
-    const view = deriveBuildPlacement(baseState({}), MY_ID, 'road');
+    const view = deriveBuildPlacement(baseState({}), topology, MY_ID, 'road');
     expect(view.pickMode).toBe('edge');
     expect(view.prompt).toBe('buildRoad');
     expect(view.legalTargets?.kind).toBe('edge');
@@ -77,7 +80,7 @@ describe('deriveBuildPlacement', () => {
   });
 
   it('arms vertex picking over own settlements for the city submode', () => {
-    const view = deriveBuildPlacement(baseState({}), MY_ID, 'city');
+    const view = deriveBuildPlacement(baseState({}), topology, MY_ID, 'city');
     expect(view.pickMode).toBe('vertex');
     expect(view.prompt).toBe('buildCity');
     expect(view.legalTargets?.ids).toEqual([V0.id]);

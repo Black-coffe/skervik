@@ -1,10 +1,10 @@
 import type { GameState } from '@skervik/core';
-import { buildTopology } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
+import { topologyForProfile } from '../board/matchTopology.js';
 import { deriveSetupPlacement, resolveSetupPick } from './useSetupPlacement.js';
 
-const topology = buildTopology();
+const topology = topologyForProfile('classic');
 const MY_ID = 'player-1';
 const OPPONENT_ID = 'player-2';
 
@@ -24,7 +24,7 @@ function baseState(overrides: Partial<GameState>): GameState {
 describe('deriveSetupPlacement', () => {
   it('is fully inactive outside the setup phase', () => {
     const state = baseState({ phase: 'main' });
-    expect(deriveSetupPlacement(state, MY_ID)).toEqual({
+    expect(deriveSetupPlacement(state, topology, MY_ID)).toEqual({
       pickMode: 'none',
       legalTargets: null,
       prompt: null,
@@ -33,7 +33,7 @@ describe('deriveSetupPlacement', () => {
 
   it("shows an 'opponentTurn' prompt with no picking when it isn't my turn", () => {
     const state = baseState({ currentPlayerId: OPPONENT_ID });
-    const view = deriveSetupPlacement(state, MY_ID);
+    const view = deriveSetupPlacement(state, topology, MY_ID);
     expect(view.pickMode).toBe('none');
     expect(view.legalTargets).toBeNull();
     expect(view.prompt).toBe('opponentTurn');
@@ -41,7 +41,7 @@ describe('deriveSetupPlacement', () => {
 
   it('expects a settlement (pickMode vertex) when no road is pending, on my turn', () => {
     const state = baseState({});
-    const view = deriveSetupPlacement(state, MY_ID);
+    const view = deriveSetupPlacement(state, topology, MY_ID);
     expect(view.pickMode).toBe('vertex');
     expect(view.prompt).toBe('placeSettlement');
     expect(view.legalTargets?.kind).toBe('vertex');
@@ -57,13 +57,26 @@ describe('deriveSetupPlacement', () => {
       pendingRoadVertexId: vertex.id,
       buildings: { settlements: { [vertex.id]: MY_ID }, roads: {} },
     });
-    const view = deriveSetupPlacement(state, MY_ID);
+    const view = deriveSetupPlacement(state, topology, MY_ID);
     expect(view.pickMode).toBe('edge');
     expect(view.prompt).toBe('placeRoad');
     expect(view.legalTargets?.kind).toBe('edge');
     expect([...(view.legalTargets?.ids ?? [])].sort()).toEqual(
       [...vertex.edgeIds].sort(),
     );
+  });
+
+  // S2.1.7b-03: proves the hook is genuinely topology-driven, not incidentally
+  // passing because radius-2 vertex ids happen to be a prefix of radius-3
+  // ones — run the SAME derivation against the 37-tile expanded board and
+  // check legality is computed over its full 96-vertex graph.
+  it('computes legal settlement targets over the full 96-vertex expanded graph', () => {
+    const expandedTopology = topologyForProfile('expanded');
+    expect(expandedTopology.vertices.length).toBe(96);
+    const state = baseState({});
+    const view = deriveSetupPlacement(state, expandedTopology, MY_ID);
+    expect(view.pickMode).toBe('vertex');
+    expect(view.legalTargets?.ids.length).toBe(96);
   });
 });
 
