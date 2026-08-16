@@ -11,6 +11,7 @@ import { Application, Color, Container, FillGradient, Graphics, Text } from 'pix
 
 import { CANVAS_COLORS } from '../theme/canvasColors.js';
 import type { FlotillaId } from '../theme/flotillaColors.js';
+import { computeFieldExtent, fitFieldToBox, seaRadiusForExtent } from './boardFit.js';
 import type { TileDescriptor } from './boardModel.js';
 import {
   axialToPixel,
@@ -46,19 +47,17 @@ const MIST_MAX_ALPHA = 0.22;
 /** Shrink applied to each tile's own outline so neighbours leave a visible gap. */
 const GAP_SCALE = 0.92;
 const CORNERS = hexCorners(HEX_SIZE * GAP_SCALE);
-/** Sea backdrop radius — comfortably covers the 19-tile field plus margin. */
-const SEA_RADIUS = HEX_SIZE * 9;
 
 /**
- * S2.7.1: horizontal space to reserve for the trade dock when it's visible,
- * so the board's default (un-panned) centre never sits under it. Mirrors the
- * dock's own CSS geometry (`TradeZone.css`: `left: 16px; width: 372px`) plus
- * a small gutter — duplicated here because Pixi can't read CSS custom
- * properties. Centering the board within what's LEFT of the chart after that
- * reserve shifts the default centre right by half of it (see `setDockVisible`).
+ * S2.7.1/S2.7.2: horizontal space to reserve for the trade dock when it's
+ * visible, so the board's default (un-panned) fit never sits under it.
+ * Mirrors the dock's own CSS geometry (`TradeZone.css`: `left: 16px; width:
+ * 372px`) plus a small gutter — duplicated here because Pixi can't read CSS
+ * custom properties. The board is fit into whatever chart width is LEFT
+ * after this reserve (see `recomputeFit`) — S2.7.2 supersedes the old fixed
+ * `TRADE_DOCK_OFFSET_PX` shift, which only worked at scale=1.
  */
 const TRADE_DOCK_RESERVE_PX = 372 + 16 + 20;
-const TRADE_DOCK_OFFSET_PX = TRADE_DOCK_RESERVE_PX / 2;
 
 /** S2.8.1: pick radii in world px (pre-zoom — `toWorldPoint` already divides out `world.scale`). Vertices sit closer together than edges read comfortably at, so edge picking gets a slightly tighter radius. */
 const VERTEX_PICK_RADIUS_PX = HEX_SIZE * 0.45;
@@ -71,10 +70,11 @@ export type { LegalTargets, Pick, PickMode } from './picking.js';
 export interface BoardSceneHandle {
   readonly app: Application;
   /**
-   * S2.7.1: repositions the board for the trade dock showing/hiding, by
-   * shifting `world`'s CURRENT position (not recomputing from scratch) — so
-   * the user's pan/zoom survives the toggle. Idempotent; safe to call with
-   * the same value repeatedly.
+   * S2.1.7b-06/S2.7.2: re-fits the board for the trade dock showing/hiding —
+   * RESETS `world.position`/`world.scale` to the auto-fit baseline for the
+   * now-available chart box (see `BoardScene.ts`'s `recomputeFit` for why
+   * this resets rather than preserving an in-progress pan/zoom). Idempotent;
+   * safe to call with the same value repeatedly.
    */
   setDockVisible(visible: boolean): void;
   /**
@@ -456,7 +456,8 @@ function buildPortMarker(descriptor: PortDescriptor): Container {
   return container;
 }
 
-function buildSea(): Graphics {
+/** Sea backdrop, `seaRadius` px — S2.1.7b-06: derived per-match from the field extent (`seaRadiusForExtent`), not a fixed radius-2 constant, so the ring surrounds the 37-tile expanded board too. */
+function buildSea(seaRadius: number): Graphics {
   const gradient = new FillGradient({
     type: 'radial',
     center: { x: 0.5, y: 0.5 },
@@ -470,7 +471,7 @@ function buildSea(): Graphics {
     textureSpace: 'local',
   });
   const sea = new Graphics();
-  sea.circle(0, 0, SEA_RADIUS).fill(gradient);
+  sea.circle(0, 0, seaRadius).fill(gradient);
   return sea;
 }
 
@@ -503,11 +504,40 @@ export async function createBoardScene(
   });
   mountEl.appendChild(app.canvas);
 
+  // S2.1.7b-06: the field's actual pixel extent (tiles + port markers) for
+  // THIS match's topology — read once here, not a hardcoded radius-2 size,
+  // so both the sea backdrop and the auto-fit below scale to the 37-tile
+  // expanded board exactly as they do to Classic's 19.
+  const fieldExtent = computeFieldExtent(topology);
+  const seaRadius = seaRadiusForExtent(fieldExtent);
+
   const world = new Container();
-  world.position.set(app.screen.width / 2, app.screen.height / 2);
   app.stage.addChild(world);
 
-  world.addChild(buildSea());
+  // S2.1.7b-06/S2.7.2: auto-fit — scales+centers `fieldExtent` to whatever
+  // chart box is currently available (full width, or width minus the dock
+  // reserve while it's shown). `dockVisible` starts `false`; the caller
+  // (`GameTable`) applies the real current value immediately via
+  // `setDockVisible` once this promise resolves. See `setDockVisible` below
+  // for the resize/toggle recompute policy.
+  let dockVisible = false;
+
+  function recomputeFit(): void {
+    const dockOffset = dockVisible ? TRADE_DOCK_RESERVE_PX : 0;
+    const box = {
+      x: dockOffset,
+      y: 0,
+      width: Math.max(app.screen.width - dockOffset, 1),
+      height: Math.max(app.screen.height, 1),
+    };
+    const fit = fitFieldToBox(fieldExtent, box);
+    world.scale.set(fit.scale);
+    world.position.set(fit.x, fit.y);
+  }
+
+  recomputeFit();
+
+  world.addChild(buildSea(seaRadius));
 
   // Render order (bottom to top): sea -> tile bases (fills + patterns +
   // extrusion) -> ambient mist -> toppers (number tokens + robber). This
@@ -527,7 +557,7 @@ export async function createBoardScene(
   // is skipped/paused whenever `prefers-reduced-motion: reduce` matches
   // (DESIGN.md §9 merge gate) — swapped for a static mid-alpha frame.
   const mist = new Graphics();
-  mist.circle(0, 0, SEA_RADIUS * 0.7).fill({ color: CANVAS_COLORS.ink, alpha: 1 });
+  mist.circle(0, 0, seaRadius * 0.7).fill({ color: CANVAS_COLORS.ink, alpha: 1 });
   mist.alpha = (MIST_MIN_ALPHA + MIST_MAX_ALPHA) / 2;
   world.addChild(mist);
 
@@ -757,16 +787,28 @@ export async function createBoardScene(
   window.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
 
-  // --- S2.7.1: trade-dock inset (0 = hidden, TRADE_DOCK_OFFSET_PX = shown). ---
-  let dockOffsetPx = 0;
+  // S2.1.7b-06/S2.7.2: recompute the fit on window resize. Reuses the
+  // `resizeTo: mountEl` mechanism already wired at `app.init` above — Pixi's
+  // ResizePlugin listens for the browser's `resize` event and calls
+  // `renderer.resize()`, which emits this `'resize'` event — rather than
+  // adding a second, redundant resize listener of our own.
+  //
+  // Recompute policy: RESET-to-fit on every recompute (resize AND dock
+  // toggle), not "fit once on mount, then leave the user's pan/zoom alone".
+  // The bug this whole story closes (S2.7.1 finding F1: the board overlaps
+  // the dock at 1280px) must also stay fixed if a user resizes their window
+  // DOWN to 1280px after mount — a fit-once policy would let F1 reappear on
+  // live resize. Resetting is also the simpler of the two: no "has the user
+  // interacted yet" state to track. Per S2.7.2's own notes this trades away
+  // preserving an in-progress manual pan/zoom across a resize/toggle, which
+  // is the same tradeoff the owner already accepted for the pre-fit 1280px
+  // overlap — pan/zoom is the recovery mechanism, not the steady state.
+  app.renderer.on('resize', recomputeFit);
 
   function setDockVisible(visible: boolean): void {
-    const nextOffset = visible ? TRADE_DOCK_OFFSET_PX : 0;
-    if (nextOffset === dockOffsetPx) return;
-    // Shift by the DELTA, not an absolute recompute — preserves whatever pan
-    // offset the user already applied to `world.x`.
-    world.x += nextOffset - dockOffsetPx;
-    dockOffsetPx = nextOffset;
+    if (visible === dockVisible) return;
+    dockVisible = visible;
+    recomputeFit();
   }
 
   let destroyed = false;
@@ -783,6 +825,7 @@ export async function createBoardScene(
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       canvas.removeEventListener('wheel', onWheel);
+      app.renderer.off('resize', recomputeFit);
       reducedMotionQuery?.removeEventListener('change', onReducedMotionChange);
       app.destroy(true, { children: true, texture: true, textureSource: true });
     },
