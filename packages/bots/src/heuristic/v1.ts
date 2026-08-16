@@ -29,6 +29,7 @@
 // `isStealable` (the S2.2.1 friendlyRobber gate) — so v1 plays correctly under
 // every preset.
 import {
+  type BoardTopology,
   computePublicVictoryPoints,
   type EdgeId,
   findVertex,
@@ -60,7 +61,7 @@ import {
   isOpenSettlementSite,
   povertyDiscountRate,
   RESOURCES,
-  TOPO,
+  topologyOf,
   touchesOwnNetwork,
   touchesOwnRoad,
   vertexOccupied,
@@ -192,8 +193,12 @@ function scoreActions(
 // --- Setup-phase placement ---------------------------------------------------
 
 /** First free edge incident to the pending settlement vertex (setup road, mirror v0). */
-function firstSetupRoad(b: Buildings, pendingVertexId: VertexId): EdgeId | null {
-  const vertex = findVertex(TOPO, pendingVertexId);
+function firstSetupRoad(
+  topology: BoardTopology,
+  b: Buildings,
+  pendingVertexId: VertexId,
+): EdgeId | null {
+  const vertex = findVertex(topology, pendingVertexId);
   if (!vertex) return null;
   for (const edgeId of vertex.edgeIds) {
     if (b.roads[edgeId] === undefined) return edgeId;
@@ -210,10 +215,11 @@ function chooseSetupSettlement(
   rng: BotRng,
   weights: Weights,
 ): VertexId | null {
+  const topology = topologyOf(state);
   const legal: Scored<VertexId>[] = [];
-  for (const vertex of TOPO.vertices) {
+  for (const vertex of topology.vertices) {
     if (vertexOccupied(b, vertex.id)) continue;
-    if (!distanceOk(b, vertex.id)) continue;
+    if (!distanceOk(topology, b, vertex.id)) continue;
     legal.push({
       item: vertex.id,
       score: evaluateVertex(state, playerId, vertex.id, weights).score,
@@ -228,6 +234,7 @@ function chooseSetupSettlement(
 
 /** Network-extending roads that OPEN or step toward an open settlement site (mirror v0's discipline). */
 function purposefulRoads(
+  topology: BoardTopology,
   b: Buildings,
   playerId: PlayerId,
   supplyRoads: number,
@@ -235,15 +242,16 @@ function purposefulRoads(
   const cap = Math.min(supplyRoads, ROAD_SOFT_CAP);
   if (countOwned(b.roads, playerId) >= cap) return [];
   const roads: EdgeId[] = [];
-  for (const edge of TOPO.edges) {
+  for (const edge of topology.edges) {
     if (b.roads[edge.id] !== undefined) continue;
-    if (!touchesOwnNetwork(b, playerId, edge.id)) continue;
+    if (!touchesOwnNetwork(topology, b, playerId, edge.id)) continue;
     const purposeful = edge.vertexIds.some((endpoint) => {
       if (vertexOccupied(b, endpoint)) return false;
-      if (isOpenSettlementSite(b, endpoint)) return true;
-      const vertex = findVertex(TOPO, endpoint);
+      if (isOpenSettlementSite(topology, b, endpoint)) return true;
+      const vertex = findVertex(topology, endpoint);
       return (
-        vertex?.adjacentVertexIds.some((adj) => isOpenSettlementSite(b, adj)) ?? false
+        vertex?.adjacentVertexIds.some((adj) => isOpenSettlementSite(topology, b, adj)) ??
+        false
       );
     });
     if (purposeful) roads.push(edge.id);
@@ -311,6 +319,7 @@ export function bankTradeToward(
  */
 function mainCandidates(state: GameState, playerId: PlayerId): PlayerIntent[] {
   const profile = loadRuleProfile(state.profileId ?? 'classic');
+  const topology = topologyOf(state);
   const costs = profile.build.costs;
   const supply = profile.build.supply;
   const b = buildingsOf(state);
@@ -323,10 +332,10 @@ function mainCandidates(state: GameState, playerId: PlayerId): PlayerIntent[] {
   let hasBuildableSettlement = false;
   if (settlementSupplyLeft) {
     const affordable = canAfford(resources, costs.settlement);
-    for (const vertex of TOPO.vertices) {
+    for (const vertex of topology.vertices) {
       if (vertexOccupied(b, vertex.id)) continue;
-      if (!distanceOk(b, vertex.id)) continue;
-      if (!touchesOwnRoad(b, playerId, vertex.id)) continue;
+      if (!distanceOk(topology, b, vertex.id)) continue;
+      if (!touchesOwnRoad(topology, b, playerId, vertex.id)) continue;
       hasBuildableSettlement = true;
       if (affordable) {
         candidates.push({
@@ -339,7 +348,9 @@ function mainCandidates(state: GameState, playerId: PlayerId): PlayerIntent[] {
   }
 
   // Purposeful roads toward an open settlement site.
-  const roads = settlementSupplyLeft ? purposefulRoads(b, playerId, supply.roads) : [];
+  const roads = settlementSupplyLeft
+    ? purposefulRoads(topology, b, playerId, supply.roads)
+    : [];
   if (canAfford(resources, costs.road)) {
     for (const edgeId of roads) {
       candidates.push({ type: 'intent.buildRoad', playerId, edgeId });
@@ -351,7 +362,7 @@ function mainCandidates(state: GameState, playerId: PlayerId): PlayerIntent[] {
   let hasUpgradable = false;
   if (citySupplyLeft) {
     const affordable = canAfford(resources, costs.city);
-    for (const vertex of TOPO.vertices) {
+    for (const vertex of topology.vertices) {
       if (b.settlements[vertex.id] !== playerId) continue;
       hasUpgradable = true;
       if (affordable) {
@@ -513,7 +524,7 @@ function candidateRobberMoves(
   if (!board) return [];
   const b = buildingsOf(state);
   const moves: PlayerIntent[] = [];
-  for (const tile of TOPO.tiles) {
+  for (const tile of topologyOf(state).tiles) {
     if (tile.id === board.robberTileId) continue;
     const victims: PlayerId[] = [];
     for (const vertexId of tile.vertexIds) {
@@ -590,7 +601,7 @@ export function decideV1(
   if (state.phase === 'setup') {
     if (state.currentPlayerId !== playerId) return null;
     if (state.pendingRoadVertexId !== undefined) {
-      const edgeId = firstSetupRoad(b, state.pendingRoadVertexId);
+      const edgeId = firstSetupRoad(topologyOf(state), b, state.pendingRoadVertexId);
       return edgeId ? { type: 'intent.placeRoad', playerId, edgeId } : null;
     }
     const vertexId = chooseSetupSettlement(state, playerId, b, difficulty, rng, weights);

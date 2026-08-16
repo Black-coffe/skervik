@@ -15,21 +15,31 @@
 // caller fails loudly with the stuck state if the cap is hit.
 import {
   type BoardState,
-  buildTopology,
+  type BoardTopology,
   type EdgeId,
   findEdge,
   findVertex,
   type GameState,
+  loadRuleProfile,
   type PlayerId,
   type PlayerIntent,
   type PortContent,
   type ResourceType,
   type TileId,
+  topologyForRadius,
   type VertexId,
 } from '@skervik/core';
 
-/** Built once — pure geometry, never changes for the fixed radius-2 board. */
-const TOPO = buildTopology();
+/**
+ * This match's board topology, resolved per call from its active rule profile
+ * (`state.profileId ?? 'classic'`) rather than assumed fixed at radius 2 —
+ * core's per-radius memo (`topologyForRadius`) makes repeated calls free
+ * (mirrors `eval/features.ts`'s `topologyOf`).
+ */
+function topologyOf(state: GameState): BoardTopology {
+  const { board } = loadRuleProfile(state.profileId ?? 'classic');
+  return topologyForRadius(board.radius, board.ports.length);
+}
 
 /** The five Classic resources, in a FIXED order (deterministic tie-breaks). */
 const RESOURCES: readonly ResourceType[] = ['timber', 'clay', 'fleece', 'barley', 'iron'];
@@ -81,15 +91,20 @@ function vertexOccupied(b: Buildings, vertexId: VertexId): boolean {
 }
 
 /** Distance rule: no building on any vertex adjacent to `vertexId`. */
-function distanceOk(b: Buildings, vertexId: VertexId): boolean {
-  const vertex = findVertex(TOPO, vertexId);
+function distanceOk(topology: BoardTopology, b: Buildings, vertexId: VertexId): boolean {
+  const vertex = findVertex(topology, vertexId);
   if (!vertex) return false;
   return !vertex.adjacentVertexIds.some((adj) => vertexOccupied(b, adj));
 }
 
 /** True if any edge incident to `vertexId` is `playerId`'s own road. */
-function touchesOwnRoad(b: Buildings, playerId: PlayerId, vertexId: VertexId): boolean {
-  const vertex = findVertex(TOPO, vertexId);
+function touchesOwnRoad(
+  topology: BoardTopology,
+  b: Buildings,
+  playerId: PlayerId,
+  vertexId: VertexId,
+): boolean {
+  const vertex = findVertex(topology, vertexId);
   if (!vertex) return false;
   return vertex.edgeIds.some((edgeId) => b.roads[edgeId] === playerId);
 }
@@ -107,14 +122,19 @@ function opponentBuildingAt(
 }
 
 /** Road-network legality (mirror of core `touchesOwnNetwork`, incl. the enemy-cut). */
-function touchesOwnNetwork(b: Buildings, playerId: PlayerId, edgeId: EdgeId): boolean {
-  const edge = findEdge(TOPO, edgeId);
+function touchesOwnNetwork(
+  topology: BoardTopology,
+  b: Buildings,
+  playerId: PlayerId,
+  edgeId: EdgeId,
+): boolean {
+  const edge = findEdge(topology, edgeId);
   if (!edge) return false;
   return edge.vertexIds.some((vertexId) => {
     if (b.settlements[vertexId] === playerId) return true;
     if (b.cities?.[vertexId] === playerId) return true;
     if (opponentBuildingAt(b, playerId, vertexId)) return false;
-    const vertex = findVertex(TOPO, vertexId);
+    const vertex = findVertex(topology, vertexId);
     return vertex?.edgeIds.some((e) => b.roads[e] === playerId) ?? false;
   });
 }
@@ -130,13 +150,14 @@ function countOwned(
 // Must match core EXACTLY or a bank trade earns WRONG_RATE_COUNT — the driver's
 // bank trades pass the same rate core will re-derive from the player's ports.
 function ownedPortContents(
+  topology: BoardTopology,
   board: BoardState,
   b: Buildings,
   playerId: PlayerId,
 ): PortContent[] {
   const owned: PortContent[] = [];
-  TOPO.portSlots.forEach((slot, index) => {
-    const edge = findEdge(TOPO, slot.edgeId);
+  topology.portSlots.forEach((slot, index) => {
+    const edge = findEdge(topology, slot.edgeId);
     const ownsEndpoint =
       edge?.vertexIds.some(
         (vertexId) =>
@@ -157,7 +178,7 @@ function bestBankRate(
   const board = state.board;
   const b = state.buildings;
   if (!board || !b) return 4;
-  const owned = ownedPortContents(board, b, playerId);
+  const owned = ownedPortContents(topologyOf(state), board, b, playerId);
   if (owned.some((c) => c.kind === 'resource' && c.resource === resource)) return 2;
   if (owned.some((c) => c.kind === 'generic')) return 3;
   return 4;
@@ -166,18 +187,22 @@ function bestBankRate(
 // --- Placement search --------------------------------------------------------
 
 /** First empty, distance-legal vertex (setup placement — no road-connection rule). */
-function firstSetupVertex(b: Buildings): VertexId | null {
-  for (const vertex of TOPO.vertices) {
+function firstSetupVertex(topology: BoardTopology, b: Buildings): VertexId | null {
+  for (const vertex of topology.vertices) {
     if (vertexOccupied(b, vertex.id)) continue;
-    if (!distanceOk(b, vertex.id)) continue;
+    if (!distanceOk(topology, b, vertex.id)) continue;
     return vertex.id;
   }
   return null;
 }
 
 /** First free edge incident to the pending settlement vertex (setup road). */
-function firstSetupRoad(b: Buildings, pendingVertexId: VertexId): EdgeId | null {
-  const vertex = findVertex(TOPO, pendingVertexId);
+function firstSetupRoad(
+  topology: BoardTopology,
+  b: Buildings,
+  pendingVertexId: VertexId,
+): EdgeId | null {
+  const vertex = findVertex(topology, pendingVertexId);
   if (!vertex) return null;
   for (const edgeId of vertex.edgeIds) {
     if (b.roads[edgeId] === undefined) return edgeId;
@@ -186,27 +211,39 @@ function firstSetupRoad(b: Buildings, pendingVertexId: VertexId): EdgeId | null 
 }
 
 /** First empty, distance-legal, own-road-connected vertex (main-phase settlement). */
-function firstBuildableSettlement(b: Buildings, playerId: PlayerId): VertexId | null {
-  for (const vertex of TOPO.vertices) {
+function firstBuildableSettlement(
+  topology: BoardTopology,
+  b: Buildings,
+  playerId: PlayerId,
+): VertexId | null {
+  for (const vertex of topology.vertices) {
     if (vertexOccupied(b, vertex.id)) continue;
-    if (!distanceOk(b, vertex.id)) continue;
-    if (!touchesOwnRoad(b, playerId, vertex.id)) continue;
+    if (!distanceOk(topology, b, vertex.id)) continue;
+    if (!touchesOwnRoad(topology, b, playerId, vertex.id)) continue;
     return vertex.id;
   }
   return null;
 }
 
 /** An own settlement (not yet a city) to upgrade — first by topology order. */
-function firstUpgradableSettlement(b: Buildings, playerId: PlayerId): VertexId | null {
-  for (const vertex of TOPO.vertices) {
+function firstUpgradableSettlement(
+  topology: BoardTopology,
+  b: Buildings,
+  playerId: PlayerId,
+): VertexId | null {
+  for (const vertex of topology.vertices) {
     if (b.settlements[vertex.id] === playerId) return vertex.id;
   }
   return null;
 }
 
 /** Is `vertexId` a legal future settlement site (empty + distance-legal)? */
-function isOpenSettlementSite(b: Buildings, vertexId: VertexId): boolean {
-  return !vertexOccupied(b, vertexId) && distanceOk(b, vertexId);
+function isOpenSettlementSite(
+  topology: BoardTopology,
+  b: Buildings,
+  vertexId: VertexId,
+): boolean {
+  return !vertexOccupied(b, vertexId) && distanceOk(topology, b, vertexId);
 }
 
 /**
@@ -220,22 +257,28 @@ function isOpenSettlementSite(b: Buildings, vertexId: VertexId): boolean {
  * wasted roads starve expansion for ALL seats. Bounded by {@link ROAD_CAP}.
  * Prefers a spot-opening road (topology order) over a stepping-stone.
  */
-function roadTowardSettlement(b: Buildings, playerId: PlayerId): EdgeId | null {
+function roadTowardSettlement(
+  topology: BoardTopology,
+  b: Buildings,
+  playerId: PlayerId,
+): EdgeId | null {
   if (countOwned(b.roads, playerId) >= ROAD_CAP) return null;
   let steppingStone: EdgeId | null = null;
-  for (const edge of TOPO.edges) {
+  for (const edge of topology.edges) {
     if (b.roads[edge.id] !== undefined) continue;
-    if (!touchesOwnNetwork(b, playerId, edge.id)) continue;
+    if (!touchesOwnNetwork(topology, b, playerId, edge.id)) continue;
     for (const endpoint of edge.vertexIds) {
       if (vertexOccupied(b, endpoint)) continue;
-      if (isOpenSettlementSite(b, endpoint)) {
+      if (isOpenSettlementSite(topology, b, endpoint)) {
         return edge.id; // opens a buildable vertex directly — best kind of road
       }
       // Stepping-stone: this empty endpoint is one hop from an open site.
       if (steppingStone === null) {
-        const vertex = findVertex(TOPO, endpoint);
+        const vertex = findVertex(topology, endpoint);
         const leadsSomewhere =
-          vertex?.adjacentVertexIds.some((adj) => isOpenSettlementSite(b, adj)) ?? false;
+          vertex?.adjacentVertexIds.some((adj) =>
+            isOpenSettlementSite(topology, b, adj),
+          ) ?? false;
         if (leadsSomewhere) steppingStone = edge.id;
       }
     }
@@ -244,9 +287,6 @@ function roadTowardSettlement(b: Buildings, playerId: PlayerId): EdgeId | null {
 }
 
 // --- Bank-trade planning -----------------------------------------------------
-
-/** The Classic finite bank pool per resource (mirror of CLASSIC_PRODUCTION_PROFILE). */
-const BANK_PER_RESOURCE = 19;
 
 /** The resources `cost` needs more of than `resources` holds, in fixed order. */
 function shortfalls(
@@ -261,16 +301,19 @@ function shortfalls(
  * resource the BANK can actually supply, give a surplus resource (held ≥ its
  * rate and not itself short for `cost`) for 1 of it. `null` when no such trade
  * exists — the turn then ends. Skipping bank-exhausted `get` resources avoids a
- * BANK_EXHAUSTED reject; the finite pool is real (19 per resource).
+ * BANK_EXHAUSTED reject; the finite pool is real (the active profile's
+ * `production.bankPerResource`, 19 on every Classic-derived preset).
  */
 function bankTradeToward(
   state: GameState,
   playerId: PlayerId,
   cost: Readonly<Record<ResourceType, number>>,
 ): PlayerIntent | null {
+  const bankPerResource = loadRuleProfile(state.profileId ?? 'classic').production
+    .bankPerResource;
   const resources = resourcesOf(state, playerId);
   for (const need of shortfalls(resources, cost)) {
-    const bankHas = state.bank?.[need] ?? BANK_PER_RESOURCE;
+    const bankHas = state.bank?.[need] ?? bankPerResource;
     if (bankHas < 1) continue; // bank can't supply this one — try the next need
     // Give the resource with the most surplus over what `cost` still needs.
     let best: { give: ResourceType; rate: number; surplus: number } | null = null;
@@ -340,7 +383,7 @@ function planRobberMove(
   const board = state.board;
   if (!board) return null;
   const b = buildingsOf(state);
-  for (const tile of TOPO.tiles) {
+  for (const tile of topologyOf(state).tiles) {
     if (tile.id === board.robberTileId) continue;
     // Opponents with a building adjacent to this tile who still hold >=1 card.
     const victims: PlayerId[] = [];
@@ -368,6 +411,7 @@ export function decideAction(state: GameState, playerId: PlayerId): PlayerIntent
   if (state.phase === 'finished' || state.phase === 'lobby') return null;
 
   const b = buildingsOf(state);
+  const topology = topologyOf(state);
 
   // Post-7 robber resolution (any owing player discards; the mover then relocates).
   if (state.phase === 'robber') {
@@ -407,10 +451,10 @@ export function decideAction(state: GameState, playerId: PlayerId): PlayerIntent
   if (state.phase === 'setup') {
     if (state.currentPlayerId !== playerId) return null;
     if (state.pendingRoadVertexId !== undefined) {
-      const edgeId = firstSetupRoad(b, state.pendingRoadVertexId);
+      const edgeId = firstSetupRoad(topology, b, state.pendingRoadVertexId);
       return edgeId ? { type: 'intent.placeRoad', playerId, edgeId } : null;
     }
-    const vertexId = firstSetupVertex(b);
+    const vertexId = firstSetupVertex(topology, b);
     return vertexId ? { type: 'intent.placeSettlement', playerId, vertexId } : null;
   }
 
@@ -439,7 +483,7 @@ export function decideAction(state: GameState, playerId: PlayerId): PlayerIntent
     // 1. Settlement — cheap (1 each of 4 resources), diverse, and every one adds
     //    production (the snowball). Built BEFORE cities so the economy grows.
     const settlementSpot = settlementSupplyLeft
-      ? firstBuildableSettlement(b, playerId)
+      ? firstBuildableSettlement(topology, b, playerId)
       : null;
     if (settlementSpot && canAfford(resources, COST.settlement)) {
       return { type: 'intent.buildSettlement', playerId, vertexId: settlementSpot };
@@ -448,7 +492,7 @@ export function decideAction(state: GameState, playerId: PlayerId): PlayerIntent
     // 2. Road toward a new settlement spot — when none is directly buildable yet.
     const roadEdge =
       settlementSpot === null && settlementSupplyLeft
-        ? roadTowardSettlement(b, playerId)
+        ? roadTowardSettlement(topology, b, playerId)
         : null;
     if (roadEdge && canAfford(resources, COST.road)) {
       return { type: 'intent.buildRoad', playerId, edgeId: roadEdge };
@@ -456,7 +500,9 @@ export function decideAction(state: GameState, playerId: PlayerId): PlayerIntent
 
     // 3. City — opportunistic 2-VP upgrade (when affluent, or expansion is
     //    blocked). Helps close out to 10 but is never the sole hoard-target.
-    const upgradable = citySupplyLeft ? firstUpgradableSettlement(b, playerId) : null;
+    const upgradable = citySupplyLeft
+      ? firstUpgradableSettlement(topology, b, playerId)
+      : null;
     if (upgradable && canAfford(resources, COST.city)) {
       return { type: 'intent.buildCity', playerId, vertexId: upgradable };
     }

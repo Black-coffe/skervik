@@ -194,6 +194,11 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/S2.1.7b` before eac
 
 ## Plan deltas
 
-*(empty)*
+- **2026-08-16, story 02, round 1 → NEEDS_CONTEXT.** Worker's return: `eval/features.ts` `TOPO`
+  is consumed by `eval/evaluate.ts` and `heuristic/v1.ts` (the DEFAULT brain behind
+  `createHeuristicBot()`), neither in `## Files`. Queen decision: expand story 02's `## Files` by
+  `heuristic/v1.ts`, `eval/evaluate.ts`, `heuristic/v1.robinHood.test.ts` — mechanical
+  topology-routing only, no logic change. Rejected: driving the tracer on v0 and deferring v1
+  (wave-3 e2e exercises bot-fill → v1; a tracer that avoids the default brain proves nothing).
 
 **Approved:** owner, 2026-08-16 — plan + D6 flotilla proposal (Moray + Manta) accepted verbatim.

@@ -12,7 +12,6 @@
 // reverse.
 import {
   type BoardGeneratedEvent,
-  buildTopology,
   type ExperimentalProfileId,
   type GameEndedEvent,
   type GameEvent,
@@ -25,6 +24,7 @@ import {
   type RuleProfile,
   type RuleProfileId,
   type Seed,
+  topologyForRadius,
   validate,
 } from '@skervik/core';
 
@@ -88,7 +88,11 @@ function genesisEvents(
     playerIds: [...playerIds],
     ...(profileId === 'classic' ? {} : { profileId: profileId as RuleProfileId }),
   };
-  const layout = generateBoard(seed, buildTopology(), profile.board);
+  const layout = generateBoard(
+    seed,
+    topologyForRadius(profile.board.radius, profile.board.ports.length),
+    profile.board,
+  );
   const boardGenerated: BoardGeneratedEvent = {
     type: 'board.generated',
     index: 1,

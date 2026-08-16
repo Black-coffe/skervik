@@ -1,11 +1,16 @@
 // S2.4.2 — unit tests for the shared evaluation module (`eval/`): the pip table
 // and that a high-pip, diverse vertex out-scores a low-pip one. These prove the
 // scorer the v1 brain and the M4 advisor both consume, independent of any match.
-import type { GameState, TileId, TileKind } from '@skervik/core';
+import { buildTopology, type GameState, type TileId, type TileKind } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
 import { evaluateVertex, FEATURE_WEIGHTS } from './eval/evaluate.js';
-import { pipWeight, TOPO, vertexProductionValue } from './eval/features.js';
+import { pipWeight, vertexProductionValue } from './eval/features.js';
+
+/** Classic radius-2 topology, built locally — this file's fixtures are deliberately
+ *  Classic-only (S2.1.7b Non-goals), independent of the per-match `topologyOf`
+ *  seam the production code now resolves from `state.profileId`. */
+const TOPO = buildTopology();
 
 /** A minimal `main`-phase state carrying a hand-crafted board (no ports → no port skew). */
 function stateWithBoard(

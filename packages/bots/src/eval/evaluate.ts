@@ -22,7 +22,7 @@ import {
   buildingsOf,
   countOwned,
   isOpenSettlementSite,
-  TOPO,
+  topologyOf,
   vertexPortValue,
   vertexProductionValue,
   vertexResourceDiversity,
@@ -153,10 +153,11 @@ function productionSpots(state: GameState, playerId: PlayerId): number {
 
 /** True if either empty endpoint of `edgeId` is (or steps toward) an open settlement site. */
 function roadOpensSpot(state: GameState, edgeId: string): boolean {
-  const edge = TOPO.edges.find((e) => e.id === edgeId);
+  const topology = topologyOf(state);
+  const edge = topology.edges.find((e) => e.id === edgeId);
   if (!edge) return false;
   const b = buildingsOf(state);
-  return edge.vertexIds.some((endpoint) => isOpenSettlementSite(b, endpoint));
+  return edge.vertexIds.some((endpoint) => isOpenSettlementSite(topology, b, endpoint));
 }
 
 /**

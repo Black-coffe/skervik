@@ -8,6 +8,7 @@
 import {
   type BoardState,
   type BuildingsState,
+  buildTopology,
   EXPERIMENTAL_PROFILE_IDS,
   findEdge,
   type GameState,
@@ -19,11 +20,15 @@ import {
 } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 
-import { povertyDiscountRate, TOPO } from '../eval/features.js';
+import { povertyDiscountRate } from '../eval/features.js';
 import { bankTradeToward } from './v1.js';
 
 const ROBIN_HOOD = EXPERIMENTAL_PROFILE_IDS.robinHood as RuleProfileId;
 const BANK_DEFAULT = 10;
+/** `robinHood` is a Classic-derived (radius-2) experimental profile — this file's
+ *  fixtures are deliberately Classic-only (S2.1.7b Non-goals), independent of the
+ *  per-match `topologyOf` seam the production code now resolves from `state.profileId`. */
+const TOPO = buildTopology();
 
 function makePlayer(id: string, resources: Record<string, number> = {}): PlayerState {
   return { id, name: id, victoryPoints: 0, resources };

@@ -11,7 +11,7 @@
 // single comparable score; the per-difficulty knobs live there.
 import {
   type BoardState,
-  buildTopology,
+  type BoardTopology,
   computePublicVictoryPoints,
   type EdgeId,
   findEdge,
@@ -24,11 +24,20 @@ import {
   type PortContent,
   type ResourceType,
   type TileId,
+  topologyForRadius,
   type VertexId,
 } from '@skervik/core';
 
-/** Built once — pure geometry, never changes for the fixed radius-2 board (mirrors v0). */
-export const TOPO = buildTopology();
+/**
+ * This match's board topology, resolved per call from its active rule profile
+ * (`state.profileId ?? 'classic'`) rather than assumed fixed at radius 2 —
+ * core's per-radius memo (`topologyForRadius`) makes repeated calls free, so
+ * every geometry lookup below stays correct on ANY board size (mirrors v0).
+ */
+export function topologyOf(state: GameState): BoardTopology {
+  const { board } = loadRuleProfile(state.profileId ?? 'classic');
+  return topologyForRadius(board.radius, board.ports.length);
+}
 
 /** The five Classic resources, in a FIXED order (deterministic tie-breaks; mirrors v0). */
 export const RESOURCES: readonly ResourceType[] = [
@@ -75,7 +84,7 @@ export function pipWeight(token: number | undefined): number {
  * reach the VP threshold on more boards.
  */
 export function vertexProductionValue(state: GameState, vertexId: VertexId): number {
-  const vertex = findVertex(TOPO, vertexId);
+  const vertex = findVertex(topologyOf(state), vertexId);
   const board = state.board;
   if (!vertex || !board) return 0;
   let total = 0;
@@ -92,7 +101,7 @@ export function vertexProductionValue(state: GameState, vertexId: VertexId): num
  * don't count.
  */
 export function vertexResourceDiversity(state: GameState, vertexId: VertexId): number {
-  const vertex = findVertex(TOPO, vertexId);
+  const vertex = findVertex(topologyOf(state), vertexId);
   const board = state.board;
   if (!vertex || !board) return 0;
   const kinds = new Set<ResourceType>();
@@ -114,8 +123,9 @@ export function vertexPortValue(state: GameState, vertexId: VertexId): number {
   const board = state.board;
   if (!board) return 0;
   let best = 0;
-  TOPO.portSlots.forEach((slot, index) => {
-    const edge = findEdge(TOPO, slot.edgeId);
+  const topology = topologyOf(state);
+  topology.portSlots.forEach((slot, index) => {
+    const edge = findEdge(topology, slot.edgeId);
     if (!edge?.vertexIds.includes(vertexId)) return;
     const content = board.portContents[index];
     if (!content) return;
@@ -129,16 +139,20 @@ export function vertexPortValue(state: GameState, vertexId: VertexId): number {
  * The port contents a player owns (a settlement/city sits on a port slot's
  * endpoint) — the shared extraction of v0's module-local `ownedPortContents`
  * (v0 stays frozen; this is the reusable copy the eval + `bestBankRate` read).
- * Order follows `portSlots`, so it's deterministic.
+ * Order follows `portSlots`, so it's deterministic. `topology` is threaded in
+ * (rather than resolved here) because this function only receives a
+ * `BoardState`/`Buildings` pair, not the full `GameState` a per-call
+ * `topologyOf` resolution needs — callers with `state` pass `topologyOf(state)`.
  */
 export function portsOwnedBy(
+  topology: BoardTopology,
   board: BoardState,
   b: Buildings,
   playerId: PlayerId,
 ): PortContent[] {
   const owned: PortContent[] = [];
-  TOPO.portSlots.forEach((slot, index) => {
-    const edge = findEdge(TOPO, slot.edgeId);
+  topology.portSlots.forEach((slot, index) => {
+    const edge = findEdge(topology, slot.edgeId);
     const ownsEndpoint =
       edge?.vertexIds.some(
         (vertexId) =>
@@ -168,7 +182,7 @@ export function bestBankRate(
   const b = state.buildings;
   if (!board || !b)
     return loadRuleProfile(state.profileId ?? 'classic').bankTrade.baseRate;
-  const owned = portsOwnedBy(board, b, playerId);
+  const owned = portsOwnedBy(topologyOf(state), board, b, playerId);
   if (owned.some((c) => c.kind === 'resource' && c.resource === resource)) return 2;
   if (owned.some((c) => c.kind === 'generic')) return 3;
   return loadRuleProfile(state.profileId ?? 'classic').bankTrade.baseRate;
@@ -231,19 +245,24 @@ export function vertexOccupied(b: Buildings, vertexId: VertexId): boolean {
 }
 
 /** Distance rule: no building on any vertex adjacent to `vertexId`. */
-export function distanceOk(b: Buildings, vertexId: VertexId): boolean {
-  const vertex = findVertex(TOPO, vertexId);
+export function distanceOk(
+  topology: BoardTopology,
+  b: Buildings,
+  vertexId: VertexId,
+): boolean {
+  const vertex = findVertex(topology, vertexId);
   if (!vertex) return false;
   return !vertex.adjacentVertexIds.some((adj) => vertexOccupied(b, adj));
 }
 
 /** True if any edge incident to `vertexId` is `playerId`'s own road. */
 export function touchesOwnRoad(
+  topology: BoardTopology,
   b: Buildings,
   playerId: PlayerId,
   vertexId: VertexId,
 ): boolean {
-  const vertex = findVertex(TOPO, vertexId);
+  const vertex = findVertex(topology, vertexId);
   if (!vertex) return false;
   return vertex.edgeIds.some((edgeId) => b.roads[edgeId] === playerId);
 }
@@ -262,24 +281,29 @@ export function opponentBuildingAt(
 
 /** Road-network legality (mirror of core `touchesOwnNetwork`, incl. the enemy-cut). */
 export function touchesOwnNetwork(
+  topology: BoardTopology,
   b: Buildings,
   playerId: PlayerId,
   edgeId: EdgeId,
 ): boolean {
-  const edge = findEdge(TOPO, edgeId);
+  const edge = findEdge(topology, edgeId);
   if (!edge) return false;
   return edge.vertexIds.some((vertexId) => {
     if (b.settlements[vertexId] === playerId) return true;
     if (b.cities?.[vertexId] === playerId) return true;
     if (opponentBuildingAt(b, playerId, vertexId)) return false;
-    const vertex = findVertex(TOPO, vertexId);
+    const vertex = findVertex(topology, vertexId);
     return vertex?.edgeIds.some((e) => b.roads[e] === playerId) ?? false;
   });
 }
 
 /** Is `vertexId` a legal FUTURE settlement site (empty + distance-legal)? */
-export function isOpenSettlementSite(b: Buildings, vertexId: VertexId): boolean {
-  return !vertexOccupied(b, vertexId) && distanceOk(b, vertexId);
+export function isOpenSettlementSite(
+  topology: BoardTopology,
+  b: Buildings,
+  vertexId: VertexId,
+): boolean {
+  return !vertexOccupied(b, vertexId) && distanceOk(topology, b, vertexId);
 }
 
 /** Count of records owned by `playerId` (settlements/roads/cities). */
@@ -302,7 +326,7 @@ export function blockingValue(
   tileId: TileId,
 ): number {
   const board = state.board;
-  const tile = findTile(TOPO, tileId);
+  const tile = findTile(topologyOf(state), tileId);
   if (!board || !tile) return 0;
   const b = buildingsOf(state);
   const pip = pipWeight(board.tileTokens[tileId]);

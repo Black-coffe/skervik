@@ -151,3 +151,65 @@ describe('simulateMatch — v1 seed-sweep (no stall at any difficulty)', () => {
     });
   }
 });
+
+/**
+ * S2.1.7b-02 — the pack's TRACER slice: the thinnest path that touches core
+ * profile → per-radius topology → board generation → bot heuristics → a
+ * complete simulated 6-player match on the 37-tile `expanded` board, with no
+ * server/client/protocol/socket involved. Before this story's fix, `v0`/`v1`
+ * read a module-level radius-2 `TOPO` and `harness.ts:91` paired a radius-2
+ * topology with a radius-3 board — this match was impossible to run
+ * correctly. Pinned seed `'grand-chart'` (found by a local seed sweep, not
+ * hand-picked for luck) is reused by story 07's boot-free e2e.
+ */
+describe('simulateMatch — expanded-profile tracer (S2.1.7b-02, 6-player)', () => {
+  const EXPANDED_SEED: Seed = 'grand-chart';
+  const SIX_PLAYER_IDS: readonly PlayerId[] = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'];
+
+  function sixHeuristicBots(): Record<PlayerId, Bot> {
+    const bots: Record<PlayerId, Bot> = {};
+    for (const id of SIX_PLAYER_IDS) {
+      bots[id] = createHeuristicBot({ difficulty: 'medium', seed: `expanded-${id}` });
+    }
+    return bots;
+  }
+
+  it('a 6-player expanded match produces a 37-tile board layout and reaches a winner', () => {
+    const { finalState, winnerId, events } = simulateMatch({
+      seed: EXPANDED_SEED,
+      playerIds: SIX_PLAYER_IDS,
+      bots: sixHeuristicBots(),
+      profileId: 'expanded',
+    });
+
+    const boardGenerated = events.find((e) => e.type === 'board.generated');
+    expect(boardGenerated?.type).toBe('board.generated');
+    expect(
+      boardGenerated?.type === 'board.generated'
+        ? Object.keys(boardGenerated.tileKinds).length
+        : -1,
+    ).toBe(37); // radius-3 tile count (3·3²+3·3+1) — the pre-fix pairing could never produce this.
+
+    expect(finalState.phase).toBe('finished');
+    expect(winnerId).not.toBeNull();
+  });
+
+  it('is deterministic — the identical seed + bots twice yields the same winner and deep-equal state', () => {
+    const a = simulateMatch({
+      seed: EXPANDED_SEED,
+      playerIds: SIX_PLAYER_IDS,
+      bots: sixHeuristicBots(),
+      profileId: 'expanded',
+    });
+    const b = simulateMatch({
+      seed: EXPANDED_SEED,
+      playerIds: SIX_PLAYER_IDS,
+      bots: sixHeuristicBots(),
+      profileId: 'expanded',
+    });
+
+    expect(b.winnerId).toBe(a.winnerId);
+    expect(b.finalState).toEqual(a.finalState);
+    expect(b.events).toEqual(a.events);
+  });
+});
