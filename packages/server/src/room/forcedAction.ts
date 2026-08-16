@@ -22,13 +22,13 @@
 // cards to discard after a 7 — uses a fixed largest-stacks-first policy, NOT a
 // seed draw, precisely so verify stays untouched.
 import {
-  buildTopology,
   type GameState,
   isStealable,
   loadRuleProfile,
   type PlayerId,
   type PlayerIntent,
   type ResourceType,
+  topologyForRadius,
 } from '@skervik/core';
 
 /** A forced default action: the minimal legal intent for the current decision + who acts. */
@@ -207,12 +207,17 @@ function resolveMoveRobber(state: GameState): ForcedAction | null {
   if (!board) return null; // defensive: the robber phase always has a board
 
   const currentPlayer = state.currentPlayerId;
-  const defaultTile = buildTopology().tiles.find(
-    (tile) => tile.id !== board.robberTileId,
-  );
-  if (!defaultTile) return null; // defensive: 19 tiles, always one other than the robber's
+  // The board topology follows the MATCH's profile (ADR-0013): Classic is
+  // radius 2/19 tiles, `expanded` is radius 3/37 tiles — resolved per-state
+  // from `state.profileId` and memoized per-radius by `topologyForRadius`,
+  // mirroring `validate.ts`'s own `topology(state)` helper so a forced robber
+  // move can never pick a tile off the WRONG board (S2.1.7b-08).
+  const profile = loadRuleProfile(state.profileId ?? 'classic');
+  const topology = topologyForRadius(profile.board.radius, profile.board.ports.length);
+  const defaultTile = topology.tiles.find((tile) => tile.id !== board.robberTileId);
+  if (!defaultTile) return null; // defensive: always one other than the robber's
 
-  const { robber } = loadRuleProfile(state.profileId ?? 'classic');
+  const { robber } = profile;
   const buildings = state.buildings ?? { settlements: {}, roads: {} };
   const eligibleOwners: PlayerId[] = [];
   for (const vertexId of defaultTile.vertexIds) {

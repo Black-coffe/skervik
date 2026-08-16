@@ -13,6 +13,7 @@ import {
   type GameEvent,
   type GameState,
   generateBoard,
+  loadRuleProfile,
   type MatchStartedEvent,
   type PlayerId,
   type PlayerState,
@@ -21,6 +22,7 @@ import {
   type RuleProfileId,
   type Seed,
   type TileId,
+  topologyForRadius,
   validate,
   verifyMatchRandomness,
   type VertexId,
@@ -189,6 +191,48 @@ describe('resolveForcedAction — the deterministic robber move (S2.1.4)', () =>
       tileId: lowestOtherTile,
       victimId: 'p2',
     });
+    const result = validate(state, forced!.intent, forced!.playerId, SEED);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("resolveForcedAction — resolves the room's OWN per-profile board topology, not a hardcoded default (S2.1.7b-08)", () => {
+  // `enumerateTileCoords` builds rings 0..radius, so the Classic (radius-2)
+  // 19-tile array is an order-identical PREFIX of the `expanded` (radius-3)
+  // 37-tile array — the old no-arg `buildTopology()` could NEVER reach the
+  // outer ring at all. This tile sits past that prefix (id > the 19-tile
+  // range), so it can only be resolved by the room's real `expanded` profile.
+  const expandedProfile = loadRuleProfile('expanded');
+  const expandedTopology = topologyForRadius(
+    expandedProfile.board.radius,
+    expandedProfile.board.ports.length,
+  );
+  const layout = generateBoard(SEED, expandedTopology);
+  const board = {
+    tileKinds: layout.tileKinds,
+    tileTokens: layout.tileTokens,
+    portContents: layout.portContents,
+    robberTileId: expandedTopology.tiles[expandedTopology.tiles.length - 1]?.id as TileId,
+  };
+  const lowestOtherTile = expandedTopology.tiles.find((t) => t.id !== board.robberTileId)
+    ?.id as TileId;
+
+  it('an expanded room forces the robber onto a tile from its real 37-tile board', () => {
+    const state = baseState({
+      phase: 'robber',
+      profileId: 'expanded' as RuleProfileId,
+      currentPlayerId: 'p1' as PlayerId,
+      board,
+      buildings: { settlements: {}, roads: {} },
+    });
+    const forced = resolveForcedAction(state);
+    expect(forced?.intent).toEqual({
+      type: 'intent.moveRobber',
+      playerId: 'p1',
+      tileId: lowestOtherTile,
+    });
+    // Legal per real `validate`, which resolves the SAME `expanded` topology —
+    // proving forcedAction and validate now share one topology source.
     const result = validate(state, forced!.intent, forced!.playerId, SEED);
     expect(result.ok).toBe(true);
   });
