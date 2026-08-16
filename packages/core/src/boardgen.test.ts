@@ -11,10 +11,15 @@ const topology = buildTopology();
 const RED_TOKENS = [6, 8];
 
 // `exp-0` is a seed whose expanded token shuffle satisfies the red-token
-// constraint within the retry bound (26 attempts) — see the S2.1.7a finding
-// on the expanded board's lower red-constraint satisfaction rate (~25% of
-// seeds, vs ~100% for Classic); a satisfied seed makes the golden board a
-// clean, fair reference.
+// constraint — needing 26 of the 64 available attempts
+// (BOARD_GEN_STREAM.TOKEN_RETRY_BOUND), NOT "well within" the bound the
+// comfortable way Classic's golden seed is (4 of 64, see the Classic golden
+// test below): the S2.1.7a finding is that only ~25% of expanded-board seeds
+// ever satisfy the constraint within 64 attempts AT ALL (vs ~100% for
+// Classic) — `exp-0` is one of that minority, and 26 attempts is typical for
+// a seed that succeeds, not an outlier. A satisfied seed still makes the
+// golden board a clean, fair reference; see the radius-3 describe block
+// below for the full note.
 const EXPANDED_SEED = 'exp-0';
 const expandedTopology = buildTopology(3, 11);
 
@@ -151,7 +156,11 @@ describe('generateBoard', () => {
     expect(layout.tileKinds['0,0']).toBe('timber');
     // Golden seed needed 4 token-shuffle attempts (0.., stream indices
     // TOKEN_SHUFFLE_BASE .. TOKEN_SHUFFLE_BASE + 3*TOKEN_SHUFFLE_STRIDE) to
-    // satisfy the red-token constraint — well within TOKEN_RETRY_BOUND (64).
+    // satisfy the red-token constraint — well within TOKEN_RETRY_BOUND (64),
+    // and typical for Classic (near-100% of seeds succeed this fast).
+    // Contrast the expanded board's golden seed below, which needs 26 of the
+    // same 64 attempts, because only a minority of expanded seeds ever
+    // succeed at all (see the radius-3 describe block's note).
     expect(layout.attemptsUsed).toBe(4);
     expect(layout.redConstraintSatisfied).toBe(true);
     expect(layout.robberTileId).toBe('-1,-1');
@@ -168,10 +177,19 @@ describe('generateBoard', () => {
 // `generateBoard` (board contents were already config; only the geometry moved
 // to a parameter). Proves the expanded profile lays out deterministically at
 // the larger size and that verify can recompute it (verify round-trip lives in
-// verify.test.ts). NOTE: unlike Classic, the expanded board's 8 red tokens on
-// 37 tiles satisfy the no-adjacent-6/8 retry for only ~25% of seeds within the
-// 64-attempt bound — the golden `exp-0` is a satisfied seed; the mix/bound is
-// v1 and flagged for M3 re-tune (ADR-0013 Decision 2).
+// verify.test.ts).
+//
+// NOTE (S2.1.7b comment-nit follow-up, reconciling the "26 vs 64" confusion):
+// unlike Classic — where near-100% of seeds satisfy the red-token constraint
+// in a handful of attempts (see the Classic golden test's `attemptsUsed: 4`
+// above) — the expanded board's 8 red tokens on 37 tiles satisfy the
+// no-adjacent-6/8 constraint for only ~25% of seeds within the full
+// 64-attempt `TOKEN_RETRY_BOUND`; the other ~75% exhaust every attempt and
+// ship with `redConstraintSatisfied: false`. The golden `exp-0` needs 26 of
+// those 64 attempts — typical for a seed that DOES succeed, not an outlier
+// among them — so, despite 26 ≤ 64, it is NOT "well within the bound" in the
+// comfortable sense Classic's 4-attempt golden seed is. The mix/bound is v1
+// and flagged for M3 re-tune (ADR-0013 Decision 2).
 describe('generateBoard (radius-3 expanded board)', () => {
   it('produces a valid expanded layout: 37 tile kinds, 36 tokens, 11 ports, robber on the desert', () => {
     const layout = generateBoard(EXPANDED_SEED, expandedTopology, EXPANDED_BOARD);
@@ -247,6 +265,9 @@ describe('generateBoard (radius-3 expanded board)', () => {
 
     expect(layout.tileKinds['0,0']).toBe('fleece');
     expect(layout.robberTileId).toBe('0,3');
+    // 26 of the 64 TOKEN_RETRY_BOUND attempts — see the describe block's note
+    // above: typical for a satisfying expanded seed, not "well within" the
+    // bound the comfortable way Classic's 4-attempt golden seed is.
     expect(layout.attemptsUsed).toBe(26);
     expect(layout.redConstraintSatisfied).toBe(true);
     expect(layout.portContents[0]).toEqual({

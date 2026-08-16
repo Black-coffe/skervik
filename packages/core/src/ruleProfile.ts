@@ -12,7 +12,6 @@
 //
 // Zero runtime deps (ADR-0003): pure data + a pure total loader.
 
-import { buildTopology } from './board.js';
 import type { DevCardKind, PortContent, ResourceType, TileKind } from './types.js';
 
 /**
@@ -22,10 +21,10 @@ import type { DevCardKind, PortContent, ResourceType, TileKind } from './types.j
  *
  * `'expanded'` is a real, resolvable {@link RuleProfileId} (so a live 5–6p
  * match's `GameState.profileId` typechecks and `loadRuleProfile('expanded')`
- * resolves), but it is deliberately ABSENT from {@link SHIPPING_PROFILE_IDS}
- * (the lobby-selectable allow-list) and the protocol's `ShippingProfileIdSchema`
- * — it is registered CORE-only and unreachable from any client until S2.1.7b
- * wires server seats + lobby routing to it (ADR-0013).
+ * resolves) and, as of S2.1.7b, a member of {@link SHIPPING_PROFILE_IDS} — the
+ * lobby-selectable allow-list. Reaching it end-to-end also needs the
+ * protocol's `ShippingProfileIdSchema` and the server/client seat + topology
+ * wiring, which land in this same pack's later stories (ADR-0013).
  */
 export type RuleProfileId = 'classic' | 'balanced' | 'blitz' | 'twoPlayer' | 'expanded';
 
@@ -213,6 +212,18 @@ export interface RuleProfile {
   /** Human label (i18n key comes later, S2.5.4 lobby). */
   readonly name: string;
   /**
+   * Seat-count range for a match under this profile (S2.1.7b D1) — the SINGLE
+   * source of truth server/client/bots all read (previously undeclared, so
+   * each package would have had to duplicate or guess it). Advisory
+   * lobby/matchmaking metadata: the engine does NOT gate match start on
+   * `minSeats` (a room below it plays fine — see `2..4` on Classic, which
+   * ships 1–3 seat rooms today). `2 ≤ minSeats ≤ maxSeats ≤ 6`
+   * (`ADAPTIVE_MAX_PLAYERS`, `adaptiveDuration.ts:32`), enforced by guard G5.
+   */
+  readonly minSeats: number;
+  /** @see RuleProfile.minSeats */
+  readonly maxSeats: number;
+  /**
    * Randomness source. `'dice'` is the Classic 2d6 roll; `'balanced_deck'` is a
    * FLAG only here — the number-deck draw mechanic is S2.1.2, not this story.
    */
@@ -265,9 +276,10 @@ export interface RuleProfile {
 }
 
 /**
- * Three load-bearing coherence checks (S2.2.6), each proven against
- * `validate.ts`/`reduce.ts` by reading the code, not by sampling — throws on
- * the first violation. Run ONCE per registry entry at MODULE INITIALIZATION
+ * Six load-bearing coherence checks (S2.2.6 G1–G3, S2.1.7b G4–G6), each
+ * proven against `validate.ts`/`reduce.ts`/`board.ts`/`neutral.ts` by reading
+ * the code, not by sampling — throws on the first violation. Run ONCE per
+ * registry entry at MODULE INITIALIZATION
  * (see the loop below {@link PROFILE_REGISTRY}), never from
  * `loadRuleProfile` — that resolves a FROZEN constant on every
  * `reduce`/`validate` call, and a registry entry cannot change between
@@ -348,14 +360,61 @@ export function validateRuleProfile(profile: RuleProfile): void {
         `(one per non-desert tile), got ${tokens.length}.`,
     );
   }
-  // ports.length must equal the port slots the topology carves for this radius —
-  // `buildTopology` carves exactly `ports.length` slots (ports.length is the one
-  // source of truth for portSlotCount), so this binds the geometry to the config.
-  const portSlots = buildTopology(radius, ports.length).portSlots.length;
-  if (ports.length !== portSlots) {
+  // ports.length must be bound INDEPENDENTLY of itself — the superseded check
+  // here used to be `buildTopology(radius, ports.length).portSlots.length`,
+  // which is `ports.length` fed straight back out (`buildTopology` carves
+  // EXACTLY `portSlotCount` slots by construction), making the comparison
+  // `N !== N`: always false, unable to fire on any `ports`-only corruption
+  // (confirmed in ruleProfile.test.ts — a slice-based variant failed to
+  // throw). The real, falsifiable bounds: `ports.length` cannot exceed the
+  // radius's boundary-edge count (each port slot needs its own distinct
+  // coastal edge — `boundaryEdges(r) = 6·(2r+1)`, the closed form for a
+  // radius-r hexagon's perimeter edge count, 30 at r=2 / 42 at r=3, matching
+  // `board.test.ts`'s direct topology count) — more ports than that forces
+  // `buildTopology`'s slot-spacing formula to double-assign the same edge to
+  // two slots. And it cannot fall below 5 — one 2:1 port per resource type is
+  // the ADR-0013 fairness invariant, so fewer than 5 ports means at least one
+  // resource has no 2:1 port anywhere on the board.
+  const boundaryEdgeCount = 6 * (2 * radius + 1);
+  if (ports.length > boundaryEdgeCount || ports.length < 5) {
     throw new Error(
-      `Rule profile "${profile.id}": board.ports.length (${ports.length}) must equal ` +
-        `the ${portSlots} port slots the radius-${radius} topology carves.`,
+      `Rule profile "${profile.id}": board.ports.length (${ports.length}) must be ` +
+        `between 5 (one 2:1 port per resource, ADR-0013) and ${boundaryEdgeCount} ` +
+        `(the boundary edges radius ${radius} carves, 6·(2·${radius}+1)), inclusive.`,
+    );
+  }
+  // G5 (S2.1.7b D1) — seat range sanity: the lobby/matchmaking metadata added
+  // by this story must itself be coherent, or a profile could advertise seats
+  // nobody can ever fill (minSeats > maxSeats) or beyond what the engine's
+  // adaptive-duration calculator supports (6 = ADAPTIVE_MAX_PLAYERS,
+  // `adaptiveDuration.ts:32` — mirrored by VALUE, not import: that module
+  // already imports `loadRuleProfile` FROM this one, so importing back would
+  // create a cycle).
+  const ADAPTIVE_MAX_PLAYERS_MIRROR = 6;
+  if (
+    profile.minSeats < 2 ||
+    profile.minSeats > profile.maxSeats ||
+    profile.maxSeats > ADAPTIVE_MAX_PLAYERS_MIRROR
+  ) {
+    throw new Error(
+      `Rule profile "${profile.id}": seat range must satisfy 2 ≤ minSeats ≤ maxSeats ≤ ` +
+        `${ADAPTIVE_MAX_PLAYERS_MIRROR}, got minSeats=${profile.minSeats}, ` +
+        `maxSeats=${profile.maxSeats}.`,
+    );
+  }
+  // G6 (S2.1.7b) — `neutral.ts`'s placement policy (`computeNeutralPlacements`,
+  // its default `topology` param and its doc comment) is only proven against
+  // the radius-2 board; nothing has lifted that assumption. Today it is
+  // unexercised by construction (only `twoPlayer` sets `neutralSettlements`,
+  // and `twoPlayer` is radius-2), but that is luck, not a check — this guard
+  // makes it a checked invariant so a FUTURE profile combining neutral
+  // settlements with a wider board fails loudly at import instead of silently
+  // placing neutrals against the wrong topology.
+  if ((profile.neutralSettlements ?? 0) > 0 && profile.board.radius !== 2) {
+    throw new Error(
+      `Rule profile "${profile.id}": neutralSettlements > 0 requires board.radius === 2 ` +
+        `(neutral.ts's placement policy is proven only against the radius-2 topology), ` +
+        `got radius ${profile.board.radius}.`,
     );
   }
 }
@@ -371,6 +430,10 @@ export function validateRuleProfile(profile: RuleProfile): void {
 export const CLASSIC_PROFILE: RuleProfile = {
   id: 'classic',
   name: 'Classic',
+  // 2–4 seats (S2.1.7b D1) — Balanced/Blitz inherit this via their
+  // `...CLASSIC_PROFILE` spread; twoPlayer/expanded override it below.
+  minSeats: 2,
+  maxSeats: 4,
   randomness: 'dice',
   // Single-offer trade (M1, byte-frozen) — Balanced/Blitz inherit this via
   // their `...CLASSIC_PROFILE` spread; no shipping preset opens parallel offers.
@@ -592,6 +655,8 @@ export const TWO_PLAYER_PROFILE: RuleProfile = {
   ...CLASSIC_PROFILE,
   id: 'twoPlayer',
   name: 'Two-Player',
+  minSeats: 2,
+  maxSeats: 2,
   neutralSettlements: 2,
 };
 
@@ -671,18 +736,21 @@ export const EXPANDED_BOARD: BoardProfile = {
 };
 
 /**
- * Expanded — Classic rules on the radius-3 {@link EXPANDED_BOARD} (ADR-0013
- * Decision 3). The board is the ONLY divergence from Classic (no rule branch,
- * Law 2): every gameplay value — dice randomness, catch-up off, supply 15/5/4,
- * `vpToWin: 10` — is inherited via the `...CLASSIC_PROFILE` spread. Registered
- * and resolvable CORE-only; NOT lobby-selectable until S2.1.7b (see
- * {@link RuleProfileId} / {@link SHIPPING_PROFILE_IDS}).
+ * Expanded — Classic rules on the radius-3 {@link EXPANDED_BOARD}, 5–6 seats
+ * (ADR-0013 Decision 3; seats via S2.1.7b D1). The board is the ONLY
+ * divergence from Classic (no rule branch, Law 2): every gameplay value —
+ * dice randomness, catch-up off, supply 15/5/4, `vpToWin: 10` — is inherited
+ * via the `...CLASSIC_PROFILE` spread. Lobby-selectable as of S2.1.7b (see
+ * {@link SHIPPING_PROFILE_IDS}); full end-to-end reachability (protocol +
+ * server + client) lands in this pack's later stories.
  */
 export const EXPANDED_PROFILE: RuleProfile = {
   ...CLASSIC_PROFILE,
   id: 'expanded',
   name: 'Expanded',
   board: EXPANDED_BOARD,
+  minSeats: 5,
+  maxSeats: 6,
 };
 
 /**
@@ -694,16 +762,17 @@ export const EXPANDED_PROFILE: RuleProfile = {
  * below is keyed by `string` and additionally resolves six measurement-only
  * ids (`EXPERIMENTAL_PROFILE_IDS`) that must never be reachable from a client.
  *
- * `'expanded'` is a registered {@link RuleProfileId} (resolvable via
- * {@link loadRuleProfile}) but deliberately EXCLUDED here: it is not
- * lobby-selectable until S2.1.7b wires 5–6 seats + routing (ADR-0013). So this
- * list is a CURATED SUBSET of `RuleProfileId`, not one entry per id.
+ * `'expanded'` joined this list in S2.1.7b (D1/D3) — the 5–6 seat radius-3
+ * board is now core-side lobby-selectable. This list is still a CURATED
+ * SUBSET of `RuleProfileId` (`'deep'` stays reserved for M4), not one entry
+ * per id.
  */
 export const SHIPPING_PROFILE_IDS: readonly RuleProfileId[] = [
   'classic',
   'balanced',
   'blitz',
   'twoPlayer',
+  'expanded',
 ];
 
 /**

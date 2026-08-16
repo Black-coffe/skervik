@@ -25,6 +25,7 @@ import {
   loadRuleProfile,
   type RuleProfile,
   type RuleProfileId,
+  SHIPPING_PROFILE_IDS,
   TWO_PLAYER_PROFILE,
   validateRuleProfile,
 } from './ruleProfile.js';
@@ -201,7 +202,7 @@ describe('vpToWin is live config: Blitz ends a match Classic would not', () => {
   });
 });
 
-describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
+describe('validateRuleProfile — six coherence guards (S2.2.6 G1-G3, S2.1.7b G4-G6)', () => {
   it(
     'every shipping preset passes (proven twice over: this loop, AND the module-level ' +
       'loop over the whole PROFILE_REGISTRY at import — a violation there would have ' +
@@ -212,6 +213,7 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
         BALANCED_PROFILE,
         BLITZ_PROFILE,
         TWO_PLAYER_PROFILE,
+        EXPANDED_PROFILE,
       ];
       for (const profile of shipping) {
         expect(() => validateRuleProfile(profile)).not.toThrow();
@@ -297,16 +299,9 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
   // tiles at runtime. These two tests bind each falsifiable length clause
   // independently (mirroring the G1/G3 "one test per leg" style) against the
   // radius-3 EXPANDED_PROFILE, so each fails ALONE if its own clause is
-  // deleted. NOTE: the guard's third (`ports.length`) clause is NOT covered
-  // here — `ruleProfile.ts` recomputes the expected count via
-  // `buildTopology(radius, ports.length).portSlots.length`, and
-  // `buildTopology` builds exactly `portSlotCount` (= the input `ports.length`
-  // itself) slots, so that comparison is tautological (`N !== N`) and cannot
-  // be made to throw by corrupting `ports`'s length alone — confirmed by
-  // running a slice-based variant of this test, which failed to throw. This
-  // is the same "guard exists, property isn't bound" shape as
-  // [[unbound-invariant-comments]]; flagging for the Queen/story owner, not
-  // fixing (out of this story's scope — "do NOT change the G4 guard itself").
+  // deleted. The guard's third (`ports.length`) clause is covered separately
+  // below, by tests bound against the S2.1.7b rewrite (see that block's
+  // comment for why the ORIGINAL clause here couldn't be forced to fire).
   it('G4 rejects board.tileMix with the wrong length for the profile radius (36, not 37 for radius 3)', () => {
     const violating: RuleProfile = {
       ...EXPANDED_PROFILE,
@@ -327,5 +322,117 @@ describe('validateRuleProfile — three coherence guards (S2.2.6)', () => {
       },
     };
     expect(() => validateRuleProfile(violating)).toThrow(/tokens\.length must be 36/);
+  });
+
+  // G4 ports clause (S2.1.7b follow-up) — the ORIGINAL clause recomputed its
+  // own expected value via `buildTopology(radius, ports.length).portSlots
+  // .length`, which is `ports.length` fed straight back out (`buildTopology`
+  // carves EXACTLY `portSlotCount` slots by construction): `N !== N`, always
+  // false. A `ports`-only corruption — e.g. `EXPANDED_PROFILE.board.ports
+  // .slice(0, 10)` — could NOT make that clause throw (confirmed by running
+  // exactly that slice against it). The rewritten clause bounds `ports.length`
+  // INDEPENDENTLY (against the closed-form boundary-edge count, not against
+  // itself), so a ports-only corruption now fires. This test is the padded/
+  // "double-assign" direction: more ports than radius 3's 42 boundary edges
+  // can host distinctly.
+  it('G4 (rewritten) rejects board.ports.length exceeding the radius boundary-edge count (42 at radius 3)', () => {
+    const tooManyPorts = Array.from({ length: 43 }, (_, i) => {
+      const template =
+        EXPANDED_PROFILE.board.ports[i % EXPANDED_PROFILE.board.ports.length];
+      return template as (typeof EXPANDED_PROFILE.board.ports)[number];
+    });
+    const violating: RuleProfile = {
+      ...EXPANDED_PROFILE,
+      board: { ...EXPANDED_PROFILE.board, ports: tooManyPorts },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/board\.ports\.length \(43\)/);
+  });
+
+  // G4 ports clause, the other direction: fewer than 5 ports means at least
+  // one resource has no 2:1 port anywhere on the board (ADR-0013 fairness
+  // invariant) — a `ports`-only corruption the original tautological clause
+  // also could not catch, since `buildTopology(radius, 4).portSlots.length`
+  // is tautologically 4 regardless of how few ports that is.
+  it('G4 (rewritten) rejects board.ports.length below 5 (loses the one-2:1-per-resource fairness floor)', () => {
+    const violating: RuleProfile = {
+      ...EXPANDED_PROFILE,
+      board: {
+        ...EXPANDED_PROFILE.board,
+        ports: EXPANDED_PROFILE.board.ports.slice(0, 4),
+      },
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/board\.ports\.length \(4\)/);
+  });
+
+  // Cross-check (S2.1.7b): the G4 closed form `boundaryEdges(r) = 6·(2r+1)`
+  // is proven against `buildTopology`'s ACTUAL boundary-edge count once here
+  // — not trusted — computed the same way `board.test.ts` computes it
+  // (edges incident to exactly 1 on-board tile), completely independently of
+  // `ruleProfile.ts`'s guard implementation.
+  it("the G4 closed form 6·(2r+1) matches buildTopology's real boundary-edge count, for r = 2 and 3", () => {
+    for (const radius of [2, 3]) {
+      const portSlotCount = radius === 2 ? 9 : 11;
+      const topo = buildTopology(radius, portSlotCount);
+      const boundaryEdges = topo.edges.filter(
+        (edge) => topo.tiles.filter((t) => t.edgeIds.includes(edge.id)).length === 1,
+      );
+      expect(boundaryEdges).toHaveLength(6 * (2 * radius + 1));
+    }
+  });
+
+  // G5 (S2.1.7b D1) — seat range sanity.
+  it('G5 rejects minSeats > maxSeats', () => {
+    const violating: RuleProfile = { ...CLASSIC_PROFILE, minSeats: 5, maxSeats: 4 };
+    expect(() => validateRuleProfile(violating)).toThrow(/seat range/);
+  });
+
+  it('G5 rejects minSeats below 2', () => {
+    const violating: RuleProfile = { ...CLASSIC_PROFILE, minSeats: 1 };
+    expect(() => validateRuleProfile(violating)).toThrow(/seat range/);
+  });
+
+  it('G5 rejects maxSeats above 6 (ADAPTIVE_MAX_PLAYERS)', () => {
+    const violating: RuleProfile = { ...CLASSIC_PROFILE, maxSeats: 7 };
+    expect(() => validateRuleProfile(violating)).toThrow(/seat range/);
+  });
+
+  // G6 (S2.1.7b) — neutral.ts's placement policy is proven only against the
+  // radius-2 topology; a profile pairing neutral settlements with a wider
+  // board must fail at import, not silently place against the wrong board.
+  it('G6 rejects neutralSettlements > 0 on a non-radius-2 board', () => {
+    const violating: RuleProfile = {
+      ...EXPANDED_PROFILE,
+      neutralSettlements: 2,
+    };
+    expect(() => validateRuleProfile(violating)).toThrow(/neutralSettlements/);
+  });
+
+  it('G6 does not fire when neutralSettlements is unset on a non-radius-2 board (EXPANDED_PROFILE itself)', () => {
+    expect(() => validateRuleProfile(EXPANDED_PROFILE)).not.toThrow();
+  });
+});
+
+describe('seat metadata: minSeats/maxSeats (S2.1.7b D1)', () => {
+  it('every profile in PROFILE_REGISTRY exposes the documented seat range', () => {
+    expect(CLASSIC_PROFILE.minSeats).toBe(2);
+    expect(CLASSIC_PROFILE.maxSeats).toBe(4);
+    expect(BALANCED_PROFILE.minSeats).toBe(2);
+    expect(BALANCED_PROFILE.maxSeats).toBe(4);
+    expect(BLITZ_PROFILE.minSeats).toBe(2);
+    expect(BLITZ_PROFILE.maxSeats).toBe(4);
+    expect(TWO_PLAYER_PROFILE.minSeats).toBe(2);
+    expect(TWO_PLAYER_PROFILE.maxSeats).toBe(2);
+    expect(EXPANDED_PROFILE.minSeats).toBe(5);
+    expect(EXPANDED_PROFILE.maxSeats).toBe(6);
+  });
+
+  it('SHIPPING_PROFILE_IDS includes expanded (S2.1.7b widens the lobby allow-list)', () => {
+    expect(SHIPPING_PROFILE_IDS).toEqual([
+      'classic',
+      'balanced',
+      'blitz',
+      'twoPlayer',
+      'expanded',
+    ]);
   });
 });
