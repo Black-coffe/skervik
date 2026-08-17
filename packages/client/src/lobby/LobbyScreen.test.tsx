@@ -172,6 +172,25 @@ describe('LobbyDurationSection — the adjustment + ceiling disclosure', () => {
     }
   });
 
+  // m2-gate-12: `lobby.durationAdjusted` is a plural object in EN as well now, so
+  // the key selects through `Intl.PluralRules` in every locale. The count-8
+  // sentence asserted above is its `other` form, unchanged; this pins the `one`
+  // form, which English's mass noun ("10 renown to win") keeps identical — a
+  // future "1 renowns" fails here. The count is hand-built: `ADAPTIVE_VP_FLOOR`
+  // means no shipping table can reach 1, and the form still has to be right.
+  it('[forcing] the EN lowered-target notice renders "1 renown" in its singular form — the plural split never pluralizes a mass noun', () => {
+    const singular: LobbyDurationEstimate = {
+      playerCount: 6,
+      minutes: 68,
+      loweredVpToWin: 1,
+      exceedsCeiling: false,
+    };
+    const html = renderIn('en', <LobbyDurationSection estimate={singular} />);
+
+    expect(html).toContain('A table this size lowers the victory target to 1 renown.');
+    expect(html).not.toContain('renowns');
+  });
+
   it('a hand-built estimate with no adjustment renders neither notice — the branch is driven by the data, not by the preset id', () => {
     const untouched: LobbyDurationEstimate = {
       playerCount: 6,

@@ -1,7 +1,7 @@
 ---
 story: m2-gate-12
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 8, 2026-08-17; 2 rounds)
 tier: 1
 worker: worker-code
 tracer: false
@@ -51,6 +51,22 @@ docs/specs/m2-mode-platform/plan.md (M2 GATE paragraph + evidence table); packag
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Gate paragraph: adaptive clause carries the Q5 exception; a second `> **Amended 2026-08-17
+  (Q5)**` blockquote holds the verbatim answer, and the Q1/Q2 blockquote's closing sentence
+  ("every other clause stands... including adaptive duration") was past-tensed + pointed at it,
+  since leaving it would have contradicted the clause one line above. Evidence row: clause label
+  gained "(6-seat Grand Chart excepted, Q5)" so the table does not restate the falsified headline,
+  and the proof cell gained the N3 note (override absent or exactly 8 on every shipping table).
+- EN `lobby.durationAdjusted` is now `{ one, other }`; "renown" is a mass noun here, so both forms
+  are the same sentence — count 8 renders byte-identically and the existing EN assertion was left
+  untouched. Added one leg pinning the `one` form (hand-built `loweredVpToWin: 1`, unreachable past
+  `ADAPTIVE_VP_FLOOR`) so a future "1 renowns" fails. Client 400→401 tests green, prettier clean,
+  `pnpm -s typecheck` clean.
+- Round 2 (lead, Non-goal loosened for that one line): the Mission line (`plan.md:12`) now reads
+  «**adaptive duration** (≤60 min; 6-seat Grand Chart excepted — Q5)» so the headline is not
+  restated unqualified above the gate. The following two lines of that same paragraph were
+  re-wrapped (whitespace only, no wording change) to absorb the longer line. Prettier clean,
+  client suite still 401 green.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

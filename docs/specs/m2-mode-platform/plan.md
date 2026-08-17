@@ -9,10 +9,10 @@ base-commit: 0b3348d (E2.1 S2.1.1–S2.1.4 merged; S2.1.5/S2.1.6 + E2.2–E2.6 r
 # M2 — Mode platform & resilience: execution plan (Queen playbook)
 
 **Mission (M2 GATE):** a multi-mode platform (Classic / Balanced / Blitz), 2–6 players,
-single-player + multiplayer, **adaptive duration** (≤60 min), **catch-up** mechanics,
-robust **reconnect + bot-fill**, **matchmaking + lobby + presence**, heuristic **bots**, and
-**accounts**. (ROADMAP.md §M2, gate line; H2-2026 plan.) M1 shipped the deterministic Classic
-slice; M2 turns "one engine" into "one engine configured many ways" and makes it survive real
+single-player + multiplayer, **adaptive duration** (≤60 min; 6-seat Grand Chart excepted — Q5),
+**catch-up** mechanics, robust **reconnect + bot-fill**, **matchmaking + lobby + presence**,
+heuristic **bots**, and **accounts**. (ROADMAP.md §M2, gate line; H2-2026 plan.) M1 shipped the
+deterministic Classic slice; M2 turns "one engine" into "one engine configured many ways" and makes it survive real
 players leaving, reconnecting, and being matched.
 
 ## 0. How to run this plan (process — read first)
@@ -260,8 +260,10 @@ E4.1 (multiplayer play-by-turn) does NOT cover this — see ROADMAP.md S2.6.5.
 | E2.6 persistence & accounts | T2–T3 | 🔶 **near-closed** — **ADR-0012** (Drizzle+PGlite). S2.6.1 ✅ · S2.6.2a ✅ · S2.6.3 ✅ · **S2.6.4 ✅ merged `7542700`** · S2.6.2b ⏸ deferred (owner OAuth creds — gate clause amended 2026-08-17 to guest-JWT-now) · S2.6.5 solo save/resume (non-gating, unscheduled). Every gating story in the epic has landed. Carry-forward nits: **S2.6.3 review nit #1** — abandoned AUTHENTICATED player loses `user_id` linkage (`#resolveUserIdForSeat` reads live `this.clients`; a dropped human is gone → `user_id=null` despite `'abandoned'`; won't show in their "my games"). Fix: capture `userId` onto `SeatSchema` at onAuth/onJoin. Product-impact; fold into S2.6.4 or a small follow-up. Also: S2.6.2a nit #2 (client retry discards token on transient outage → post-M2) + #3 (cold-load omits displayName echo → S1.7.1b) | — |
 
 **M2 GATE (all must hold):** Classic/Balanced/Blitz all playable + seed-verifiable; 2–6 players;
-single + multiplayer; adaptive duration keeps matches ≤60 min; catch-up mechanics live &
-profile-gated; reconnect + bot-fill robust (no karmic bans); matchmaking + lobby +
+single + multiplayer; **adaptive duration keeps matches ≤60 min on every table except the
+6-seat Grand Chart — there the target is lowered to the VP floor of 8 and the lobby discloses
+it; fitting 60 min awaits the M3 estimator calibration on telemetry (Q5)**; catch-up mechanics
+live & profile-gated; reconnect + bot-fill robust (no karmic bans); matchmaking + lobby +
 **in-memory presence (Redis → M5, S2.5.1)**; heuristic bots ×3; **accounts: guest JWT in M2,
 OAuth when the owner registers the apps (S2.6.2b)** + GDPR; every new user-facing string
 RU/UA/EN; CI green incl. a per-profile full-match E2E.
@@ -271,8 +273,19 @@ RU/UA/EN; CI green incl. a per-profile full-match E2E.
 > переписать пункт на "in-memory presence (Redis → M5)"» (single-VPS December alpha; S2.5.1
 > stays deferred). **accounts** — «Амендить: guest сейчас, OAuth ← креды — переписать пункт на
 > "guest JWT в M2; OAuth — когда владелец зарегистрирует приложения (S2.6.2b)"». Every other
-> clause stands as originally written, including adaptive duration — story `m2-gate-02` made
-> it true rather than amending it away.
+> clause stood as originally written at that point, including adaptive duration — story
+> `m2-gate-02` made it true rather than amending it away. (The adaptive clause was amended
+> later the same day; see the Q5 note below.)
+
+> **Amended 2026-08-17 (Q5)** (owner, `m2-gate/brief.md` `## Answers` — verbatim answer to Q5,
+> raised by re-review finding N1). The **adaptive duration** clause only: «Амендить с
+> исключением — ≤60 мин для всех столов, кроме 6-местного Grand Chart: там порог снижен до
+> пола 8 и игрок предупреждён в лобби; вписывание в 60 мин — после M3-калибровки эстиматора
+> телеметрией». Cause: `m2-gate-06`'s VP floor of 8 (owner Q4) leaves the 6-seat `expanded`
+> estimate at 67.6 min, so the unqualified "≤60 min" headline was false for that one table.
+> The exception is disclosed, not silent — the lobby renders `lobby.durationAdjusted` +
+> `lobby.durationWarning` for it (`m2-gate-09`); closing the gap is M3 calibration work, not
+> a gate blocker.
 
 **Gate evidence (one line per clause — audit trail, not a verdict):**
 
@@ -281,7 +294,7 @@ RU/UA/EN; CI green incl. a per-profile full-match E2E.
 | Classic/Balanced/Blitz playable + seed-verifiable | Full-match e2e per profile: `packages/server/src/e2e/fullMatch.e2e.test.ts` (classic, socket) + `scriptedDriver.test.ts`, `balancedMatch.e2e.test.ts` (deck leg: every 36-draw cycle is a `BALANCED_ROLL_DECK` permutation — fails on a relabeled Classic log), `blitzMatch.e2e.test.ts` (winner at exactly 8 VP + same-seed classic contrast at 10). Seed-verify: `packages/core/src/verify.test.ts` + `packages/server/src/routes/matchVerify.test.ts` (`m2-gate-01`) |
 | 2–6 players | `twoPlayerMatch.e2e.test.ts` (2p phantom), classic/balanced/blitz e2e at 4 seats, `expandedMatch.e2e.test.ts` + `expandedMultiClient.e2e.test.ts` (5–6p board) — S2.1.6 `f0d69b7`, S2.1.7a merge `cac69af`, S2.1.7b pack tip `3035ba5` (last commit of that pack, not a merge). 5–6p also survives a reconnect intact since `m2-gate-07` — see the reconnect clause |
 | single + multiplayer | Single-player + bot-fill S2.4.3 `1da5022` (`packages/server/src/room/botFill.e2e.test.ts`); multiplayer cross-process `expandedMultiClient.e2e.test.ts` |
-| adaptive duration ≤60 min | LIVE at match genesis, **VP floor 8** (`ADAPTIVE_VP_FLOOR`, `packages/core/src/adaptiveDuration.ts` — raised from the uncalibrated 5 by review finding C1 / owner Q4, `m2-gate-06`). `packages/server/src/room/GameRoom.test.ts` genesis legs: expanded **5p → 8 VP** (58 min, fits, no warning) · expanded **6p → 8 VP** + `exceeds_ceiling_at_vp_floor` (~68 min — reported honestly instead of going lower) · Classic 4p, `twoPlayer` 2p and `balanced` 4p emit **no** override (key ABSENT in both the event and `gameState`; Classic/balanced 4p pinned at 58 of the 60-min ceiling, so a constants drift cannot pass as "no adjustment"). Calculator: `packages/core/src/adaptiveDuration.test.ts` (S2.1.3 `f0738b6`; `m2-gate-06` re-pointed the anchors and pins "never below 8" across `SHIPPING_PROFILE_IDS` × 2–6 seats). Seam + honoring reads: `packages/core/src/reduce.test.ts` (`match.started` fold survives replay; `m2-gate-06`'s fold guard drops a wire-invalid override — the key stays ABSENT, never a default), `packages/core/src/ruleProfile.test.ts` (`vpToWinOverride` replaces the profile threshold), `packages/protocol/src/messages.test.ts` (wire schema). Cross-process: `expandedMultiClient.e2e.test.ts` pins the live 5-seat winner threshold to `computeAdaptiveDuration('expanded', 5)`'s own answer — mutation-checked (`m2-gate-08` stubbed the room's override to `undefined` and both new pins failed) — `m2-gate-05`/`02`/`06`/`08` |
+| adaptive duration ≤60 min (6-seat Grand Chart excepted, Q5) | LIVE at match genesis, **VP floor 8** (`ADAPTIVE_VP_FLOOR`, `packages/core/src/adaptiveDuration.ts` — raised from the uncalibrated 5 by review finding C1 / owner Q4, `m2-gate-06`). `packages/server/src/room/GameRoom.test.ts` genesis legs: expanded **5p → 8 VP** (58 min, fits, no warning) · expanded **6p → 8 VP** + `exceeds_ceiling_at_vp_floor` (~68 min — reported honestly instead of going lower) · Classic 4p, `twoPlayer` 2p and `balanced` 4p emit **no** override (key ABSENT in both the event and `gameState`; Classic/balanced 4p pinned at 58 of the 60-min ceiling, so a constants drift cannot pass as "no adjustment"). Calculator: `packages/core/src/adaptiveDuration.test.ts` (S2.1.3 `f0738b6`; `m2-gate-06` re-pointed the anchors and pins "never below 8" across `SHIPPING_PROFILE_IDS` × 2–6 seats). Seam + honoring reads: `packages/core/src/reduce.test.ts` (`match.started` fold survives replay; `m2-gate-06`'s fold guard drops a wire-invalid override — the key stays ABSENT, never a default), `packages/core/src/ruleProfile.test.ts` (`vpToWinOverride` replaces the profile threshold), `packages/protocol/src/messages.test.ts` (wire schema). Cross-process: `expandedMultiClient.e2e.test.ts` pins the live 5-seat winner threshold to `computeAdaptiveDuration('expanded', 5)`'s own answer — mutation-checked (`m2-gate-08` stubbed the room's override to `undefined` and both new pins failed) — `m2-gate-05`/`02`/`06`/`08`. **N3 (re-review, recorded with owner Q5, `m2-gate-12`):** with the floor at 8 the lever currently emits exactly ONE value — every shipping table either gets no override at all (classic/balanced/blitz/twoPlayer at 2–4 seats) or gets 8 (`expanded` 5p/6p). The per-table machinery is real and tested across `SHIPPING_PROFILE_IDS` × 2–6 seats, but until the M3 telemetry calibration widens the estimator it delivers a constant, so no shipped table is playing a threshold the floor did not pick |
 | catch-up live & profile-gated | `packages/core/src/friendlyRobber.test.ts`, `robinHood.test.ts`, `finalRound.test.ts`, `eventTiles.test.ts`; profile gating + init-time guards G1–G3 in `ruleProfile.test.ts` (S2.2.6 `0400289`). **No flag is enabled on any shipping preset** — E2.2 measurement tail found none earned it (S2.2.5/S2.2.5a `704b3ae`) |
 | reconnect + bot-fill robust (no karmic bans) | Server: `packages/server/src/room/GameRoom.test.ts` (grace seat-hold, expiry holds the seat with `connected:false` — never forfeits), `botFill.e2e.test.ts`, `botFillSafeLeave.e2e.test.ts`. Client: `packages/client/src/net/reconnectToken.test.ts`, `connection.test.ts`, `coldLoadAction.test.ts` (page-reload resume) — E2.3 `e8d3172` / `a9d42fd` / `e1c8d73` / `481c72d`. **Snapshot fidelity (`m2-gate-07`, review C3/M2):** `PublicGameStateSchema` now carries optional `profileId` + `vpToWinOverride`, so a reconnect into an `expanded` match keeps the radius-3 board and the effective victory threshold instead of silently re-rendering a Classic board — `packages/protocol/src/messages.test.ts` (roundtrip PRESERVATION, not `safeParse` success: zod was stripping both keys while every prior test stayed green) + `packages/client/src/net/wsClient.test.ts` (join and reclaim snapshots both deliver `profileId: 'expanded'`) |
 | matchmaking + lobby + in-memory presence | `packages/server/src/room/matchmakingByMode.e2e.test.ts` (`filterBy(['profileId'])`, S2.5.5 `e13dabe`), `lobbySelection.e2e.test.ts`, `readyUp.e2e.test.ts`, `privateRooms.e2e.test.ts`, `joinOptionsSecurity.e2e.test.ts`; `packages/client/src/lobby/LobbyScreen.test.tsx` + `lobbyStore.test.ts`. Presence is per-process seat state (Colyseus local presence + `SeatSchema.connected`) — Redis deferred to M5 per the amendment above |

@@ -159,8 +159,14 @@ export const en: Messages = {
     one: 'Estimated length — about {count} minute',
     other: 'Estimated length — about {count} minutes',
   },
-  'lobby.durationAdjusted':
-    'A table this size lowers the victory target to {count} renown.',
+  // Plural forms mirror the RU/UK entries so every locale selects this key the
+  // same way. English "renown" is a mass noun here (`hud.renownLabel`, "10 renown
+  // to win") — the two forms therefore read alike; the split exists so a future
+  // countable rewording has a place to land, never to grow a "1 renowns".
+  'lobby.durationAdjusted': {
+    one: 'A table this size lowers the victory target to {count} renown.',
+    other: 'A table this size lowers the victory target to {count} renown.',
+  },
   'lobby.durationWarning':
     'Even on the shortest victory track, a crew this size sails past the hour.',
   // --- Private rooms by code / invite link (S2.5.3) ---
