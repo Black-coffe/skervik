@@ -5,8 +5,8 @@ status: todo
 tier: 2
 worker: worker-code
 tracer: false
-wave: 2
-blocked_by: [m2-gate-01, m2-gate-02, m2-gate-03]
+wave: 4
+blocked_by: [m2-gate-01, m2-gate-02, m2-gate-03, m2-gate-05]
 ---
 
 # Gate amendment + evidence table + stale status rows

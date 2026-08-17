@@ -5,8 +5,8 @@ status: todo
 tier: 3
 worker: worker-code
 tracer: false
-wave: 1
-blocked_by: []
+wave: 3
+blocked_by: [m2-gate-05]
 ---
 
 # Adaptive duration goes live: genesis wiring + lobby estimate
@@ -39,9 +39,14 @@ estimate exceeds the ceiling even at the VP floor, in all three locales.
 ## Non-goals
 - Do NOT touch the estimator's tunable constants or `packages/core` at all - the v1
   heuristic recalibrates at M3 with telemetry; this story only WIRES what exists.
-- Do NOT invent a new protocol message for the adjusted vpToWin - per the plan's
-  `## Contracts`, client and server call the same core function on the same inputs; if
-  that turns out to be insufficient, return `NEEDS_CONTEXT`, do not improvise.
+- Do NOT invent your own channel for the adjusted vpToWin - story 05 shipped the seam
+  (optional victory override on `GameState`/`MatchStartedEvent`, honored by
+  `validate.ts`); GameRoom SETS it at genesis, and sets it ONLY when the adaptive
+  result differs from the profile constant (absent = frozen bytes). If the seam is
+  insufficient, return `NEEDS_CONTEXT`, do not improvise.
+- Lobby estimate seat count: clamp to the selected profile's `[minSeats, maxSeats]`
+  (Queen decision, plan delta 2026-08-17) - the estimate is advisory; genesis truth
+  stays with the room. Never call the estimator below `ADAPTIVE_MIN_PLAYERS`.
 - Do NOT let the adjustment reach Classic 2-4p: the calibration anchor says 4p Classic
   fits the ceiling, so its vpToWin must come out UNCHANGED - assert that (Classic
   byte-freeze), do not assume it.
@@ -51,9 +56,10 @@ estimate exceeds the ceiling even at the VP floor, in all three locales.
 memory/map/server.md (GameRoom genesis), memory/map/client.md (lobby); context: packages/core/src/adaptiveDuration.ts, its test's calibration anchors
 
 ## Acceptance criteria
-- [ ] GameRoom at genesis: effective vpToWin = adaptive result for the actual seat
-      count; a GameRoom test proves a 6-seat expanded room starts with a LOWER vpToWin
-      than the profile constant, and a 4p classic room starts with vpToWin 10 unchanged.
+- [ ] GameRoom at genesis sets the story-05 override to the adaptive result for the
+      actual seat count; a GameRoom test proves a 6-seat expanded room starts with a
+      LOWER effective vpToWin than the profile constant (and the win check honors it),
+      and a 4p classic room emits NO override (field absent, vpToWin 10 unchanged).
 - [ ] Determinism: same profile + same roster + same seed → byte-identical event log
       across two runs WITH the wiring in place (existing replay-equality pattern).
 - [ ] Lobby: for the selected preset + bot count the estimated minutes render; when the

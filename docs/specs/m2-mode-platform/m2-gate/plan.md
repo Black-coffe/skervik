@@ -36,19 +36,33 @@ or a file to point at.
 - `m2-gate-03-profile-enum-parity` — test pinning protocol `ShippingProfileIdSchema` to
   core `SHIPPING_PROFILE_IDS` (a sixth profile can no longer pass core and die on wire).
 
-**Wave 2** (after all of wave 1)
+**Wave 2** (after wave 1)
+- `m2-gate-05-victory-override-seam` — core+protocol: optional per-match victory
+  override (`GameState`/`MatchStartedEvent` + the `victory.vpToWin` read), absent for
+  Classic 2–4p so golden/replay bytes stay frozen by construction.
+
+**Wave 3**
+- `m2-gate-02-adaptive-duration-live` — GameRoom applies `computeAdaptiveDuration` at
+  genesis THROUGH the 05 seam; lobby shows the duration estimate + over-ceiling warning;
+  3 i18n keys ×3.
+
+**Wave 4**
 - `m2-gate-04-gate-amend-and-evidence` — milestone plan.md: amend gate wording per owner
   answers (Redis → M5, OAuth ← creds, adaptive now enforced), evidence line per clause,
   fix stale §6 rows (S2.1.7a/7b), record E2.6 epic closure state.
 
 ## Contracts
 
-- The adjusted `vpToWin` is computed SERVER-SIDE once, at match genesis, as
-  `computeAdaptiveDuration(profile, seatCount)` from `@skervik/core`; the client lobby
-  estimate calls the SAME core function with the same inputs — no new protocol message,
-  no second estimator. If the worker finds the room needs to surface the adjusted value
-  to the client beyond existing state, that is an INTERFACES return line, not an
-  improvised message.
+- *(amended by the 2026-08-17 plan delta)* Story 05 provides the seam: an OPTIONAL
+  per-match victory override on `GameState`/`MatchStartedEvent` (core) mirrored in the
+  protocol schema, honored by the `victory.vpToWin` read in `validate.ts`; the field is
+  ABSENT whenever the adaptive result equals the profile constant, so Classic 2–4p
+  logs stay byte-identical by construction. Story 02 consumes exactly that seam: the
+  room computes `computeAdaptiveDuration(profile, seatCount)` once at genesis and sets
+  the override; the client lobby estimate calls the SAME core function (seat count
+  clamped to the profile's `[minSeats, maxSeats]`) — still no second estimator. If
+  either worker finds the seam insufficient, that is NEEDS_CONTEXT, not an improvised
+  message.
 - New i18n keys (3: estimate label, minutes value, over-ceiling warning) land in
   `keys.ts` + all three locales in the same story (02) — the locale-completeness test
   makes a partial landing unmergeable.
@@ -66,6 +80,18 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
 
 ## Plan deltas
 
-*(none yet)*
+- **2026-08-17, story 02 round 1 → NEEDS_CONTEXT → new story 05.** Worker's return: the
+  adjusted vpToWin has NO channel into the engine — `validate.ts:633` reads victory only
+  from `loadRuleProfile(state.profileId)`, the server never reads `vpToWin`, and story
+  02's `## Non-goals` forbids touching core; the plan's Contract ("no new protocol
+  message") mislocated the gap. Queen decision, per the owner's standing Q3 answer
+  (подключить живьём): cut `m2-gate-05` (wave 2) — optional per-match victory override
+  in core+protocol, absent for Classic 2–4p (byte-freeze by construction, precedent:
+  `profileId`, `neutralSettlements`); story 02 re-scoped to consume the seam
+  (wave 3, blocked_by 05); story 04 moves to wave 4. Rejected: descoping 02 to
+  lobby-display-only — it would leave the gate clause satisfied by dead code, the exact
+  finding that opened this pack. Also decided (worker blocker 2): the lobby estimate
+  clamps seat count to the profile's `[minSeats, maxSeats]`; genesis truth stays with
+  the room.
 
 **Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized.

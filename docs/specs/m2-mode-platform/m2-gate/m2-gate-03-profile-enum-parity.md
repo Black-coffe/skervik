@@ -46,6 +46,21 @@ memory/map/protocol.md; context: packages/protocol/src/messages.ts:291-302, pack
 
 ## Implementation notes
 <!-- appended by the worker -->
+Parity is **order-pinned** (`toEqual` on both arrays, plus a set-equality check that
+names the drifting id, plus a non-vacuity length guard) — core documents the list as
+"in display order" and the wire enum mirrors it 1:1, so a one-sided reorder is drift
+worth surfacing; no hardcoded count, so a genuine sixth profile added to BOTH sides
+stays green. `ShippingProfileIdSchema` is private to messages.ts, so `.options` is read
+through its exported consumer — `JoinLobbySelectionSchema.shape.profileId.unwrap()` IS
+that enum object, not a copy — which keeps the story test-only (no export added,
+schema untouched). `@skervik/core` was ALREADY a dependency of packages/protocol, so
+no package.json change was needed. Added 5 tests (47 → 52): order-pinned equality,
+set equality, every core shipping id accepted by the join allow-list, the same ids
+accepted by `match.started` (the enum's two consumers can't drift apart), and a 🔴
+guard that no `EXPERIMENTAL_PROFILE_IDS` value is reachable at the wire. Liveness was
+verified by temporarily asserting against a 6-id list inside the test file (red:
+`expected [ Array(5) ] to deeply equal [ Array(6) ]`), then reverting — no broken
+state left behind.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->
