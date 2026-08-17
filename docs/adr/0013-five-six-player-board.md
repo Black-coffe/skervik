@@ -307,3 +307,43 @@ Copy verbatim into `docs/wiki/` (extend `board.md` / the board-generation notes)
 - Real M3 match-length telemetry contradicts the v1 tile/token/port mix → re-tune
   the *contents* (mix within the fixed 37/36/11 array lengths) without a schema
   change.
+
+## Revisit log
+
+### 2026-08-17 — trigger 2 fired: the override seam is solved, by a different mechanism
+
+The second "Revisit when" bullet — *"the adaptive-profile-override seam is solved
+… and the adaptively-lowered `vpToWin` reaches the live match"* — **has fired**, in
+the M2-gate pack (stories `m2-gate-05`/`02`/`06`/`08`). The decisions above stand as
+written; this note records only where the shipped delivery differs from what the
+ADR anticipated, so a future reader does not go looking for a mechanism that was
+never built.
+
+- **The mechanism is an optional event field, not ADR-0012 `matches.profile`.**
+  Decision 4's caveat and the "Revisit when" bullet both name ADR-0012's
+  `matches.profile` row as the seam's durable home. What shipped instead is
+  `vpToWinOverride?: number` — an OPTIONAL field on core's `GameState` and on the
+  `match.started` event, mirrored in the protocol schema, honored by the
+  `victory.vpToWin` read and folded by `reduce.ts`. It travels in the event log, so
+  replay and `verify` resolve the same threshold with no database read; ADR-0012's
+  persistence layer is not involved. The field is ABSENT whenever the adaptive
+  result equals the profile constant, which is what keeps Classic 2–4p byte-frozen
+  — the same absent-key discipline `profileId` and `neutralSettlements` already use.
+- **Decision 4's caveat is therefore discharged.** `expanded` no longer "plays at
+  its literal `vpToWin: 10` while the lobby shows an advisory recommendation":
+  `GameRoom` computes `computeAdaptiveDuration(profile.id, seatCount)` once at
+  genesis and puts the result on the wire, and the lobby renders the SAME core
+  call's answer rather than a second estimator.
+- **Decision 1's worked example is now out of date.** The "On density" bullet cites
+  6p-Classic trimming `vpToWin` "to ~6 to fit" — correct against the then-current
+  floor of 5. The M2-gate lead review (finding C1) found 6 VP winnable with zero
+  building on the expanded board (two setup settlements + both awards), and owner
+  Q4 raised `ADAPTIVE_VP_FLOOR` to **8**. Both expanded 5p and 6p now play to 8 VP;
+  6p reports `exceeds_ceiling_at_vp_floor` (~68 min) instead of going lower. The
+  bullet's *argument* — match length keys off `playerCount × vpToWin`, not tile
+  count — is unaffected; only the number moved.
+- **Still open:** Decision 3's interim stands. `expanded` remains a single
+  registered preset (Classic rules on a radius-3 board); Balanced or Blitz *on* the
+  expanded board is still not composable, because the shipped override carries one
+  scalar (`vpToWin`), not a whole profile. Retiring Decision 3's interim needs a
+  profile-level override, and this note does not authorize one.

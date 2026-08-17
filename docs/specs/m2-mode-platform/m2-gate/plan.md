@@ -3,7 +3,8 @@
 **Tier:** 3 · **Spec slug:** `m2-gate` · **Brief:** [brief.md](brief.md)
 **Governed by:** `docs/specs/m2-mode-platform/plan.md` (M2 GATE, §6 status table) ·
 ADR-0003 (pure zero-dep core) · ADR-0008 (trilingual) · ADR-0013
-**Depends on:** S2.1.7b ✅ merged (`3035ba5`) — last feature pack before the gate.
+**Depends on:** S2.1.7b ✅ landed — `3035ba5` is the **last commit of that pack**, not a merge
+commit (single parent `21add10`); the last feature pack before the gate.
 
 ## Goal
 
@@ -140,5 +141,19 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   notice). Also accepted from the same return: bot-count ` — ` folded into the
   catalogue as well (the criterion was unqualified), locale-switch-via-localStorage
   test technique, and `role="status"` per instruction.
+- **2026-08-17, story 10 — records caught up to the post-fix truth (the gate stays OPEN).**
+  The evidence table now reads floor **8** everywhere (expanded 5p → 8 VP / 58 min; 6p → 8 VP
+  + `exceeds_ceiling_at_vp_floor` / ~68 min — the 6p → 6 VP row was written before story 06),
+  cites the new 5-seat/`twoPlayer`/`balanced` genesis legs, cites the `m2-gate-07` snapshot-schema
+  fix under the reconnect clause, and states the re-counted key total: **191 — unchanged**, because
+  story 09 swapped four keys for four (`durationLabel`/`durationMinutes`/`botCountLabel`/`botCount`
+  out; `durationSummary`/`durationAdjusted`/`botCountSummary`/`a11y.durationSection` in), so the
+  duration block is now four keys, not the three story 02 landed. `3035ba5` reworded in both plan
+  files. Two review minors promoted to the milestone `## 4` ledger rather than being buried here:
+  (a) the room's override rule is mirrored in `expandedMatch.e2e.test.ts`'s local
+  `adaptiveOverrideFor` because `GameRoom.#adaptiveVpToWinOverride` is `#private` — two places to
+  edit, and the mirror omits the room's seat-range guard; (b) the `dist` resolution trap all three
+  of workers 02/06/07 hit, with the CI step-order question it raises. **No verdict recorded** —
+  per this story's `## Non-goals` the gate is not marked passed here.
 
 **Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized. Fix round authorized via Q4 (2026-08-17).

@@ -1,7 +1,7 @@
 ---
 story: m2-gate-10
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 7, 2026-08-17)
 tier: 1
 worker: worker-code
 tracer: false
@@ -54,6 +54,19 @@ Evidence table in docs/specs/m2-mode-platform/plan.md; review minors in m2-gate/
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Every number re-derived from the repo, not copied from the brief: `ADAPTIVE_VP_FLOOR` is 8
+  (`adaptiveDuration.ts:47`), expanded 5p → 8 VP / 58 min and 6p → 8 VP / 67.6 min + warning;
+  `3035ba5` has ONE parent (`21add10`) so it is the pack's tip, not a merge — `cac69af` is the
+  real merge commit. **`TRANSLATION_KEYS` re-counted = 191, unchanged**: story 09 swapped four keys
+  for four (`durationLabel`/`durationMinutes`/`botCountLabel`/`botCount` → `durationSummary`/
+  `durationAdjusted`/`botCountSummary`/`a11y.durationSection`), so the evidence row's total held
+  while its parenthetical ("the 3 duration keys") went stale — the duration block is now four.
+- Two review minors promoted to the milestone `## 4` ledger instead of being noted and lost: the
+  `adaptiveOverrideFor` mirror in `expandedMatch.e2e.test.ts:88` (the room's copy is `#private`,
+  and the mirror omits its seat-range guard — two places to edit), and the `dist`-resolution trap.
+  Chasing the latter surfaced an unresolved CI question recorded there, NOT fixed here (out of
+  Files): `dist/` is gitignored and `ci.yml` runs `Build` as its LAST step, after every test gate.
+  No verdict on the gate was recorded anywhere (`## Non-goals`).
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->
