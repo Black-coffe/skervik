@@ -5,7 +5,14 @@
 // false and `<GameScreen>` once it flips — either because the human pressed
 // Start, or because `main.tsx` detected a resumable match on a cold load and
 // skipped the lobby entirely (S2.3.2a resume-first, never re-applying a pick).
-import { loadRuleProfile, type RuleProfileId } from '@skervik/core';
+import {
+  ADAPTIVE_MAX_PLAYERS,
+  ADAPTIVE_MIN_PLAYERS,
+  type AdaptiveDurationResult,
+  computeAdaptiveDuration,
+  loadRuleProfile,
+  type RuleProfileId,
+} from '@skervik/core';
 import { create } from 'zustand';
 
 import type {
@@ -80,6 +87,98 @@ export function selectLobbySelection(state: LobbyStore): LobbyJoinFields {
       difficulty: DEFAULT_BOT_DIFFICULTY,
     })),
   };
+}
+
+/**
+ * The lobby's advisory match-length readout (S2.1.3 wired live, m2-gate-02) —
+ * what `LobbyScreen` renders under the preset/bot selectors.
+ */
+export interface LobbyDurationEstimate {
+  /**
+   * The seat count the estimate was computed for — the lobby's own pick
+   * (1 human + bots) CLAMPED into the selected profile's `[minSeats, maxSeats]`.
+   * Exposed so the display can name the table size it is talking about, and so
+   * the clamp itself is directly assertable.
+   */
+  readonly playerCount: number;
+  /** Whole minutes, rounded — the estimate for the profile the room would ACTUALLY run (post-adaptation). */
+  readonly minutes: number;
+  /**
+   * The victory target the adaptation actually lowered to, or `null` when the
+   * base profile came back untouched (m2-gate-09, review finding C2). This is
+   * the RULE CHANGE the player is about to live under — the lobby used to show
+   * only a minute count, so a Grand Chart table silently played to 8 renown
+   * instead of 10 with nothing on screen saying so. Read from
+   * `adjustments`, not re-derived: whatever levers core grows later
+   * (S2.1.4/.5/.6), this stays "what the calculator says it did".
+   */
+  readonly loweredVpToWin: number | null;
+  /** `true` only for `warningCode: 'exceeds_ceiling_at_vp_floor'` — lowering VP to the floor still doesn't fit the ≤60-min ceiling. */
+  readonly exceedsCeiling: boolean;
+}
+
+/**
+ * The seat count the lobby estimate speaks for: one human plus the picked bots,
+ * CLAMPED into the selected profile's advertised `[minSeats, maxSeats]` (Queen
+ * decision, plan delta 2026-08-17). The estimate is ADVISORY — genesis truth
+ * stays with the room, which computes from the real final roster — so a lobby
+ * showing "5 captains" for a Grand Chart pick with zero bots is the honest
+ * reading: that room seats five before it starts.
+ *
+ * The clamp is also what keeps `computeAdaptiveDuration` in range: it THROWS
+ * outside `[ADAPTIVE_MIN_PLAYERS, ADAPTIVE_MAX_PLAYERS]` rather than clamping,
+ * and a fresh Classic lobby (zero bots) is a ONE-seat pick. Both adaptive
+ * bounds are folded in explicitly rather than leaned on transitively through
+ * `ruleProfile.ts`'s G5 seat-range guard, so a future profile edit can never
+ * turn this into a throw inside a render.
+ */
+function estimateSeatCount(profileId: RuleProfileId, botCount: number): number {
+  const { minSeats, maxSeats } = loadRuleProfile(profileId);
+  const low = Math.max(minSeats, ADAPTIVE_MIN_PLAYERS);
+  const high = Math.min(maxSeats, ADAPTIVE_MAX_PLAYERS);
+  return Math.min(high, Math.max(low, botCount + 1));
+}
+
+/**
+ * Projects a core {@link AdaptiveDurationResult} onto the lobby's readout —
+ * pure and separate from the store read below so a test can force the
+ * over-ceiling branch with a REAL core result (a tight `targetMinutes`)
+ * instead of a hand-built fake. Structured code in, no string out (ADR-0008):
+ * the warning's copy lives in the locale files, keyed off `exceedsCeiling`,
+ * and the lowered target off `loweredVpToWin`.
+ *
+ * `estimatedMinutes` — the estimate for the RETURNED profile — is the number
+ * shown, not `baselineMinutes`: the room applies the same adjustment at
+ * genesis, so the post-adaptation figure is the one the players will live.
+ */
+export function deriveDurationEstimate(
+  result: AdaptiveDurationResult,
+): LobbyDurationEstimate {
+  const vpAdjustment = result.adjustments.find(
+    (adjustment) => adjustment.knob === 'vpToWin',
+  );
+  return {
+    playerCount: result.playerCount,
+    minutes: Math.round(result.estimatedMinutes),
+    loweredVpToWin: vpAdjustment?.to ?? null,
+    exceedsCeiling: result.warningCode === 'exceeds_ceiling_at_vp_floor',
+  };
+}
+
+/**
+ * The lobby's duration readout for the current preset + bot pick — the SAME
+ * core calculator the room runs at genesis (`computeAdaptiveDuration`), never a
+ * second estimator (plan Contract).
+ */
+export function selectDurationEstimate(
+  state: Pick<LobbyStore, 'profileId' | 'botCount'>,
+): LobbyDurationEstimate {
+  return deriveDurationEstimate(
+    computeAdaptiveDuration(
+      state.profileId,
+      estimateSeatCount(state.profileId, state.botCount),
+    ),
+  );
 }
 
 /** The `connect()` `joinMode` argument for a FRESH join (S2.5.3) — the pasted code is trimmed here, once, at the read boundary. */

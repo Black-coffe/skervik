@@ -212,6 +212,17 @@ export interface GameState {
    */
   readonly profileId?: RuleProfileId;
   /**
+   * A per-match victory threshold that REPLACES the profile's
+   * `victory.vpToWin` for this match only (S2.1.3, adaptive duration): fixed
+   * once by `match.started` from {@link MatchStartedEvent.vpToWinOverride} and
+   * never changed, so the threshold is a fact carried in the log and replay /
+   * the S1.7.3 verifier resolve the identical rule (event-sourcing). Optional
+   * (like {@link GameState.profileId}) and ABSENT unless the room set it — an
+   * absent override reads through to the profile constant, which is why every
+   * existing log stays byte-identical. Nothing sets it yet.
+   */
+  readonly vpToWinOverride?: number;
+  /**
    * Present once `board.generated` has been applied (S1.1.2), absent
    * before — optional rather than a placeholder value so pre-S1.1.2 golden
    * fixtures (no board event in their log) stay byte-identical unchanged.
@@ -412,6 +423,14 @@ export interface MatchStartedEvent extends BaseGameEvent {
    * `GameRoom` always emits `'classic'` for now (mode selection UI = S2.5.4).
    */
   readonly profileId?: RuleProfileId;
+  /**
+   * The per-match victory threshold for this match (S2.1.3), overriding the
+   * profile's `victory.vpToWin`. Append-compatible and optional: an event
+   * without it folds to a `GameState` whose `vpToWinOverride` stays absent and
+   * the engine reads the profile constant. `GameRoom` never emits it for now —
+   * the adaptive-duration wiring is a later story.
+   */
+  readonly vpToWinOverride?: number;
 }
 
 /**

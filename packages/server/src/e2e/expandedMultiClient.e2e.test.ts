@@ -16,6 +16,7 @@ import { join } from 'node:path';
 
 import { Client, type Room } from '@colyseus/sdk';
 import {
+  computeAdaptiveDuration,
   type GameEndedEvent,
   type GameEvent,
   type GameState,
@@ -354,10 +355,27 @@ describe('expanded — five real clients seat and play a full match (S2.1.7b-07)
     expect(localState.players).toHaveLength(5);
     const winnerId =
       ended !== null ? (ended as GameEndedEvent).winnerId : ('' as PlayerId);
-    const vpToWin = loadRuleProfile('expanded').victory.vpToWin;
+    // The EFFECTIVE threshold, not the profile constant (m2-gate-02): adaptive
+    // duration is applied at genesis, so a live 5-seat expanded room starts
+    // with `vpToWinOverride` in force and legitimately ends BELOW the profile's
+    // own `vpToWin: 10`.
+    //
+    // Pin the override itself FIRST (m2-gate-08). A bare
+    // `override ?? constant` fallback asserts nothing: rip the genesis wiring
+    // out and the fallback quietly becomes 10, the match plays to 10, and the
+    // ≥ check still passes. These three lines are what actually fail if the
+    // wiring is removed (`undefined` ≠ 8) or the calculator drifts (the
+    // reconstructed state must equal what the room computed for FIVE seats).
+    const expectedOverride = computeAdaptiveDuration('expanded', N_SEATS).profile.victory
+      .vpToWin;
+    expect(expectedOverride).toBeLessThan(loadRuleProfile('expanded').victory.vpToWin);
+    expect(localState.vpToWinOverride).toBe(expectedOverride);
+
+    // ...and a real winner reached the threshold this match was actually
+    // played to, which is now known to be the adaptive one.
     expect(
       ended !== null ? (ended as GameEndedEvent).finalStandings[winnerId] : 0,
-    ).toBeGreaterThanOrEqual(vpToWin);
+    ).toBeGreaterThanOrEqual(expectedOverride);
 
     // Seed secrecy across every socket, not just one.
     for (const clientSeen of seenByClient) {

@@ -155,7 +155,7 @@ describe('vpToWin is live config: Blitz ends a match Classic would not', () => {
   }
 
   /** player-1: 3 cities (6 VP) + 1 settlement (1 VP) = 7 VP, one city-upgrade from 8. */
-  function nearWin(profileId: RuleProfileId): GameState {
+  function nearWin(profileId: RuleProfileId, vpToWinOverride?: number): GameState {
     return {
       matchId: 'm-blitz',
       phase: 'main',
@@ -165,6 +165,8 @@ describe('vpToWin is live config: Blitz ends a match Classic would not', () => {
       eventIndex: 50,
       seedHash: 'deadbeef',
       profileId,
+      // Absent unless a test asks for it — the seam's frozen-bytes contract.
+      ...(vpToWinOverride !== undefined ? { vpToWinOverride } : {}),
       buildings: {
         settlements: { [settlementVertex]: 'player-1' },
         roads: {},
@@ -199,6 +201,45 @@ describe('vpToWin is live config: Blitz ends a match Classic would not', () => {
 
     const next = result.events.reduce(reduce, nearWin('classic'));
     expect(next.phase).toBe('main');
+  });
+
+  // S2.1.3 seam: the SAME live-config lever, but per-match rather than per
+  // profile. `GameState.vpToWinOverride` replaces `victory.vpToWin` when
+  // present and is absent everywhere today, so the profile constant still
+  // decides every existing match. Nothing SETS it yet (adaptive-duration
+  // wiring is a later story) — this proves only that the channel is honored.
+  describe('per-match vpToWinOverride replaces the profile threshold', () => {
+    it('override 6 on a CLASSIC match: the upgrade to 8 VP fires game.ended', () => {
+      const result = validate(nearWin('classic', 6), upgradeToEight, 'player-1', SEED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const ended = result.events.find((e) => e.type === 'game.ended');
+      expect(ended).toMatchObject({ type: 'game.ended', winnerId: 'player-1' });
+
+      const finished = result.events.reduce(reduce, nearWin('classic', 6));
+      expect(finished.phase).toBe('finished');
+    });
+
+    it('override ABSENT: the same Classic position reads the profile constant (10) and does not end', () => {
+      const result = validate(nearWin('classic'), upgradeToEight, 'player-1', SEED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.events.some((e) => e.type === 'game.ended')).toBe(false);
+    });
+
+    it('absent override is a MISSING key, not a defaulted number — Classic bytes are frozen', () => {
+      const state = nearWin('classic');
+      expect('vpToWinOverride' in state).toBe(false);
+      expect(JSON.stringify(state)).not.toContain('vpToWinOverride');
+      // Folding a full match through `reduce` never introduces the key either.
+      const result = validate(state, upgradeToEight, 'player-1', SEED);
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const next = result.events.reduce(reduce, state);
+      expect('vpToWinOverride' in next).toBe(false);
+      // The override is per-match state, never a mutation of shared config.
+      expect(CLASSIC_PROFILE.victory.vpToWin).toBe(10);
+    });
   });
 });
 

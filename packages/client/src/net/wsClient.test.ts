@@ -12,7 +12,7 @@ import type {
 } from '@skervik/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { devFixtureState } from '../dev/devFixture.js';
+import { buildDevFixtureState, devFixtureState } from '../dev/devFixture.js';
 import type { ConnectionStatus, VersionMismatchInfo } from './connection.js';
 import { CONSENTED_LEAVE_CODE } from './connection.js';
 import {
@@ -409,6 +409,65 @@ describe('attachRoom — reconnect on an unexpected drop (S2.3.2)', () => {
     await vi.waitFor(() => {
       expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
     });
+  });
+});
+
+// m2-gate-07 (review C3): the reconnect-board regression. `PublicGameStateSchema`
+// omitted `profileId`, and zod strips unknown keys — so the reclaim snapshot that
+// lands after a drop reached the store WITHOUT it, `selectProfileId` fell back to
+// `'classic'`, and a player mid-match on the 37-tile `expanded` board came back to
+// a radius-2 Classic one. These assert against the object the parse path actually
+// hands to `onSnapshot` (not the emitted literal), so a field the schema drops
+// again fails here.
+describe('attachRoom — a snapshot keeps the match profile through the parse path (m2-gate-07)', () => {
+  const expandedState = buildDevFixtureState('expanded');
+  const expandedSnapshot: StateSnapshotMessage = {
+    v: 1,
+    type: 'state.snapshot',
+    payload: { ...expandedState, vpToWinOverride: 8 },
+    isHost: true,
+    isPrivate: false,
+  };
+
+  it('a snapshot on the live wire delivers profileId + vpToWinOverride intact', () => {
+    const room = new MockRoom();
+    const harness = makeCallbacks();
+    attachRoom(room, harness.callbacks);
+
+    room.emit('state.snapshot', expandedSnapshot);
+
+    const delivered = harness.onSnapshot.mock.calls[0]?.[0];
+    expect(delivered?.profileId).toBe('expanded');
+    expect(delivered?.vpToWinOverride).toBe(8);
+  });
+
+  it('🔴 the RECLAIM snapshot after an unexpected drop still says `expanded` — the board must not fall back to Classic', async () => {
+    const room = new MockRoom();
+    const reconnectedRoom = new MockRoom();
+    reconnectedRoom.roomId = room.roomId;
+    reconnectedRoom.sessionId = 'seat-abc-2';
+    const harness = makeCallbacks();
+    const reconnect = vi
+      .fn<ReconnectCapability['reconnect']>()
+      .mockResolvedValue(reconnectedRoom);
+
+    attachRoom(room, harness.callbacks, { reconnect, maxAttempts: 1 });
+
+    room.fireLeave(1006); // an unexpected close — the drop this story is about
+    await vi.waitFor(() => {
+      expect(harness.onConnectionChange).toHaveBeenLastCalledWith('connected');
+    });
+
+    reconnectedRoom.emit('state.snapshot', expandedSnapshot);
+
+    const delivered = harness.onSnapshot.mock.calls[0]?.[0];
+    expect(harness.onSnapshot).toHaveBeenCalledTimes(1);
+    // `selectProfileId` reads exactly this field and defaults to `'classic'`
+    // when it is absent, so `undefined` here IS the wrong board.
+    expect(delivered?.profileId).toBe('expanded');
+    expect(delivered?.vpToWinOverride).toBe(8);
+    // The rest of the state came through unharmed alongside them.
+    expect(delivered?.matchId).toBe(expandedState.matchId);
   });
 });
 

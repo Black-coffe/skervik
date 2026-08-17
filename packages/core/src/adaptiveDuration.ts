@@ -32,11 +32,19 @@ export const ADAPTIVE_MIN_PLAYERS = 2;
 export const ADAPTIVE_MAX_PLAYERS = 6;
 
 /**
- * Never recommend a game shorter than this many VP — Blitz already sits at 8;
- * a floor below that would make the "adaptive" recommendation feel punitive
- * rather than helpful. v1 estimate — revisit once real telemetry exists.
+ * Never recommend a game shorter than this many VP — Blitz, the shortest
+ * SHIPPING profile, already sits at 8, so a recommendation below it would be
+ * shorter than anything a player can deliberately pick, i.e. punitive rather
+ * than helpful. It is also the point where the mode stops being the game: at
+ * 6 VP an expanded match is winnable with ZERO building — two setup
+ * settlements (2 VP) plus both awards (longest road + largest army, 4 VP) —
+ * which is what the m2-gate lead review (finding C1) blocked on; owner Q4
+ * fixed the floor at 8. The estimator's minute constants stay v1 estimates
+ * calibrated in M3 (telemetry), but the floor is a PRODUCT rule, not a
+ * heuristic output: when 8 VP still doesn't fit, this module reports
+ * {@link AdaptiveWarningCode} honestly instead of going lower.
  */
-export const ADAPTIVE_VP_FLOOR = 5;
+export const ADAPTIVE_VP_FLOOR = 8;
 
 /** Fixed overhead: lobby countdown + initial settlement/road placement. v1 estimate. */
 const SETUP_MINUTES = 10;

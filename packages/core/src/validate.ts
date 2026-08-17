@@ -594,6 +594,10 @@ function appendAwardsAndVictory(
   actingPlayerId: PlayerId,
 ): GameEvent[] {
   const { victory, catchUp } = loadRuleProfile(state.profileId ?? 'classic');
+  // S2.1.3: a per-match override (adaptive duration, fixed at genesis) REPLACES
+  // the profile's threshold for this match; absent — every match today — reads
+  // through to the profile constant, so this branch stays byte-identical.
+  const vpToWin = state.vpToWinOverride ?? victory.vpToWin;
   let cursor = primaryEvents.reduce(reduce, state);
   const extra: GameEvent[] = [];
 
@@ -630,7 +634,7 @@ function appendAwardsAndVictory(
   // (S2.2.3): under `hiddenVp` it excludes hidden VP cards, else the full tally
   // — with both catch-up flags off (every shipping preset) it IS
   // `computeVictoryPoints`, so this branch is byte-identical to M1.
-  if (thresholdVp(cursor, actingPlayerId) >= victory.vpToWin) {
+  if (thresholdVp(cursor, actingPlayerId) >= vpToWin) {
     if (!catchUp.finalRound) {
       // Instant win (today's behavior): freeze the match now, reveal full VP.
       const finalStandings: Record<PlayerId, number> = {};

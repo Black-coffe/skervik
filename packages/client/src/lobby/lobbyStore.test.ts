@@ -1,8 +1,18 @@
+import {
+  ADAPTIVE_CEILING_MINUTES,
+  ADAPTIVE_MIN_PLAYERS,
+  ADAPTIVE_VP_FLOOR,
+  computeAdaptiveDuration,
+  loadRuleProfile,
+  SHIPPING_PROFILE_IDS,
+} from '@skervik/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  deriveDurationEstimate,
   deriveLobbyViewState,
   maxBotsForProfile,
+  selectDurationEstimate,
   selectJoinMode,
   selectLobbySelection,
   shouldMarkConnected,
@@ -147,6 +157,114 @@ describe('shouldMarkConnected (S2.5.2, replaces S2.5.4a shouldStartAfterConnect)
 
   it('[forcing] null (failed connect) returns false — regardless of join mode, the user stays on LobbyScreen', () => {
     expect(shouldMarkConnected(null)).toBe(false);
+  });
+});
+
+// --- S2.1.3 wired live (m2-gate-02): the lobby's duration readout -----------
+// The lobby calls the SAME core calculator the room applies at genesis, on a
+// seat count clamped into the selected profile's [minSeats, maxSeats] — the
+// estimate is advisory, genesis truth stays with the room.
+describe('selectDurationEstimate — seat clamp + the shared core calculator', () => {
+  it('[forcing] a fresh CLASSIC lobby (zero bots = ONE seat) clamps UP to the profile minimum, never calling the estimator below ADAPTIVE_MIN_PLAYERS (it throws out of range rather than clamping)', () => {
+    const estimate = selectDurationEstimate({ profileId: 'classic', botCount: 0 });
+    expect(estimate.playerCount).toBe(loadRuleProfile('classic').minSeats);
+    expect(estimate.playerCount).toBeGreaterThanOrEqual(ADAPTIVE_MIN_PLAYERS);
+    expect(estimate.minutes).toBeGreaterThan(0);
+  });
+
+  it('[forcing] a GRAND CHART (expanded) lobby with zero bots clamps UP to its 5-seat minimum — the table it will actually seat, not the one person standing in it', () => {
+    const estimate = selectDurationEstimate({ profileId: 'expanded', botCount: 0 });
+    expect(estimate.playerCount).toBe(5);
+  });
+
+  it('a bot pick inside the range is used as-is (1 human + bots)', () => {
+    expect(
+      selectDurationEstimate({ profileId: 'classic', botCount: 3 }).playerCount,
+    ).toBe(4);
+    expect(
+      selectDurationEstimate({ profileId: 'expanded', botCount: 5 }).playerCount,
+    ).toBe(6);
+  });
+
+  it('reports the POST-adaptation estimate — the length the room will actually run, not the unadjusted baseline', () => {
+    const sixSeat = computeAdaptiveDuration('expanded', 6);
+    // The 6-seat expanded table is the one case a shipping preset gets adjusted.
+    expect(sixSeat.adjustments).not.toEqual([]);
+    expect(sixSeat.estimatedMinutes).toBeLessThan(sixSeat.baselineMinutes);
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 5 }).minutes).toBe(
+      Math.round(sixSeat.estimatedMinutes),
+    );
+  });
+
+  it('[forcing] every shipping preset × every selectable bot count produces an estimate and never throws — and exactly ONE pick outruns the ceiling: Grand Chart at its full six-seat table', () => {
+    const overCeiling: string[] = [];
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      for (let botCount = 0; botCount <= maxBotsForProfile(profileId); botCount += 1) {
+        const estimate = selectDurationEstimate({ profileId, botCount });
+        expect(estimate.minutes).toBeGreaterThan(0);
+        if (estimate.exceedsCeiling) {
+          overCeiling.push(`${profileId}/${botCount}`);
+        } else {
+          expect(estimate.minutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
+        }
+      }
+    }
+    // Before m2-gate-06 this list was empty — the calculator kept lowering VP
+    // until anything fit, so the warning branch was structurally unreachable
+    // from the lobby (lead-review C1/C2). With the floor clamped at 8, the
+    // six-seat Grand Chart table is honestly over the hour (67.6 min) and the
+    // lobby says so; every other shipping pick still fits. Pinned as an exact
+    // list so a future estimator tweak that silently widens or empties the
+    // warning set fails here rather than passing quietly.
+    expect(overCeiling).toEqual(['expanded/5']);
+  });
+
+  it('[forcing] Grand Chart reports the LOWERED victory target at both its table sizes (5 and 6 seats), and every preset that plays its base rules reports none — the disclosure the lobby renders (review C2)', () => {
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 4 })).toEqual({
+      playerCount: 5,
+      minutes: 58,
+      loweredVpToWin: ADAPTIVE_VP_FLOOR,
+      exceedsCeiling: false,
+    });
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 5 })).toEqual({
+      playerCount: 6,
+      minutes: 68,
+      loweredVpToWin: ADAPTIVE_VP_FLOOR,
+      exceedsCeiling: true,
+    });
+
+    for (const profileId of ['classic', 'balanced', 'blitz', 'twoPlayer'] as const) {
+      for (let botCount = 0; botCount <= maxBotsForProfile(profileId); botCount += 1) {
+        expect(selectDurationEstimate({ profileId, botCount }).loweredVpToWin).toBeNull();
+      }
+    }
+  });
+});
+
+describe('deriveDurationEstimate — the over-ceiling warning branch', () => {
+  it('[forcing] a result carrying warningCode "exceeds_ceiling_at_vp_floor" sets exceedsCeiling — forced with a REAL core result at a tight target, not a hand-built fake', () => {
+    const result = computeAdaptiveDuration('expanded', 6, 20);
+    expect(result.warningCode).toBe('exceeds_ceiling_at_vp_floor');
+    expect(result.withinCeiling).toBe(false);
+
+    const estimate = deriveDurationEstimate(result);
+    expect(estimate.exceedsCeiling).toBe(true);
+    expect(estimate.playerCount).toBe(6);
+    expect(estimate.minutes).toBe(Math.round(result.estimatedMinutes));
+  });
+
+  it('a result that fits leaves exceedsCeiling false, and an untouched base profile reports no lowered target', () => {
+    const estimate = deriveDurationEstimate(computeAdaptiveDuration('classic', 4));
+    expect(estimate.exceedsCeiling).toBe(false);
+    expect(estimate.loweredVpToWin).toBeNull();
+  });
+
+  it('[forcing] loweredVpToWin reads the vpToWin adjustment core reports, not a re-derivation — a forced 20-min target on Classic lands the same value core put in `adjustments`', () => {
+    const result = computeAdaptiveDuration('classic', 4, 20);
+    expect(result.adjustments).toEqual([
+      { knob: 'vpToWin', from: loadRuleProfile('classic').victory.vpToWin, to: 8 },
+    ]);
+    expect(deriveDurationEstimate(result).loweredVpToWin).toBe(8);
   });
 });
 

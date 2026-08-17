@@ -136,10 +136,15 @@ export const TRANSLATION_KEYS = [
   'lobby.preset.twoPlayer.description',
   'lobby.preset.expanded.name',
   'lobby.preset.expanded.description',
-  'lobby.botCountLabel',
   'a11y.botCountSelector',
-  'lobby.botCount',
+  'lobby.botCountSummary',
   'lobby.startButton',
+  // --- Adaptive match length + what it changed (S2.1.3 wired live,
+  //     m2-gate-02; the adjustment disclosure itself, m2-gate-09) ---
+  'a11y.durationSection',
+  'lobby.durationSummary',
+  'lobby.durationAdjusted',
+  'lobby.durationWarning',
   // --- Private rooms by code / invite link (S2.5.3) ---
   'lobby.joinModeLabel',
   'a11y.joinModeSelector',

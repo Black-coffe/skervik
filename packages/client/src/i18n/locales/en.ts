@@ -147,13 +147,28 @@ export const en: Messages = {
   'lobby.preset.expanded.name': 'Grand Chart',
   'lobby.preset.expanded.description':
     'An expanded archipelago for 5–6 captains — more isles and lighthouses.',
-  'lobby.botCountLabel': 'Bot crew',
   'a11y.botCountSelector': 'Bot count selector',
-  'lobby.botCount': {
-    one: '{count} bot',
-    other: '{count} bots',
+  'lobby.botCountSummary': {
+    one: 'Bot crew — {count} bot',
+    other: 'Bot crew — {count} bots',
   },
   'lobby.startButton': 'Start match',
+  // --- Adaptive match length + what it changed (S2.1.3, m2-gate-02/09) ---
+  'a11y.durationSection': 'Estimated match length',
+  'lobby.durationSummary': {
+    one: 'Estimated length — about {count} minute',
+    other: 'Estimated length — about {count} minutes',
+  },
+  // Plural forms mirror the RU/UK entries so every locale selects this key the
+  // same way. English "renown" is a mass noun here (`hud.renownLabel`, "10 renown
+  // to win") — the two forms therefore read alike; the split exists so a future
+  // countable rewording has a place to land, never to grow a "1 renowns".
+  'lobby.durationAdjusted': {
+    one: 'A table this size lowers the victory target to {count} renown.',
+    other: 'A table this size lowers the victory target to {count} renown.',
+  },
+  'lobby.durationWarning':
+    'Even on the shortest victory track, a crew this size sails past the hour.',
   // --- Private rooms by code / invite link (S2.5.3) ---
   'lobby.joinModeLabel': 'Join mode',
   'a11y.joinModeSelector': 'Join mode selector',

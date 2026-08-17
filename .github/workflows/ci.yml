@@ -48,6 +48,12 @@ jobs:
       - name: Format check
         run: pnpm exec prettier --check .
 
+      # The gates below import workspace `dist/`, which is gitignored and is not
+      # produced by install — so Build must run before the first gate for the
+      # named gates to have clean-checkout evidence (m2-gate-11).
+      - name: Build
+        run: pnpm build
+
       # Architectural invariant #1 (ADR-0003): the core must stay deterministic.
       # Run the golden-replay determinism/fair-RNG-audit test as its own named
       # gate so a regression reads as "core determinism broken" in the PR checks
@@ -63,8 +69,21 @@ jobs:
       # gate (e.g. a corrupted persisted event breaks the replay-equality assert)
       # rather than reading as a nameless failure in the general test run. The
       # full `pnpm test` step still re-runs it; the duplication is intentional.
-      - name: E2E full-match gate — cross-process match + replay-equality
-        run: pnpm --filter @skervik/server exec vitest run src/e2e/fullMatch.e2e.test.ts
+      #
+      # m2-gate-01 widens this gate from Classic alone to EVERY shipping
+      # profile: the M2 mode platform promises "Classic/Balanced/Blitz all
+      # playable + seed-verifiable", so each profile's full-match e2e is listed
+      # explicitly here. A mode that stops reaching a winner must fail this
+      # named gate, not hide inside the general test run.
+      - name: E2E full-match gate — per-profile match + replay-equality
+        run: >-
+          pnpm --filter @skervik/server exec vitest run
+          src/e2e/fullMatch.e2e.test.ts
+          src/e2e/twoPlayerMatch.e2e.test.ts
+          src/e2e/balancedMatch.e2e.test.ts
+          src/e2e/blitzMatch.e2e.test.ts
+          src/e2e/expandedMatch.e2e.test.ts
+          src/e2e/expandedMultiClient.e2e.test.ts
 
       # M1-gate closer (S1.7.3, A2 discipline): the provably-fair «Честный жребий»
       # proof. `verifyMatchRandomness` recomputes every seed-derived draw (dice,
@@ -77,6 +96,3 @@ jobs:
 
       - name: Test
         run: pnpm test
-
-      - name: Build
-        run: pnpm build

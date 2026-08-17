@@ -7,6 +7,11 @@
 // too. The variant samples mirror core's `types.test.ts` — if a schema field
 // diverges from core's shape, the matching valid sample fails to parse.
 import type { GameEvent, GameState, PlayerIntent } from '@skervik/core';
+// m2-gate-03: a TEST-ONLY value import of core's allow-list. `messages.ts` still
+// hand-copies it (see the `ShippingProfileIdSchema` docstring) — the production
+// wire schema must not import core; this file may, and that asymmetry is exactly
+// what makes the parity assertion below meaningful rather than tautological.
+import { EXPERIMENTAL_PROFILE_IDS, SHIPPING_PROFILE_IDS } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 
@@ -20,6 +25,7 @@ import {
   JoinLobbySelectionSchema,
   JoinOptionsSchema,
   PlayerIntentSchema,
+  PublicGameStateSchema,
   RejectEnvelopeSchema,
   ServerMessageSchema,
   StateSnapshotEnvelopeSchema,
@@ -585,6 +591,201 @@ describe('GameEventSchema — match.started carries the expanded profileId (S2.1
     expect(parsed.success).toBe(true);
     if (parsed.success && parsed.data.type === 'match.started') {
       expect(parsed.data.profileId).toBe('expanded');
+    }
+  });
+});
+
+// --- m2-gate-05: the per-match victory override seam (S2.1.3) ---------------
+//
+// `vpToWinOverride` mirrors core's optional field on the wire. Nothing emits it
+// yet, so the load-bearing case is the ABSENT one: a `match.started` without it
+// must parse exactly as before and must not gain a defaulted key.
+describe('GameEventSchema — match.started carries an optional vpToWinOverride (S2.1.3)', () => {
+  const base = {
+    type: 'match.started' as const,
+    index: 0,
+    matchId: 'm1',
+    seedHash: 'deadbeef',
+    playerIds: ['p1', 'p2'],
+    profileId: 'classic' as const,
+  };
+
+  it('round-trips the override when present', () => {
+    const parsed = GameEventSchema.safeParse({ ...base, vpToWinOverride: 8 });
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'match.started') {
+      expect(parsed.data.vpToWinOverride).toBe(8);
+    }
+  });
+
+  it('parses WITHOUT the override and does not invent the key (frozen bytes)', () => {
+    const parsed = GameEventSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'match.started') {
+      expect('vpToWinOverride' in parsed.data).toBe(false);
+      expect(JSON.stringify(parsed.data)).not.toContain('vpToWinOverride');
+    }
+  });
+
+  it('rejects a non-integer / non-positive override at the trust boundary', () => {
+    for (const bad of [0, -1, 7.5, '8', null]) {
+      expect(
+        GameEventSchema.safeParse({ ...base, vpToWinOverride: bad }).success,
+        `vpToWinOverride must reject ${JSON.stringify(bad)}`,
+      ).toBe(false);
+    }
+  });
+});
+
+// --- m2-gate-03: protocol enum <-> core SHIPPING_PROFILE_IDS parity ---------
+//
+// `ShippingProfileIdSchema` is PRIVATE to messages.ts, so the parity check
+// reaches its `.options` through the exported schema that consumes it —
+// `JoinLobbySelectionSchema.shape.profileId` is that very enum wrapped in
+// `.optional()`, so `.unwrap().options` IS `ShippingProfileIdSchema.options`,
+// not a copy of it. (Reading it this way keeps the story test-only: exporting
+// the const would be a change to the schema module, which m2-gate-03 forbids.)
+const WIRE_SHIPPING_PROFILE_IDS =
+  JoinLobbySelectionSchema.shape.profileId.unwrap().options;
+
+describe('ShippingProfileIdSchema <-> core SHIPPING_PROFILE_IDS parity (m2-gate-03)', () => {
+  // ORDER-PINNED, deliberately: core documents SHIPPING_PROFILE_IDS as the
+  // lobby list "in display order" and the wire enum mirrors it 1:1, so a
+  // reorder on one side alone is itself drift a reviewer should see. Note what
+  // is NOT asserted: the list's LENGTH against a hardcoded number — a genuine
+  // sixth shipping profile added to BOTH sides must stay green; only divergence
+  // must go red.
+  //
+  // Why this fails on every divergence, without committing a broken state:
+  //   - an id ADDED to core only  -> right array is longer  -> toEqual fails
+  //   - an id ADDED to the enum only -> left array is longer -> toEqual fails
+  //   - an id REMOVED from either  -> the same length mismatch, mirrored
+  //   - an id RENAMED on either side -> same length, differing element -> fails
+  it("the wire enum equals core's shipping allow-list exactly, element for element", () => {
+    // Spread: SHIPPING_PROFILE_IDS is `readonly`, and toEqual compares values.
+    expect([...WIRE_SHIPPING_PROFILE_IDS]).toEqual([...SHIPPING_PROFILE_IDS]);
+    // Non-vacuity: an empty list on BOTH sides would satisfy the line above.
+    expect(WIRE_SHIPPING_PROFILE_IDS.length).toBeGreaterThan(0);
+  });
+
+  it('membership matches as a set too — names which id drifted when the order-pinned check fails', () => {
+    expect(new Set(WIRE_SHIPPING_PROFILE_IDS)).toEqual(new Set(SHIPPING_PROFILE_IDS));
+  });
+
+  it('every core shipping id is actually accepted by the join allow-list', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = JoinLobbySelectionSchema.safeParse({ profileId });
+      expect(
+        parsed.success,
+        `core shipping id "${profileId}" must parse at the wire`,
+      ).toBe(true);
+    }
+  });
+
+  it("every core shipping id is accepted by the match.started payload too (the enum's two consumers cannot drift apart)", () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = GameEventSchema.safeParse({
+        type: 'match.started',
+        index: 0,
+        matchId: 'm1',
+        seedHash: 'deadbeef',
+        playerIds: ['p1', 'p2'],
+        profileId,
+      });
+      expect(parsed.success, `match.started must carry "${profileId}"`).toBe(true);
+    }
+  });
+
+  it('🔴 no measurement-only EXPERIMENTAL_PROFILE_IDS id leaks into the wire enum (loadRuleProfile resolves them; a client must never reach them)', () => {
+    for (const profileId of Object.values(EXPERIMENTAL_PROFILE_IDS)) {
+      expect(WIRE_SHIPPING_PROFILE_IDS as readonly string[]).not.toContain(profileId);
+      expect(
+        JoinLobbySelectionSchema.safeParse({ profileId }).success,
+        `experimental id "${profileId}" must be rejected at the wire`,
+      ).toBe(false);
+    }
+  });
+});
+
+// --- m2-gate-07: the snapshot CARRIES profileId + vpToWinOverride ----------
+//
+// Review C3/M2. zod strips unknown keys, so while these two were missing from
+// `PublicGameStateSchema` every snapshot silently lost them in transit — a
+// mid-match reconnect on an `expanded` room re-rendered the Classic board.
+// What these tests assert is PRESERVATION, not acceptance: `safeParse`
+// returned `success: true` the whole time the fields were being dropped,
+// which is exactly why the regression was invisible to the existing
+// "accepts a full state.snapshot" test above.
+const EXPANDED_SNAPSHOT: GameState = {
+  matchId: 'm-expanded',
+  phase: 'main',
+  turn: 4,
+  currentPlayerId: 'p1',
+  players: [
+    { id: 'p1', name: 'Wayfarer', victoryPoints: 3, resources: { ore: 1 } },
+    { id: 'p2', name: 'Drifter', victoryPoints: 2, resources: { timber: 2 } },
+  ],
+  eventIndex: 20,
+  seedHash: 'deadbeef',
+  profileId: 'expanded',
+  vpToWinOverride: 8,
+};
+
+describe('PublicGameStateSchema carries profileId + vpToWinOverride (m2-gate-07)', () => {
+  it('round-trips BOTH optional fields rather than stripping them', () => {
+    const parsed = PublicGameStateSchema.safeParse(EXPANDED_SNAPSHOT);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.profileId).toBe('expanded');
+    expect(parsed.data?.vpToWinOverride).toBe(8);
+  });
+
+  it('both survive the full state.snapshot envelope — the exact frame wsClient parses', () => {
+    const msg = {
+      v: 1,
+      type: 'state.snapshot',
+      payload: EXPANDED_SNAPSHOT,
+      isHost: false,
+      isPrivate: false,
+    };
+    const parsed = StateSnapshotEnvelopeSchema.safeParse(msg);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.payload.profileId).toBe('expanded');
+    expect(parsed.data?.payload.vpToWinOverride).toBe(8);
+    expect(ServerMessageSchema.safeParse(msg).success).toBe(true);
+  });
+
+  it('keeps both keys ABSENT when the payload omits them (optional, not defaulted)', () => {
+    const withoutBoth: Record<string, unknown> = { ...EXPANDED_SNAPSHOT };
+    delete withoutBoth.profileId;
+    delete withoutBoth.vpToWinOverride;
+
+    const parsed = PublicGameStateSchema.safeParse(withoutBoth);
+    expect(parsed.success).toBe(true);
+    // `in`, not `=== undefined`: a snapshot for a Classic match must stay the
+    // same object it was before this story — an injected `profileId: undefined`
+    // key would be a wire change, and the absent-key contract forbids it.
+    expect(parsed.data && 'profileId' in parsed.data).toBe(false);
+    expect(parsed.data && 'vpToWinOverride' in parsed.data).toBe(false);
+  });
+
+  it('accepts every core shipping profile id on a snapshot, so it cannot drift from match.started', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = PublicGameStateSchema.safeParse({
+        ...EXPANDED_SNAPSHOT,
+        profileId,
+      });
+      expect(parsed.success, `snapshot must carry "${profileId}"`).toBe(true);
+      expect(parsed.data?.profileId).toBe(profileId);
+    }
+  });
+
+  it('rejects a non-positive / non-integer vpToWinOverride', () => {
+    for (const bad of [0, -8, 8.5]) {
+      expect(
+        PublicGameStateSchema.safeParse({ ...EXPANDED_SNAPSHOT, vpToWinOverride: bad })
+          .success,
+        `vpToWinOverride ${bad} must be refused`,
+      ).toBe(false);
     }
   });
 });

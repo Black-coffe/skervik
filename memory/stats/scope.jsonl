@@ -6,3 +6,15 @@
 {"ts":"2026-08-16T20:27:34Z","story":"S2.1.7b-08-forced-action-topology","declared":2,"changed":3,"out_of_scope":1}
 {"ts":"2026-08-16T20:30:12Z","story":"S2.1.7b-06-board-auto-fit-zoom","declared":5,"changed":4,"out_of_scope":1}
 {"ts":"2026-08-17T09:39:34Z","story":"S2.1.7b-07-expanded-e2e","declared":2,"changed":3,"out_of_scope":1}
+{"ts":"2026-08-17T11:23:32Z","story":"m2-gate-03-profile-enum-parity","declared":1,"changed":1,"out_of_scope":0}
+{"ts":"2026-08-17T11:25:42Z","story":"m2-gate-01-balanced-blitz-e2e","declared":3,"changed":3,"out_of_scope":0}
+{"ts":"2026-08-17T11:36:20Z","story":"m2-gate-05-victory-override-seam","declared":7,"changed":8,"out_of_scope":1}
+{"ts":"2026-08-17T11:51:10Z","story":"m2-gate-02-adaptive-duration-live","declared":11,"changed":12,"out_of_scope":1}
+{"ts":"2026-08-17T11:55:18Z","story":"m2-gate-04-gate-amend-and-evidence","declared":1,"changed":1,"out_of_scope":0}
+{"ts":"2026-08-17T12:21:26Z","story":"m2-gate-07-snapshot-schema-fields","declared":3,"changed":3,"out_of_scope":0}
+{"ts":"2026-08-17T12:22:11Z","story":"m2-gate-06-vp-floor-clamp","declared":4,"changed":4,"out_of_scope":0}
+{"ts":"2026-08-17T12:30:28Z","story":"m2-gate-08-server-test-legs","declared":4,"changed":4,"out_of_scope":0}
+{"ts":"2026-08-17T12:33:46Z","story":"m2-gate-09-lobby-adjustment-warning","declared":9,"changed":10,"out_of_scope":1}
+{"ts":"2026-08-17T12:44:00Z","story":"m2-gate-10-records-and-evidence-truth","declared":5,"changed":7,"out_of_scope":0}
+{"ts":"2026-08-17T12:56:06Z","story":"m2-gate-11-ci-build-before-gates","declared":1,"changed":1,"out_of_scope":0}
+{"ts":"2026-08-17T12:59:55Z","story":"m2-gate-12-gate-clause-exception","declared":3,"changed":3,"out_of_scope":0}
