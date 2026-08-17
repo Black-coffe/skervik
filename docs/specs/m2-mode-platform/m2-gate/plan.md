@@ -118,4 +118,19 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   continues (context intact). Story 02's Non-goals stay as written — core remains
   outside its hands.
 
-**Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized.
+- **2026-08-17, lead-review → BLOCK → fix round (wave 5–7, stories 06–10).** Verdict on
+  the wave-1–4 diff: scope clean, byte-freeze holds, new e2e discriminators genuine —
+  blocked on behavior/disclosure: (C1) expanded silently plays to 8/6 VP from an
+  uncalibrated heuristic, 6 VP winnable with zero building — owner Q4: clamp the
+  adaptive VP floor to 8; (C2) the only lobby warning is structurally unreachable while
+  the actual lowering shows no notice — warn on any real adjustment; (C3/M2, pre-existing
+  but falsifying our evidence rows) `PublicGameStateSchema` strips `profileId` (reconnect
+  on expanded re-renders a Classic board) and never carried `vpToWinOverride`; (M1) one
+  evidence row overclaims (no 5-seat/twoPlayer genesis tests); (M3) amended e2e assertion
+  pins nothing; (M4) `expandedMatch` e2e tests a config production no longer produces;
+  plus minors (fold guard, i18n/a11y nits, stale ADR-0013/wiki/map records, `3035ba5`
+  miscited as a merge). Routed: 06 core floor clamp + fold guard · 07 snapshot schema
+  fields + wsClient test · 08 server test legs + pinned assertions · 09 lobby
+  adjustment-warning + i18n/a11y · 10 records (evidence rows, ADR note, wiki, maps).
+
+**Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized. Fix round authorized via Q4 (2026-08-17).
