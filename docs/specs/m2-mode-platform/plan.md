@@ -303,6 +303,8 @@ RU/UA/EN; CI green incl. a per-profile full-match E2E.
 | every new user-facing string RU/UA/EN | **191** keys in `TRANSLATION_KEYS` (`packages/client/src/i18n/keys.ts`) complete in `en`/`ru`/`uk`. **Re-counted 2026-08-17 after `m2-gate-09`, which left the total unchanged by swapping four keys for four:** `lobby.durationLabel`/`lobby.durationMinutes`/`lobby.botCountLabel`/`lobby.botCount` were removed and `lobby.durationSummary`/`lobby.durationAdjusted`/`lobby.botCountSummary`/`a11y.durationSection` added — the ` — ` separators moved into the catalogue strings (no assembly in JSX), so the adaptive-duration block is now FOUR keys (`a11y.durationSection`, `durationSummary`, `durationAdjusted`, `durationWarning`), not the three `m2-gate-02` landed. Enforcement: compile-time exhaustive `Record` + runtime `packages/client/src/i18n/i18n.test.ts` (`locale completeness`) + `translate.test.ts`; a partial landing is unmergeable (ADR-0008) |
 | CI green incl. per-profile full-match E2E | `.github/workflows/ci.yml` named step "E2E full-match gate — per-profile match + replay-equality" invokes all six e2e files (classic socket, twoPlayer, balanced, blitz, expanded boot-free, expanded multi-client). Profile-enum parity core↔wire pinned by `packages/protocol/src/messages.test.ts` so a sixth profile cannot pass core and die on the wire (`m2-gate-03`) |
 
-**Verdict:** NOT recorded here. The gate stays open until the owner rules on this evidence pack
-(`/vulyk-review` of `docs/specs/m2-mode-platform/m2-gate/`); this table exists to make the
-checklist auditable, not to declare it passed.
+**Verdict: M2 GATE PASSED** — owner, 2026-08-17, on this evidence pack: every clause is
+either evidenced above or amended on the record (Q1 Redis→M5, Q2 guest-now/OAuth←creds,
+Q5 6-seat Grand Chart exception — verbatim answers in
+`docs/specs/m2-mode-platform/m2-gate/brief.md`), and the pack passed adversarial
+lead-review (BLOCK→BLOCK→PASS; 12 stories, merge `ee9d3bf`, 1144 tests green).
