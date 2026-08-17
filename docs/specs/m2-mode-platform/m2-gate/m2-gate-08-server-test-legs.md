@@ -1,7 +1,7 @@
 ---
 story: m2-gate-08
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 6, 2026-08-17)
 tier: 2
 worker: worker-test
 tracer: false
@@ -56,6 +56,8 @@ Review findings M1/M3/M4 quoted in plan.md `## Plan deltas` (2026-08-17 BLOCK en
 
 ## Implementation notes
 <!-- appended by the worker -->
+- M1: `seatExpandedRoom` generalized to `seatProfileRoom(profileId, count)`; three genesis legs added — expanded 5p (override 8, `withinCeiling` true vs. 6p's `exceeds_ceiling_at_vp_floor`), twoPlayer 2p (key absent, `neutral.placed` present), balanced 4p (absent + the 58-of-60 margin pinned). Story 06 fallout fixed: the 6p forcing test now drives 3 cities + VP card + settlement = **8** VP (`driveExpandedToEightVp`), and the determinism leg pins `"vpToWinOverride":8`.
+- M3/M4 mutation-checked, not assumed: stubbing `#adaptiveVpToWinOverride` to `undefined` fails both new pins with `expected undefined to be 8`. `expandedMatch` genesis now spreads the override on the room's own conditional terms (6p expanded plays to 8 VP: 230 steps, winner `p2` — docstring re-measured; interleaved Classic 3p asserted still byte-frozen). Nit: `computeAdaptiveDuration(profile.id, …)` + floor-5 docstring corrected. Server suite 221/221, typecheck + lint + prettier clean.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

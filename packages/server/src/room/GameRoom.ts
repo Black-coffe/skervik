@@ -875,15 +875,19 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    * - the protocol's `match.started` schema rejects a non-integer/non-positive
    *   `vpToWinOverride` at the trust boundary, so a value that could never
    *   validate is never put on the event. The estimator only ever steps an
-   *   integer `vpToWin` down to `ADAPTIVE_VP_FLOOR` (5), so this cannot fire
-   *   today; it exists so a future recalibration cannot silently emit a batch
-   *   the wire would reject.
+   *   integer `vpToWin` down to `ADAPTIVE_VP_FLOOR` (8, raised from the
+   *   uncalibrated 5 by the m2-gate lead review's finding C1 / owner Q4), so
+   *   this cannot fire today; it exists so a future recalibration cannot
+   *   silently emit a batch the wire would reject.
    */
   #adaptiveVpToWinOverride(profile: RuleProfile, seatCount: number): number | undefined {
     if (seatCount < ADAPTIVE_MIN_PLAYERS || seatCount > ADAPTIVE_MAX_PLAYERS) {
       return undefined;
     }
-    const adaptive = computeAdaptiveDuration(this.#profileId, seatCount);
+    // `profile.id`, not `this.#profileId`: the comparison below is against
+    // THIS profile's constant, so the estimator must be asked about the same
+    // profile — one source, no way for the two to drift apart.
+    const adaptive = computeAdaptiveDuration(profile.id, seatCount);
     const vpToWin = adaptive.profile.victory.vpToWin;
     if (!Number.isInteger(vpToWin) || vpToWin <= 0) return undefined;
     // Equal to the profile constant ⇒ ABSENT, never a redundant echo.
