@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildTopology } from './board.js';
 import { reduce, replay } from './reduce.js';
 import { gameplayStreamIndex, rollDie } from './rng.js';
 import type { GameEvent, GameState, PlayerState } from './types.js';
@@ -402,5 +403,80 @@ describe('replay', () => {
     replay(lobbyState, events);
 
     expect(lobbyState).toEqual(before);
+  });
+});
+
+// m2-gate-05 (S2.1.3): `match.started` carries an OPTIONAL per-match victory
+// threshold. The fold matters because the log is the only source of truth —
+// an override that vanished here would be silently lost on replay, and the
+// verifier would resolve a different threshold than the live match used.
+describe('match.started folds the per-match vpToWinOverride (S2.1.3)', () => {
+  function genesis(vpToWinOverride?: number): GameEvent[] {
+    return [
+      {
+        type: 'match.started',
+        index: 0,
+        matchId: 'match-5',
+        seedHash: 'feedface',
+        playerIds: [alice.id, bob.id],
+        ...(vpToWinOverride !== undefined ? { vpToWinOverride } : {}),
+      },
+    ];
+  }
+
+  it('carries an event-set override into state, and replay matches the manual fold', () => {
+    const events = genesis(6);
+    const replayed = replay(lobbyState, events);
+
+    expect(replayed.vpToWinOverride).toBe(6);
+    expect(replayed).toEqual(events.reduce(reduce, lobbyState));
+  });
+
+  it('a match.started WITHOUT the override leaves the key absent (frozen bytes)', () => {
+    const replayed = replay(lobbyState, genesis());
+
+    expect('vpToWinOverride' in replayed).toBe(false);
+    expect(JSON.stringify(replayed)).not.toContain('vpToWinOverride');
+  });
+
+  it('the folded override is the LIVE threshold: replay ends a match Classic would not', () => {
+    // A 7-VP position (3 cities + 1 settlement) one city-upgrade from 8 VP —
+    // the same shape `ruleProfile.test.ts` uses for the profile-level branch.
+    const topology = buildTopology();
+    const [cityA, cityB, cityC, settlementVertex] = topology.vertices
+      .slice(0, 4)
+      .map((v) => v.id) as [string, string, string, string];
+    const rich = { timber: 9, clay: 9, fleece: 9, barley: 9, iron: 9 };
+    const nearWin = (state: GameState): GameState => ({
+      ...state,
+      phase: 'main',
+      turn: 12,
+      currentPlayerId: alice.id,
+      players: state.players.map((p) => ({ ...p, resources: { ...rich } })),
+      buildings: {
+        settlements: { [settlementVertex]: alice.id },
+        roads: {},
+        cities: { [cityA]: alice.id, [cityB]: alice.id, [cityC]: alice.id },
+      },
+    });
+    const upgradeToEight = {
+      type: 'intent.buildCity' as const,
+      playerId: alice.id,
+      vertexId: settlementVertex,
+    };
+
+    // Replayed WITH the override (6): the 8th VP ends the match.
+    const overridden = nearWin(replay(lobbyState, genesis(6)));
+    const ended = validate(overridden, upgradeToEight, alice.id, SEED);
+    expect(ended.ok).toBe(true);
+    if (!ended.ok) return;
+    expect(ended.events.some((e) => e.type === 'game.ended')).toBe(true);
+
+    // Replayed WITHOUT it: the profile constant (10) still governs.
+    const plain = nearWin(replay(lobbyState, genesis()));
+    const open = validate(plain, upgradeToEight, alice.id, SEED);
+    expect(open.ok).toBe(true);
+    if (!open.ok) return;
+    expect(open.events.some((e) => e.type === 'game.ended')).toBe(false);
   });
 });

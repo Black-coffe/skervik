@@ -318,6 +318,11 @@ const MatchStartedEventSchema = z.object({
   // S2.1.1: the match's rule profile. Optional + append-compatible — a
   // pre-S2.1.1 emit without it still validates and folds to Classic.
   profileId: ShippingProfileIdSchema.optional(),
+  // S2.1.3: the per-match victory threshold (adaptive duration), replacing the
+  // profile's `victory.vpToWin` for this match. Optional + append-compatible,
+  // exactly like `profileId` — an emit without it validates and folds to a
+  // state whose override stays absent, so the profile constant applies.
+  vpToWinOverride: z.number().int().positive().optional(),
 });
 const BoardGeneratedEventSchema = z.object({
   type: z.literal('board.generated'),

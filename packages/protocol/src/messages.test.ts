@@ -594,6 +594,48 @@ describe('GameEventSchema — match.started carries the expanded profileId (S2.1
   });
 });
 
+// --- m2-gate-05: the per-match victory override seam (S2.1.3) ---------------
+//
+// `vpToWinOverride` mirrors core's optional field on the wire. Nothing emits it
+// yet, so the load-bearing case is the ABSENT one: a `match.started` without it
+// must parse exactly as before and must not gain a defaulted key.
+describe('GameEventSchema — match.started carries an optional vpToWinOverride (S2.1.3)', () => {
+  const base = {
+    type: 'match.started' as const,
+    index: 0,
+    matchId: 'm1',
+    seedHash: 'deadbeef',
+    playerIds: ['p1', 'p2'],
+    profileId: 'classic' as const,
+  };
+
+  it('round-trips the override when present', () => {
+    const parsed = GameEventSchema.safeParse({ ...base, vpToWinOverride: 8 });
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'match.started') {
+      expect(parsed.data.vpToWinOverride).toBe(8);
+    }
+  });
+
+  it('parses WITHOUT the override and does not invent the key (frozen bytes)', () => {
+    const parsed = GameEventSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.type === 'match.started') {
+      expect('vpToWinOverride' in parsed.data).toBe(false);
+      expect(JSON.stringify(parsed.data)).not.toContain('vpToWinOverride');
+    }
+  });
+
+  it('rejects a non-integer / non-positive override at the trust boundary', () => {
+    for (const bad of [0, -1, 7.5, '8', null]) {
+      expect(
+        GameEventSchema.safeParse({ ...base, vpToWinOverride: bad }).success,
+        `vpToWinOverride must reject ${JSON.stringify(bad)}`,
+      ).toBe(false);
+    }
+  });
+});
+
 // --- m2-gate-03: protocol enum <-> core SHIPPING_PROFILE_IDS parity ---------
 //
 // `ShippingProfileIdSchema` is PRIVATE to messages.ts, so the parity check

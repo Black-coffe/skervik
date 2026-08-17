@@ -93,5 +93,21 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   finding that opened this pack. Also decided (worker blocker 2): the lobby estimate
   clamps seat count to the profile's `[minSeats, maxSeats]`; genesis truth stays with
   the room.
+- **2026-08-17, story 05 round 1 → NEEDS_CONTEXT (answered).** `## Files` named
+  `packages/core/src/validate.test.ts`, which does not exist; the two-branch vpToWin
+  threshold tests live in `ruleProfile.test.ts:139` (`vpToWin is live config`). Files
+  list amended to `ruleProfile.test.ts` (worker's recommendation — the override test
+  sits beside its exact precedent). Same worker continued with context intact rather
+  than a fresh dispatch: the fresh-worker default exists because same-context дозапрос
+  needs an experimental flag in the plain client; this session's harness continues
+  natively, so the reason does not apply. Worker also flagged for story 02's review:
+  `vpToWin` is read by `packages/bots/src/sim/*` and asserted in six server e2e tests.
+- **2026-08-17, story 05 round 2 — reduce fold pulled INTO the seam.** Worker's DONE
+  report flagged that `reduce.ts:143` drops `event.vpToWinOverride` (spreads only
+  `profileId`) — an override on the wire would vanish on replay from the event log,
+  a silent-loss path. The fold is read-side plumbing of "the engine can consume it",
+  so it belongs to story 05, not 02: Files gain `reduce.ts` + a fold test; same worker
+  continues (context intact). Story 02's Non-goals stay as written — core remains
+  outside its hands.
 
 **Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized.

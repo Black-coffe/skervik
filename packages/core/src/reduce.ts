@@ -168,6 +168,14 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         // `profileId` absent, and the engine resolves absent → `'classic'`;
         // this keeps those frozen fixtures byte-identical.
         ...(event.profileId ? { profileId: event.profileId } : {}),
+        // S2.1.3: the per-match victory threshold, same "only when the event
+        // carries it" rule as `profileId` above — an event without it leaves
+        // `vpToWinOverride` absent and the engine reads the profile constant,
+        // keeping frozen fixtures byte-identical. Tested for `undefined` rather
+        // than truthiness so the fold never depends on the value's magnitude.
+        ...(event.vpToWinOverride !== undefined
+          ? { vpToWinOverride: event.vpToWinOverride }
+          : {}),
         eventIndex: event.index + 1,
       };
     }
