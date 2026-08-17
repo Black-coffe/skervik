@@ -156,4 +156,16 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   of workers 02/06/07 hit, with the CI step-order question it raises. **No verdict recorded** —
   per this story's `## Non-goals` the gate is not marked passed here.
 
-**Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized. Fix round authorized via Q4 (2026-08-17).
+- **2026-08-17, re-review → BLOCK #2 → final round (wave 8, stories 11–12).** All seven
+  prior findings verified fixed. New: (N1) the floor clamp made the gate headline
+  "≤60 min" false for 6-seat Grand Chart (67.6 min) and the owner had not been asked —
+  owner Q5: amend with the exception (disclosed in lobby, fits after M3 calibration);
+  (N2) CI builds gitignored `dist/` LAST, after every test gate that imports it — no
+  clean-checkout evidence for the CI clause; fix = Build above the gates; (N3, recorded
+  with Q5) with floor 8 the adaptive lever currently emits exactly one value (8) —
+  per-table machinery delivering a constant until M3 recalibrates. Minors: EN
+  `durationAdjusted` gets the plural form; store→section wiring test, validate-side
+  guard, mirror coupling stay in the milestone ledger. Routed: 11 CI order · 12 clause
+  amendment + N3 record + EN plural.
+
+**Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized. Fix round authorized via Q4 (2026-08-17); final round via Q5 (2026-08-17).
