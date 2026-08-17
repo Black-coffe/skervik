@@ -1,7 +1,7 @@
 ---
 story: m2-gate-06
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 5, 2026-08-17)
 tier: 2
 worker: worker-code
 tracer: false
@@ -54,6 +54,14 @@ packages/core/src/adaptiveDuration.ts (ADAPTIVE_VP_FLOOR docstring), reduce.ts m
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Floor 5→8 only (minute constants untouched): expanded 5p → 8 VP / 58 min (fits, no
+  warning), expanded 6p → 8 VP / 67.6 min + `exceeds_ceiling_at_vp_floor`, Classic 4p
+  unchanged. The old `('classic', 6)` "lowers until it fits" case asserted a now-false
+  outcome (6p Classic also hits the floor and warns) and was re-pointed at expanded 5p/6p;
+  a new loop pins ≥ 8 across `SHIPPING_PROFILE_IDS` × 2–6 seats.
+- Fold guard `foldsVpToWinOverride` mirrors the wire schema (`int().positive()`): invalid
+  values leave the key ABSENT (asserted byte-equal to a genesis without it). Server/client
+  read core via `dist`, so 6→8 stays invisible to their suites until `pnpm -r build`.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

@@ -8,7 +8,10 @@
 // (3) it lowers `vpToWin` step by step — via the proven Blitz-style
 // deep-merge — until the estimate fits or the floor is hit; (4) when even the
 // floor doesn't fit, it reports `warningCode: 'exceeds_ceiling_at_vp_floor'`
-// and never lowers `vpToWin` below the floor; (5) out-of-range player counts
+// and never lowers `vpToWin` below the floor — pinned across every shipping
+// profile × seat count, since the floor of 8 is a product rule (m2-gate-06,
+// owner Q4) rather than an output of the tunable minute constants;
+// (5) out-of-range player counts
 // are rejected; (6) the function is pure/deterministic and never touches a
 // preset object.
 
@@ -22,7 +25,7 @@ import {
   computeAdaptiveDuration,
   estimateMatchMinutes,
 } from './adaptiveDuration.js';
-import { BLITZ_PROFILE, CLASSIC_PROFILE } from './ruleProfile.js';
+import { BLITZ_PROFILE, CLASSIC_PROFILE, SHIPPING_PROFILE_IDS } from './ruleProfile.js';
 
 describe('estimateMatchMinutes', () => {
   it('is monotonically increasing in playerCount (fixed vpToWin)', () => {
@@ -69,16 +72,31 @@ describe('computeAdaptiveDuration', () => {
     expect(result.warningCode).toBeUndefined();
   });
 
-  it("('classic', 6) lowers vpToWin below 10 until the estimate fits", () => {
+  it("('expanded', 5) lowers vpToWin to the floor, where the estimate fits", () => {
+    const result = computeAdaptiveDuration('expanded', 5);
+    expect(result.profile.victory.vpToWin).toBe(ADAPTIVE_VP_FLOOR);
+    expect(result.estimatedMinutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
+    expect(result.withinCeiling).toBe(true);
+    expect(result.adjustments).toEqual([{ knob: 'vpToWin', from: 10, to: 8 }]);
+    expect(result.warningCode).toBeUndefined();
+  });
+
+  it("('expanded', 6) stops at the floor and says so instead of going lower", () => {
+    const result = computeAdaptiveDuration('expanded', 6);
+    expect(result.profile.victory.vpToWin).toBe(ADAPTIVE_VP_FLOOR);
+    expect(result.adjustments).toEqual([{ knob: 'vpToWin', from: 10, to: 8 }]);
+    expect(result.estimatedMinutes).toBeGreaterThan(ADAPTIVE_CEILING_MINUTES);
+    expect(result.withinCeiling).toBe(false);
+    expect(result.warningCode).toBe('exceeds_ceiling_at_vp_floor');
+  });
+
+  it("('classic', 6) lowers vpToWin below 10, never past the floor", () => {
     const result = computeAdaptiveDuration('classic', 6);
     expect(result.profile.victory.vpToWin).toBeLessThan(10);
     expect(result.profile.victory.vpToWin).toBeGreaterThanOrEqual(ADAPTIVE_VP_FLOOR);
-    expect(result.estimatedMinutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
-    expect(result.withinCeiling).toBe(true);
     expect(result.adjustments).toEqual([
       { knob: 'vpToWin', from: 10, to: result.profile.victory.vpToWin },
     ]);
-    expect(result.warningCode).toBeUndefined();
   });
 
   it("('classic', 6) returns a correct deep-merge: every other field === base", () => {
@@ -98,6 +116,32 @@ describe('computeAdaptiveDuration', () => {
     );
     // The source preset must never be mutated by the adjustment.
     expect(CLASSIC_PROFILE.victory.vpToWin).toBe(10);
+  });
+
+  it('the floor is 8 VP — the shortest threshold a player can pick (Blitz)', () => {
+    expect(ADAPTIVE_VP_FLOOR).toBe(8);
+    expect(ADAPTIVE_VP_FLOOR).toBe(BLITZ_PROFILE.victory.vpToWin);
+  });
+
+  it('never recommends below the floor for ANY shipping profile × seat count', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      // The whole calculator range, not just the profile's own seat range: the
+      // floor must hold for every call the lobby or a room can make.
+      for (let seats = ADAPTIVE_MIN_PLAYERS; seats <= ADAPTIVE_MAX_PLAYERS; seats++) {
+        const result = computeAdaptiveDuration(profileId, seats);
+        expect(
+          result.profile.victory.vpToWin,
+          `${profileId} × ${seats} seats`,
+        ).toBeGreaterThanOrEqual(ADAPTIVE_VP_FLOOR);
+        // A result AT the floor that still overruns must say so rather than
+        // quietly shipping an over-ceiling match.
+        if (result.estimatedMinutes > result.targetMinutes) {
+          expect(result.warningCode, `${profileId} × ${seats} seats`).toBe(
+            'exceeds_ceiling_at_vp_floor',
+          );
+        }
+      }
+    }
   });
 
   it('never lowers vpToWin below ADAPTIVE_VP_FLOOR, and warns when the floor still exceeds the target', () => {

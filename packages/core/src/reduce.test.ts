@@ -439,6 +439,31 @@ describe('match.started folds the per-match vpToWinOverride (S2.1.3)', () => {
     expect(JSON.stringify(replayed)).not.toContain('vpToWinOverride');
   });
 
+  // The wire schema is `z.number().int().positive()`; the fold must agree, or a
+  // log the protocol boundary would have rejected could install a threshold the
+  // engine plays to. Rejected means ABSENT — the profile constant applies —
+  // never a defaulted number, which would break the byte-freeze contract above.
+  it.each([
+    ['zero', 0],
+    ['negative', -1],
+    ['fractional', 7.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+  ])('drops a %s override: the key stays absent, never a default', (_label, bad) => {
+    const replayed = replay(lobbyState, genesis(bad));
+
+    expect('vpToWinOverride' in replayed).toBe(false);
+    expect(JSON.stringify(replayed)).not.toContain('vpToWinOverride');
+    // Byte-identical to the same genesis with no override at all.
+    expect(replayed).toEqual(replay(lobbyState, genesis()));
+  });
+
+  it('folds every threshold the wire schema accepts, whatever its magnitude', () => {
+    for (const good of [1, 6, 8, 10, 21]) {
+      expect(replay(lobbyState, genesis(good)).vpToWinOverride).toBe(good);
+    }
+  });
+
   it('the folded override is the LIVE threshold: replay ends a match Classic would not', () => {
     // A 7-VP position (3 cities + 1 settlement) one city-upgrade from 8 VP —
     // the same shape `ruleProfile.test.ts` uses for the profile-level branch.

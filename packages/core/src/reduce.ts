@@ -133,6 +133,20 @@ function spendPovertyToken(state: GameState, playerId: PlayerId): GameState {
 }
 
 /**
+ * Whether a `match.started` event's `vpToWinOverride` may fold onto state —
+ * mirrors the wire schema's `z.number().int().positive()` so an event the
+ * protocol boundary would have REJECTED can never install a threshold the
+ * engine then plays to (a hand-built event, a replay of a log written by a
+ * future/foreign emitter). Anything else — `0`, negative, fractional, `NaN`,
+ * `Infinity` — leaves the key ABSENT, exactly as an event without it does, so
+ * the engine falls back to the profile constant rather than to a defaulted
+ * number. Absent-not-defaulted is the byte-freeze contract (m2-gate-05).
+ */
+function foldsVpToWinOverride(value: number | undefined): value is number {
+  return value !== undefined && Number.isInteger(value) && value > 0;
+}
+
+/**
  * Applies one {@link GameEvent} to {@link GameState}, returning a *new*
  * state. Pure and deterministic (ADR-0003): no `Date.now`/`Math.random`/I/O,
  * and `state` is never mutated — every branch returns a fresh object built
@@ -171,9 +185,10 @@ export function reduce(state: GameState, event: GameEvent): GameState {
         // S2.1.3: the per-match victory threshold, same "only when the event
         // carries it" rule as `profileId` above — an event without it leaves
         // `vpToWinOverride` absent and the engine reads the profile constant,
-        // keeping frozen fixtures byte-identical. Tested for `undefined` rather
-        // than truthiness so the fold never depends on the value's magnitude.
-        ...(event.vpToWinOverride !== undefined
+        // keeping frozen fixtures byte-identical. A value the wire schema
+        // would reject is treated as not-carried (see `foldsVpToWinOverride`),
+        // never as a default.
+        ...(foldsVpToWinOverride(event.vpToWinOverride)
           ? { vpToWinOverride: event.vpToWinOverride }
           : {}),
         eventIndex: event.index + 1,
