@@ -1,7 +1,7 @@
 ---
 story: m2-gate-11
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 8, 2026-08-17)
 tier: 1
 worker: worker-code
 tracer: false
@@ -42,6 +42,10 @@ clause has clean-checkout evidence.
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Moved the `Build` step (`pnpm build`) from last to directly after `Format check`, so it now
+  precedes the determinism / e2e / fairness gates and `Test`; no step renamed, no command changed.
+- Verified by re-parsing with js-yaml: 13 steps both before and after, and the sorted multiset of
+  `{name, uses, run, with}` is identical to HEAD — only the position differs. Prettier check passes.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

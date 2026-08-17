@@ -48,6 +48,12 @@ jobs:
       - name: Format check
         run: pnpm exec prettier --check .
 
+      # The gates below import workspace `dist/`, which is gitignored and is not
+      # produced by install — so Build must run before the first gate for the
+      # named gates to have clean-checkout evidence (m2-gate-11).
+      - name: Build
+        run: pnpm build
+
       # Architectural invariant #1 (ADR-0003): the core must stay deterministic.
       # Run the golden-replay determinism/fair-RNG-audit test as its own named
       # gate so a regression reads as "core determinism broken" in the PR checks
@@ -90,6 +96,3 @@ jobs:
 
       - name: Test
         run: pnpm test
-
-      - name: Build
-        run: pnpm build
