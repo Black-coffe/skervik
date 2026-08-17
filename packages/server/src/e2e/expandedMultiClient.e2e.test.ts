@@ -354,7 +354,13 @@ describe('expanded — five real clients seat and play a full match (S2.1.7b-07)
     expect(localState.players).toHaveLength(5);
     const winnerId =
       ended !== null ? (ended as GameEndedEvent).winnerId : ('' as PlayerId);
-    const vpToWin = loadRuleProfile('expanded').victory.vpToWin;
+    // The EFFECTIVE threshold, not the profile constant (m2-gate-02): adaptive
+    // duration is now applied at genesis, so a live 5-seat expanded room starts
+    // with `vpToWinOverride` in force and legitimately ends BELOW the profile's
+    // own `vpToWin: 10`. The assertion's intent is unchanged — a real winner
+    // reached the threshold this match was actually played to.
+    const vpToWin =
+      localState.vpToWinOverride ?? loadRuleProfile('expanded').victory.vpToWin;
     expect(
       ended !== null ? (ended as GameEndedEvent).finalStandings[winnerId] : 0,
     ).toBeGreaterThanOrEqual(vpToWin);

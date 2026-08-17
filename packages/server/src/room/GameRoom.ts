@@ -9,7 +9,10 @@
 // seed is revealed to match metadata ONLY after `game.ended` (S1.4.3).
 import { type Bot, createHeuristicBot, type Difficulty } from '@skervik/bots';
 import {
+  ADAPTIVE_MAX_PLAYERS,
+  ADAPTIVE_MIN_PLAYERS,
   type BoardGeneratedEvent,
+  computeAdaptiveDuration,
   type GameEndedEvent,
   type GameEvent,
   type GameState,
@@ -21,6 +24,7 @@ import {
   type PlayerId,
   type PlayerIntent,
   reduce,
+  type RuleProfile,
   type RuleProfileId,
   type Seed,
   type TimerProfile,
@@ -733,6 +737,8 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
    */
   async #startMatch(): Promise<void> {
     const playerIds = this.state.seats.map((seat) => seat.playerId as PlayerId);
+    const profile = loadRuleProfile(this.#profileId);
+    const vpToWinOverride = this.#adaptiveVpToWinOverride(profile, playerIds.length);
 
     const matchStarted: MatchStartedEvent = {
       type: 'match.started',
@@ -746,6 +752,12 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
       // (event-sourcing). The pure engine reads it via `state.profileId` +
       // `loadRuleProfile` — no behavior change from M1 for the Classic default.
       profileId: this.#profileId,
+      // Adaptive duration (S2.1.3) — fixed ONCE, here, from the final seat
+      // count, and carried in the log so replay/verify resolve the identical
+      // threshold. Spread conditionally: an ABSENT key is the frozen-bytes
+      // case (Classic 2–4p fits the ceiling, so nothing is emitted and the
+      // genesis event is byte-identical to M1).
+      ...(vpToWinOverride === undefined ? {} : { vpToWinOverride }),
     };
     const afterStart = reduce(this.gameState, matchStarted);
 
@@ -758,7 +770,6 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
     // board needs the matching radius-3 topology. `board.generated`'s index
     // continues from the post-start `eventIndex`, so both events form one
     // contiguous batch.
-    const profile = loadRuleProfile(this.#profileId);
     // S2.1.7b (plan D2): route through core's memoized per-radius seam instead
     // of the old no-arg `buildTopology()`, which always built the radius-2
     // topology regardless of the room's actual profile — silently wrong for a
@@ -840,6 +851,44 @@ export class GameRoom extends Room<{ state: RoomSchema }> {
         error,
       );
     }
+  }
+
+  /**
+   * The adaptive-duration victory threshold for THIS match (S2.1.3 wired live,
+   * m2-gate-02), or `undefined` when the profile constant already fits the
+   * ≤60-min ceiling. Returning `undefined` is the load-bearing case: the caller
+   * then omits `vpToWinOverride` from `match.started` entirely, so a Classic
+   * 2–4 seat genesis event stays byte-identical to M1 (the estimator puts a 4p
+   * Classic match at 58 min, inside the ceiling — proven by the room test, not
+   * assumed). Only an `expanded` 5–6 seat room actually exceeds it today.
+   *
+   * The estimator is PURE and deterministic in `(profileId, seatCount)`, and
+   * the seat count is final by the time genesis runs (bot-fill has already
+   * minted every empty seat), so replay resolves the same number the live match
+   * used — the threshold itself then travels in the log, not the recomputation.
+   *
+   * Two guards, both real rather than defensive dressing:
+   * - a room may seat FEWER players than the calculator supports (`maxSeats: 1`
+   *   test rooms exist, and `computeAdaptiveDuration` THROWS out of range
+   *   rather than clamping) — out-of-range seat counts get no override at all,
+   *   which is also the correct answer (a 1-seat match cannot run long);
+   * - the protocol's `match.started` schema rejects a non-integer/non-positive
+   *   `vpToWinOverride` at the trust boundary, so a value that could never
+   *   validate is never put on the event. The estimator only ever steps an
+   *   integer `vpToWin` down to `ADAPTIVE_VP_FLOOR` (5), so this cannot fire
+   *   today; it exists so a future recalibration cannot silently emit a batch
+   *   the wire would reject.
+   */
+  #adaptiveVpToWinOverride(profile: RuleProfile, seatCount: number): number | undefined {
+    if (seatCount < ADAPTIVE_MIN_PLAYERS || seatCount > ADAPTIVE_MAX_PLAYERS) {
+      return undefined;
+    }
+    const adaptive = computeAdaptiveDuration(this.#profileId, seatCount);
+    const vpToWin = adaptive.profile.victory.vpToWin;
+    if (!Number.isInteger(vpToWin) || vpToWin <= 0) return undefined;
+    // Equal to the profile constant ⇒ ABSENT, never a redundant echo.
+    if (vpToWin === profile.victory.vpToWin) return undefined;
+    return vpToWin;
   }
 
   /**

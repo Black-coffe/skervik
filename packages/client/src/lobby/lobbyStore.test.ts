@@ -1,8 +1,17 @@
+import {
+  ADAPTIVE_CEILING_MINUTES,
+  ADAPTIVE_MIN_PLAYERS,
+  computeAdaptiveDuration,
+  loadRuleProfile,
+  SHIPPING_PROFILE_IDS,
+} from '@skervik/core';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  deriveDurationEstimate,
   deriveLobbyViewState,
   maxBotsForProfile,
+  selectDurationEstimate,
   selectJoinMode,
   selectLobbySelection,
   shouldMarkConnected,
@@ -147,6 +156,74 @@ describe('shouldMarkConnected (S2.5.2, replaces S2.5.4a shouldStartAfterConnect)
 
   it('[forcing] null (failed connect) returns false — regardless of join mode, the user stays on LobbyScreen', () => {
     expect(shouldMarkConnected(null)).toBe(false);
+  });
+});
+
+// --- S2.1.3 wired live (m2-gate-02): the lobby's duration readout -----------
+// The lobby calls the SAME core calculator the room applies at genesis, on a
+// seat count clamped into the selected profile's [minSeats, maxSeats] — the
+// estimate is advisory, genesis truth stays with the room.
+describe('selectDurationEstimate — seat clamp + the shared core calculator', () => {
+  it('[forcing] a fresh CLASSIC lobby (zero bots = ONE seat) clamps UP to the profile minimum, never calling the estimator below ADAPTIVE_MIN_PLAYERS (it throws out of range rather than clamping)', () => {
+    const estimate = selectDurationEstimate({ profileId: 'classic', botCount: 0 });
+    expect(estimate.playerCount).toBe(loadRuleProfile('classic').minSeats);
+    expect(estimate.playerCount).toBeGreaterThanOrEqual(ADAPTIVE_MIN_PLAYERS);
+    expect(estimate.minutes).toBeGreaterThan(0);
+  });
+
+  it('[forcing] a GRAND CHART (expanded) lobby with zero bots clamps UP to its 5-seat minimum — the table it will actually seat, not the one person standing in it', () => {
+    const estimate = selectDurationEstimate({ profileId: 'expanded', botCount: 0 });
+    expect(estimate.playerCount).toBe(5);
+  });
+
+  it('a bot pick inside the range is used as-is (1 human + bots)', () => {
+    expect(
+      selectDurationEstimate({ profileId: 'classic', botCount: 3 }).playerCount,
+    ).toBe(4);
+    expect(
+      selectDurationEstimate({ profileId: 'expanded', botCount: 5 }).playerCount,
+    ).toBe(6);
+  });
+
+  it('reports the POST-adaptation estimate — the length the room will actually run, not the unadjusted baseline', () => {
+    const sixSeat = computeAdaptiveDuration('expanded', 6);
+    // The 6-seat expanded table is the one case a shipping preset gets adjusted.
+    expect(sixSeat.adjustments).not.toEqual([]);
+    expect(sixSeat.estimatedMinutes).toBeLessThan(sixSeat.baselineMinutes);
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 5 }).minutes).toBe(
+      Math.round(sixSeat.estimatedMinutes),
+    );
+  });
+
+  it('[forcing] every shipping preset × every selectable bot count produces an estimate inside the ceiling and never throws — the clamp keeps the calculator in range for the whole selectable space', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      for (let botCount = 0; botCount <= maxBotsForProfile(profileId); botCount += 1) {
+        const estimate = selectDurationEstimate({ profileId, botCount });
+        expect(estimate.minutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
+        // No shipping combination exceeds the ceiling at the VP floor today —
+        // the warning branch is real but currently unreachable from the lobby,
+        // which is exactly why `deriveDurationEstimate` is tested separately.
+        expect(estimate.exceedsCeiling).toBe(false);
+      }
+    }
+  });
+});
+
+describe('deriveDurationEstimate — the over-ceiling warning branch', () => {
+  it('[forcing] a result carrying warningCode "exceeds_ceiling_at_vp_floor" sets exceedsCeiling — forced with a REAL core result at a tight target, not a hand-built fake', () => {
+    const result = computeAdaptiveDuration('expanded', 6, 20);
+    expect(result.warningCode).toBe('exceeds_ceiling_at_vp_floor');
+    expect(result.withinCeiling).toBe(false);
+
+    const estimate = deriveDurationEstimate(result);
+    expect(estimate.exceedsCeiling).toBe(true);
+    expect(estimate.playerCount).toBe(6);
+    expect(estimate.minutes).toBe(Math.round(result.estimatedMinutes));
+  });
+
+  it('a result that fits leaves exceedsCeiling false', () => {
+    const estimate = deriveDurationEstimate(computeAdaptiveDuration('classic', 4));
+    expect(estimate.exceedsCeiling).toBe(false);
   });
 });
 

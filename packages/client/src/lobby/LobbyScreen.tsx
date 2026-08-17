@@ -12,6 +12,7 @@ import type { ChangeEvent, KeyboardEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 
 import { Button } from '../hud/components/Button.js';
+import { Pill } from '../hud/components/Pill.js';
 import { useUiStore } from '../hud/store.js';
 import { useTranslation } from '../i18n/index.js';
 import type { TranslationKey } from '../i18n/keys.js';
@@ -20,6 +21,7 @@ import {
   deriveLobbyViewState,
   type LobbyJoinModeChoice,
   maxBotsForProfile,
+  selectDurationEstimate,
   selectJoinMode,
   selectLobbySelection,
   useLobbyStore,
@@ -109,6 +111,14 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
   // Preset-dependent (S2.1.7b-05): recomputed only when the selected preset
   // changes, not on every render.
   const botCountOptions = useMemo(() => botCountOptionsFor(profileId), [profileId]);
+
+  // The advisory ≤60-min readout (S2.1.3 wired live, m2-gate-02) — the SAME
+  // core calculator the room applies at genesis, re-run only when the two
+  // inputs it reads actually change.
+  const duration = useMemo(
+    () => selectDurationEstimate({ profileId, botCount }),
+    [profileId, botCount],
+  );
 
   const joinModeRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const presetRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -327,6 +337,26 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
                     );
                   })}
                 </div>
+              </section>
+            )}
+
+            {/* Adaptive match length (S2.1.3 wired live, m2-gate-02): the
+                estimate for the picked preset + table size, and — only when
+                even the VP floor can't fit the 60-min ceiling — the warning.
+                A PLAIN conditional render (no debounce, no animation); the
+                warning borrows `Pill`'s `warning` tone so it carries DESIGN.md
+                tokens rather than a colour of its own. Shown alongside the
+                rule selectors: it describes the very pick they make, and is
+                meaningless for a joiner who inherits the host's rules. */}
+            {showRuleSelectors && (
+              <section className="lobby-screen__section">
+                <span className="lobby-screen__label">
+                  {t('lobby.durationLabel')} —{' '}
+                  {t('lobby.durationMinutes', { count: duration.minutes })}
+                </span>
+                {duration.exceedsCeiling && (
+                  <Pill tone="warning">{t('lobby.durationWarning')}</Pill>
+                )}
               </section>
             )}
 

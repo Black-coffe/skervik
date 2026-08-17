@@ -1,7 +1,7 @@
 ---
 story: m2-gate-02
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 3, 2026-08-17; 2 rounds)
 tier: 3
 worker: worker-code
 tracer: false
@@ -35,6 +35,7 @@ estimate exceeds the ceiling even at the VP floor, in all three locales.
 - packages/client/src/i18n/locales/en.ts
 - packages/client/src/i18n/locales/ru.ts
 - packages/client/src/i18n/locales/uk.ts
+- packages/server/src/e2e/expandedMultiClient.e2e.test.ts
 
 ## Non-goals
 - Do NOT touch the estimator's tunable constants or `packages/core` at all - the v1
@@ -72,6 +73,26 @@ memory/map/server.md (GameRoom genesis), memory/map/client.md (lobby); context: 
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Wiring landed as specified: `#startMatch` resolves the profile first, calls
+  `#adaptiveVpToWinOverride(profile, seatCount)`, and spreads `vpToWinOverride` onto
+  `match.started` only when it differs (guarded for out-of-range seat counts — the
+  estimator throws, and 1-seat test rooms exist — and for positive-integer, which the wire
+  schema requires). Measured: Classic 3p/4p and twoPlayer 2p emit NOTHING (4p Classic = 58
+  min, inside the ceiling); `expanded` 5p → 8, 6p → 6. Lobby estimate clamps `botCount + 1`
+  into `[minSeats, maxSeats]` ∩ `[ADAPTIVE_MIN_PLAYERS, ADAPTIVE_MAX_PLAYERS]` and shows the
+  POST-adaptation minutes; no shipping preset × bot count reaches the warning branch today,
+  so `deriveDurationEstimate` is tested separately with a real tight-target core result.
+- `packages/core/dist` was STALE (predated story 05) — the server imports core through
+  `dist`, so `reduce` silently dropped the override until `pnpm -r build` was re-run. Worth
+  knowing before debugging a "the seam doesn't work" symptom in the server package.
+- `expandedMultiClient.e2e.test.ts` changed because THIS STORY changed the intended
+  behavior, not because the test was wrong before: it asserted the winner's standing
+  `>= loadRuleProfile('expanded').victory.vpToWin` (10) for a live 5-seat room, which now
+  legitimately ends at 8 under the genesis override. One assertion amended (Queen-approved
+  round 2, `## Files` extended) to read the EFFECTIVE threshold,
+  `localState.vpToWinOverride ?? loadRuleProfile('expanded').victory.vpToWin` — same intent,
+  current source of truth. `expandedMatch.e2e.test.ts` builds its own genesis events rather
+  than going through `GameRoom`, so it never sees the override and stays untouched.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

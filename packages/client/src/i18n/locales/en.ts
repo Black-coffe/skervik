@@ -154,6 +154,14 @@ export const en: Messages = {
     other: '{count} bots',
   },
   'lobby.startButton': 'Start match',
+  // --- Adaptive match length (S2.1.3 wired live, m2-gate-02) ---
+  'lobby.durationLabel': 'Estimated length',
+  'lobby.durationMinutes': {
+    one: 'about {count} minute',
+    other: 'about {count} minutes',
+  },
+  'lobby.durationWarning':
+    'Even on the shortest victory track, a crew this size sails past the hour.',
   // --- Private rooms by code / invite link (S2.5.3) ---
   'lobby.joinModeLabel': 'Join mode',
   'a11y.joinModeSelector': 'Join mode selector',

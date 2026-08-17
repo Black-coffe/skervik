@@ -165,6 +165,16 @@ export const uk: Messages = {
     other: '{count} боти',
   },
   'lobby.startButton': 'Почати партію',
+  // --- Адаптивна тривалість партії (S2.1.3, m2-gate-02) ---
+  'lobby.durationLabel': 'Приблизна тривалість',
+  'lobby.durationMinutes': {
+    one: 'близько {count} хвилини',
+    few: 'близько {count} хвилин',
+    many: 'близько {count} хвилин',
+    other: 'близько {count} хвилин',
+  },
+  'lobby.durationWarning':
+    'Навіть на найкоротшій дистанції така команда грає довше за годину.',
   // --- Приватні партії за кодом / посиланням-запрошенням (S2.5.3) ---
   'lobby.joinModeLabel': 'Спосіб входу',
   'a11y.joinModeSelector': 'Вибір способу входу',

@@ -102,6 +102,14 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   needs an experimental flag in the plain client; this session's harness continues
   natively, so the reason does not apply. Worker also flagged for story 02's review:
   `vpToWin` is read by `packages/bots/src/sim/*` and asserted in six server e2e tests.
+- **2026-08-17, story 02 round 2 → one e2e assertion follows the behavior change.**
+  `expandedMultiClient.e2e.test.ts:360` asserted winner ≥ the profile constant (10) for
+  a live 5-seat room — the exact assumption this story invalidates (correctly ends at
+  8 now). Queen: amend that one assertion to the effective threshold
+  (`vpToWinOverride ?? profile constant`); Files gain the test file. The sibling
+  `expandedMatch.e2e.test.ts` builds genesis without GameRoom and stays green. Also
+  recorded from the worker: server imports core via `dist` — a stale build masks the
+  seam (`pnpm -r build` first when debugging it).
 - **2026-08-17, story 05 round 2 — reduce fold pulled INTO the seam.** Worker's DONE
   report flagged that `reduce.ts:143` drops `event.vpToWinOverride` (spreads only
   `profileId`) — an override on the wire would vanish on replay from the event log,

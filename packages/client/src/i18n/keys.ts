@@ -140,6 +140,10 @@ export const TRANSLATION_KEYS = [
   'a11y.botCountSelector',
   'lobby.botCount',
   'lobby.startButton',
+  // --- Adaptive match length (S2.1.3 wired live, m2-gate-02) ---
+  'lobby.durationLabel',
+  'lobby.durationMinutes',
+  'lobby.durationWarning',
   // --- Private rooms by code / invite link (S2.5.3) ---
   'lobby.joinModeLabel',
   'a11y.joinModeSelector',

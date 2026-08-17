@@ -166,6 +166,16 @@ export const ru: Messages = {
     other: '{count} бота',
   },
   'lobby.startButton': 'Начать партию',
+  // --- Адаптивная длительность партии (S2.1.3, m2-gate-02) ---
+  'lobby.durationLabel': 'Примерная длительность',
+  'lobby.durationMinutes': {
+    one: 'около {count} минуты',
+    few: 'около {count} минут',
+    many: 'около {count} минут',
+    other: 'около {count} минут',
+  },
+  'lobby.durationWarning':
+    'Даже на самой короткой дистанции такая команда играет дольше часа.',
   // --- Приватные партии по коду / ссылке-приглашению (S2.5.3) ---
   'lobby.joinModeLabel': 'Способ входа',
   'a11y.joinModeSelector': 'Выбор способа входа',

@@ -10,6 +10,7 @@ import { boot, type ColyseusTestServer } from '@colyseus/testing';
 import {
   type BoardGeneratedEvent,
   buildTopology,
+  computeAdaptiveDuration,
   type EdgeId,
   type GameEndedEvent,
   type GameState,
@@ -25,6 +26,7 @@ import {
   type PlayerState,
   replay,
   type Seed,
+  topologyForRadius,
   validate,
   type VertexId,
 } from '@skervik/core';
@@ -1320,6 +1322,177 @@ describe('GameRoom', () => {
     // Same fixed seed, different profile -> genuinely different layouts, not a
     // stale radius-2 board silently reused for the expanded room.
     expect(expandedBoard?.tileKinds).not.toEqual(classicBoard?.tileKinds);
+  });
+
+  // --- S2.1.3 (m2-gate-02): adaptive duration applied at genesis -----------
+  // `computeAdaptiveDuration` is now WIRED: `#startMatch` runs it once for the
+  // final seat count and, when the result differs from the profile constant,
+  // puts it on `match.started` as the story-05 `vpToWinOverride` seam — which
+  // `reduce` folds onto `GameState` and `validate` reads instead of
+  // `victory.vpToWin`. The estimator's v1 heuristic
+  // (10 + players × vpToWin × 1.2 minutes) puts a 4-seat Classic match at 58
+  // min — INSIDE the 60-min ceiling — so Classic emits nothing at all and its
+  // genesis bytes are frozen; only the 5–6 seat `expanded` board exceeds it.
+
+  /** The radius-3 topology an `expanded` room actually plays on (the same seam `#startMatch` resolves). */
+  const expandedTopology = topologyForRadius(3, 11);
+  const expWinTarget = expandedTopology.vertices[0] as {
+    id: VertexId;
+    adjacentVertexIds: readonly VertexId[];
+  };
+  const expWinExcluded = new Set<string>([
+    expWinTarget.id,
+    ...expWinTarget.adjacentVertexIds,
+  ]);
+  /** An own road touching the win target — `buildSettlement`'s connectivity requirement. */
+  const expWinRoadEdge = ((): EdgeId => {
+    const a = expWinTarget.id;
+    const b = expWinTarget.adjacentVertexIds[0] as VertexId;
+    const edge = expandedTopology.edges.find(
+      (e) => e.vertexIds.includes(a) && e.vertexIds.includes(b),
+    );
+    if (!edge) throw new Error('no edge for the expanded win road');
+    return edge.id;
+  })();
+  /** TWO cities (4 VP), well clear of the win target so the distance rule still admits it. */
+  const expWinCityVertices = expandedTopology.vertices
+    .filter((v) => !expWinExcluded.has(v.id))
+    .slice(0, 2)
+    .map((v) => v.id);
+
+  /**
+   * Puts an already-started `expanded` room one settlement short of SIX victory
+   * points for `winner` — 2 cities (4) + 1 hidden VP card (1), building the
+   * settlement makes 6. Six is the adaptive threshold for a 6-seat table; the
+   * profile constant is 10, so this position can only ever win if the room's
+   * override is genuinely in force. Every seat is preserved (the roster
+   * `match.started` fixed must keep matching `playerOrder`).
+   */
+  function driveExpandedToSixVp(room: GameRoom, winner: string): void {
+    const cities: Record<string, string> = {};
+    for (const vertexId of expWinCityVertices) cities[vertexId] = winner;
+    room.gameState = {
+      ...room.gameState,
+      phase: 'main',
+      turn: 20,
+      currentPlayerId: winner as PlayerId,
+      players: room.gameState.players.map((p) =>
+        p.id === winner ? { ...p, resources: { ...RICH } } : p,
+      ),
+      buildings: { settlements: {}, roads: { [expWinRoadEdge]: winner }, cities },
+      devCards: { [winner]: { held: { victoryPoint: 1 }, boughtThisTurn: {} } },
+    };
+    room.state.phase = 'main';
+    room.state.currentPlayerId = winner;
+  }
+
+  /**
+   * Seats `count` clients into a fixed-seed `expanded` room and waits out
+   * genesis. `first` (seat 0) is handed back so a test can drive an intent from
+   * it; the rest only need to exist to fill the table.
+   */
+  async function seatExpandedRoom(count: number) {
+    const sink = new InMemoryEventSink();
+    const room = await testServer.createRoom<GameRoom>(GAME_ROOM_NAME, {
+      profileId: 'expanded',
+      maxSeats: count,
+      seed: MATCH_START_SEED,
+      sink,
+    });
+    const first = await testServer.connectTo(room, CONNECT_OPTS);
+    const seatIds: string[] = [first.sessionId];
+    for (let i = 1; i < count; i += 1) {
+      seatIds.push((await testServer.connectTo(room, CONNECT_OPTS)).sessionId);
+    }
+    await waitFor(() => room.gameState.phase !== 'lobby');
+    return { room, sink, seatIds, first };
+  }
+
+  it("[forcing] a 6-seat expanded room starts with a LOWER effective vpToWin than the profile constant, and the win check honors it — a 6-VP position ends the match, which the profile's own 10 would have let run on. This test fails if #startMatch stops emitting the adaptive override.", async () => {
+    const { room, sink, first: winnerClient } = await seatExpandedRoom(6);
+    const winner = winnerClient.sessionId;
+
+    const started = sink.events[0] as MatchStartedEvent;
+    const profileVpToWin = loadRuleProfile('expanded').victory.vpToWin;
+    expect(profileVpToWin).toBe(10);
+    // The override rode the genesis event AND folded onto the authoritative state.
+    expect(started.vpToWinOverride).toBeLessThan(profileVpToWin);
+    expect(room.gameState.vpToWinOverride).toBe(started.vpToWinOverride);
+    // The wire schema rejects a non-integer / non-positive override, so the room
+    // must never put one on the event.
+    expect(Number.isInteger(started.vpToWinOverride)).toBe(true);
+    expect(started.vpToWinOverride as number).toBeGreaterThan(0);
+    // It is the calculator's own answer for THIS table, not an arbitrary number.
+    expect(started.vpToWinOverride).toBe(
+      computeAdaptiveDuration('expanded', 6).profile.victory.vpToWin,
+    );
+    expect(started.vpToWinOverride).toBe(6);
+
+    // ...and the engine's win check reads it: a SIX-VP position ends the match.
+    const batches: EventBatchMessage[] = [];
+    winnerClient.onMessage('event.batch', (m: EventBatchMessage) => batches.push(m));
+    driveExpandedToSixVp(room, winner);
+    winnerClient.send('intent', {
+      v: 1,
+      type: 'intent',
+      payload: {
+        type: 'intent.buildSettlement',
+        playerId: winner,
+        vertexId: expWinTarget.id,
+      },
+    });
+    await waitFor(() => room.gameState.phase === 'finished');
+
+    const ended = batches
+      .flatMap((b) => b.payload)
+      .find((e): e is GameEndedEvent => e.type === 'game.ended');
+    expect(ended).toBeDefined();
+    expect(ended?.winnerId).toBe(winner);
+    // The forcing number: the match ended at SIX, four points BELOW the profile
+    // constant. Without the override in force this build is just a 6-VP move and
+    // the match keeps running.
+    expect(ended?.finalStandings[winner]).toBe(6);
+    expect(ended?.finalStandings[winner]).toBeLessThan(profileVpToWin);
+  });
+
+  it("a 4-seat classic room emits NO override at all — the key is ABSENT from both the event and the state (frozen bytes), and Classic's vpToWin 10 stands", async () => {
+    const { room, sink } = await seatFullRoom(4);
+
+    const started = sink.events[0] as MatchStartedEvent;
+    expect(started.type).toBe('match.started');
+    expect('vpToWinOverride' in started).toBe(false);
+    expect(JSON.stringify(sink.events)).not.toContain('vpToWinOverride');
+    expect('vpToWinOverride' in room.gameState).toBe(false);
+    expect(JSON.stringify(room.gameState)).not.toContain('vpToWinOverride');
+    // The profile constant is what the engine will read, unchanged from M1.
+    expect(loadRuleProfile('classic').victory.vpToWin).toBe(10);
+    // And the calculator agrees a 4p Classic table fits the ceiling — the
+    // "absent" branch is a real verdict, not an accident of the seat count.
+    expect(computeAdaptiveDuration('classic', 4).adjustments).toEqual([]);
+    expect(computeAdaptiveDuration('classic', 4).withinCeiling).toBe(true);
+  });
+
+  it('determinism: two 6-seat expanded runs on the same seed produce byte-identical genesis logs, override included (the wiring adds no per-run wobble)', async () => {
+    const a = await seatExpandedRoom(6);
+    const b = await seatExpandedRoom(6);
+
+    // The only legitimate per-run differences are the random room/session ids
+    // (`matchId` is the roomId, `playerIds` the sessionIds) — canonicalize
+    // those, and the two logs must then be byte-equal.
+    const canonical = (run: {
+      room: GameRoom;
+      sink: InMemoryEventSink;
+      seatIds: string[];
+    }): string => {
+      let json = JSON.stringify(run.sink.events);
+      json = json.split(run.room.gameState.matchId).join('__MATCH__');
+      run.seatIds.forEach((id, i) => {
+        json = json.split(id).join(`__SEAT_${i}__`);
+      });
+      return json;
+    };
+    expect(canonical(a)).toEqual(canonical(b));
+    expect(canonical(a)).toContain('"vpToWinOverride":6');
   });
 
   // --- S2.3.1: reconnect grace ("no karmic bans") -------------------------
