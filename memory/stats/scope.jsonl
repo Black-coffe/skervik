@@ -1,0 +1,8 @@
+{"ts":"2026-08-16T20:01:55Z","story":"S2.1.7b-01-core-seats-and-guards","declared":4,"changed":4,"out_of_scope":1}
+{"ts":"2026-08-16T20:05:33Z","story":"S2.1.7b-03-client-per-match-topology","declared":16,"changed":17,"out_of_scope":1}
+{"ts":"2026-08-16T20:06:42Z","story":"S2.1.7b-02-bots-per-radius-topology","declared":10,"changed":10,"out_of_scope":2}
+{"ts":"2026-08-16T20:14:00Z","story":"S2.1.7b-05-client-lobby-six-flotillas","declared":15,"changed":16,"out_of_scope":1}
+{"ts":"2026-08-16T20:19:52Z","story":"S2.1.7b-04-server-seats-and-topology","declared":9,"changed":6,"out_of_scope":1}
+{"ts":"2026-08-16T20:27:34Z","story":"S2.1.7b-08-forced-action-topology","declared":2,"changed":3,"out_of_scope":1}
+{"ts":"2026-08-16T20:30:12Z","story":"S2.1.7b-06-board-auto-fit-zoom","declared":5,"changed":4,"out_of_scope":1}
+{"ts":"2026-08-17T09:39:34Z","story":"S2.1.7b-07-expanded-e2e","declared":2,"changed":3,"out_of_scope":1}

@@ -194,6 +194,11 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/S2.1.7b` before eac
 
 ## Plan deltas
 
+- **2026-08-16, story 04 finding → new story 08.** Worker 04's return reported
+  `forcedAction.ts:210` still building a no-arg radius-2 topology — the same bug shape story 04
+  fixed in GameRoom, one file over, out of its `## Files`. Queen cut `S2.1.7b-08` (wave 3,
+  blocked_by 04) instead of hand-patching (Law 5); story 07 (e2e) moved to wave 4 and gains
+  `blocked_by: [S2.1.7b-08]` so the acceptance e2e runs against the fixed forced-action path.
 - **2026-08-16, story 02, round 1 → NEEDS_CONTEXT.** Worker's return: `eval/features.ts` `TOPO`
   is consumed by `eval/evaluate.ts` and `heuristic/v1.ts` (the DEFAULT brain behind
   `createHeuristicBot()`), neither in `## Files`. Queen decision: expand story 02's `## Files` by
