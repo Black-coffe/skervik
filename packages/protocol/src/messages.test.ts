@@ -7,6 +7,11 @@
 // too. The variant samples mirror core's `types.test.ts` — if a schema field
 // diverges from core's shape, the matching valid sample fails to parse.
 import type { GameEvent, GameState, PlayerIntent } from '@skervik/core';
+// m2-gate-03: a TEST-ONLY value import of core's allow-list. `messages.ts` still
+// hand-copies it (see the `ShippingProfileIdSchema` docstring) — the production
+// wire schema must not import core; this file may, and that asymmetry is exactly
+// what makes the parity assertion below meaningful rather than tautological.
+import { EXPERIMENTAL_PROFILE_IDS, SHIPPING_PROFILE_IDS } from '@skervik/core';
 import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 
@@ -585,6 +590,76 @@ describe('GameEventSchema — match.started carries the expanded profileId (S2.1
     expect(parsed.success).toBe(true);
     if (parsed.success && parsed.data.type === 'match.started') {
       expect(parsed.data.profileId).toBe('expanded');
+    }
+  });
+});
+
+// --- m2-gate-03: protocol enum <-> core SHIPPING_PROFILE_IDS parity ---------
+//
+// `ShippingProfileIdSchema` is PRIVATE to messages.ts, so the parity check
+// reaches its `.options` through the exported schema that consumes it —
+// `JoinLobbySelectionSchema.shape.profileId` is that very enum wrapped in
+// `.optional()`, so `.unwrap().options` IS `ShippingProfileIdSchema.options`,
+// not a copy of it. (Reading it this way keeps the story test-only: exporting
+// the const would be a change to the schema module, which m2-gate-03 forbids.)
+const WIRE_SHIPPING_PROFILE_IDS =
+  JoinLobbySelectionSchema.shape.profileId.unwrap().options;
+
+describe('ShippingProfileIdSchema <-> core SHIPPING_PROFILE_IDS parity (m2-gate-03)', () => {
+  // ORDER-PINNED, deliberately: core documents SHIPPING_PROFILE_IDS as the
+  // lobby list "in display order" and the wire enum mirrors it 1:1, so a
+  // reorder on one side alone is itself drift a reviewer should see. Note what
+  // is NOT asserted: the list's LENGTH against a hardcoded number — a genuine
+  // sixth shipping profile added to BOTH sides must stay green; only divergence
+  // must go red.
+  //
+  // Why this fails on every divergence, without committing a broken state:
+  //   - an id ADDED to core only  -> right array is longer  -> toEqual fails
+  //   - an id ADDED to the enum only -> left array is longer -> toEqual fails
+  //   - an id REMOVED from either  -> the same length mismatch, mirrored
+  //   - an id RENAMED on either side -> same length, differing element -> fails
+  it("the wire enum equals core's shipping allow-list exactly, element for element", () => {
+    // Spread: SHIPPING_PROFILE_IDS is `readonly`, and toEqual compares values.
+    expect([...WIRE_SHIPPING_PROFILE_IDS]).toEqual([...SHIPPING_PROFILE_IDS]);
+    // Non-vacuity: an empty list on BOTH sides would satisfy the line above.
+    expect(WIRE_SHIPPING_PROFILE_IDS.length).toBeGreaterThan(0);
+  });
+
+  it('membership matches as a set too — names which id drifted when the order-pinned check fails', () => {
+    expect(new Set(WIRE_SHIPPING_PROFILE_IDS)).toEqual(new Set(SHIPPING_PROFILE_IDS));
+  });
+
+  it('every core shipping id is actually accepted by the join allow-list', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = JoinLobbySelectionSchema.safeParse({ profileId });
+      expect(
+        parsed.success,
+        `core shipping id "${profileId}" must parse at the wire`,
+      ).toBe(true);
+    }
+  });
+
+  it("every core shipping id is accepted by the match.started payload too (the enum's two consumers cannot drift apart)", () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = GameEventSchema.safeParse({
+        type: 'match.started',
+        index: 0,
+        matchId: 'm1',
+        seedHash: 'deadbeef',
+        playerIds: ['p1', 'p2'],
+        profileId,
+      });
+      expect(parsed.success, `match.started must carry "${profileId}"`).toBe(true);
+    }
+  });
+
+  it('🔴 no measurement-only EXPERIMENTAL_PROFILE_IDS id leaks into the wire enum (loadRuleProfile resolves them; a client must never reach them)', () => {
+    for (const profileId of Object.values(EXPERIMENTAL_PROFILE_IDS)) {
+      expect(WIRE_SHIPPING_PROFILE_IDS as readonly string[]).not.toContain(profileId);
+      expect(
+        JoinLobbySelectionSchema.safeParse({ profileId }).success,
+        `experimental id "${profileId}" must be rejected at the wire`,
+      ).toBe(false);
     }
   });
 });

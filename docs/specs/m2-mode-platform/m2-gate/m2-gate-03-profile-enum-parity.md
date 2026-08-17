@@ -1,7 +1,7 @@
 ---
 story: m2-gate-03
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 1, 2026-08-17)
 tier: 1
 worker: worker-test
 tracer: false
