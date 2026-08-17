@@ -25,6 +25,7 @@ import {
   JoinLobbySelectionSchema,
   JoinOptionsSchema,
   PlayerIntentSchema,
+  PublicGameStateSchema,
   RejectEnvelopeSchema,
   ServerMessageSchema,
   StateSnapshotEnvelopeSchema,
@@ -701,6 +702,89 @@ describe('ShippingProfileIdSchema <-> core SHIPPING_PROFILE_IDS parity (m2-gate-
       expect(
         JoinLobbySelectionSchema.safeParse({ profileId }).success,
         `experimental id "${profileId}" must be rejected at the wire`,
+      ).toBe(false);
+    }
+  });
+});
+
+// --- m2-gate-07: the snapshot CARRIES profileId + vpToWinOverride ----------
+//
+// Review C3/M2. zod strips unknown keys, so while these two were missing from
+// `PublicGameStateSchema` every snapshot silently lost them in transit — a
+// mid-match reconnect on an `expanded` room re-rendered the Classic board.
+// What these tests assert is PRESERVATION, not acceptance: `safeParse`
+// returned `success: true` the whole time the fields were being dropped,
+// which is exactly why the regression was invisible to the existing
+// "accepts a full state.snapshot" test above.
+const EXPANDED_SNAPSHOT: GameState = {
+  matchId: 'm-expanded',
+  phase: 'main',
+  turn: 4,
+  currentPlayerId: 'p1',
+  players: [
+    { id: 'p1', name: 'Wayfarer', victoryPoints: 3, resources: { ore: 1 } },
+    { id: 'p2', name: 'Drifter', victoryPoints: 2, resources: { timber: 2 } },
+  ],
+  eventIndex: 20,
+  seedHash: 'deadbeef',
+  profileId: 'expanded',
+  vpToWinOverride: 8,
+};
+
+describe('PublicGameStateSchema carries profileId + vpToWinOverride (m2-gate-07)', () => {
+  it('round-trips BOTH optional fields rather than stripping them', () => {
+    const parsed = PublicGameStateSchema.safeParse(EXPANDED_SNAPSHOT);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.profileId).toBe('expanded');
+    expect(parsed.data?.vpToWinOverride).toBe(8);
+  });
+
+  it('both survive the full state.snapshot envelope — the exact frame wsClient parses', () => {
+    const msg = {
+      v: 1,
+      type: 'state.snapshot',
+      payload: EXPANDED_SNAPSHOT,
+      isHost: false,
+      isPrivate: false,
+    };
+    const parsed = StateSnapshotEnvelopeSchema.safeParse(msg);
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.payload.profileId).toBe('expanded');
+    expect(parsed.data?.payload.vpToWinOverride).toBe(8);
+    expect(ServerMessageSchema.safeParse(msg).success).toBe(true);
+  });
+
+  it('keeps both keys ABSENT when the payload omits them (optional, not defaulted)', () => {
+    const withoutBoth: Record<string, unknown> = { ...EXPANDED_SNAPSHOT };
+    delete withoutBoth.profileId;
+    delete withoutBoth.vpToWinOverride;
+
+    const parsed = PublicGameStateSchema.safeParse(withoutBoth);
+    expect(parsed.success).toBe(true);
+    // `in`, not `=== undefined`: a snapshot for a Classic match must stay the
+    // same object it was before this story — an injected `profileId: undefined`
+    // key would be a wire change, and the absent-key contract forbids it.
+    expect(parsed.data && 'profileId' in parsed.data).toBe(false);
+    expect(parsed.data && 'vpToWinOverride' in parsed.data).toBe(false);
+  });
+
+  it('accepts every core shipping profile id on a snapshot, so it cannot drift from match.started', () => {
+    for (const profileId of SHIPPING_PROFILE_IDS) {
+      const parsed = PublicGameStateSchema.safeParse({
+        ...EXPANDED_SNAPSHOT,
+        profileId,
+      });
+      expect(parsed.success, `snapshot must carry "${profileId}"`).toBe(true);
+      expect(parsed.data?.profileId).toBe(profileId);
+    }
+  });
+
+  it('rejects a non-positive / non-integer vpToWinOverride', () => {
+    for (const bad of [0, -8, 8.5]) {
+      expect(
+        PublicGameStateSchema.safeParse({ ...EXPANDED_SNAPSHOT, vpToWinOverride: bad })
+          .success,
+        `vpToWinOverride ${bad} must be refused`,
       ).toBe(false);
     }
   });

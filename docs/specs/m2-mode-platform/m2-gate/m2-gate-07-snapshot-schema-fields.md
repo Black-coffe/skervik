@@ -1,7 +1,7 @@
 ---
 story: m2-gate-07
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 5, 2026-08-17)
 tier: 2
 worker: worker-code
 tracer: false
@@ -52,6 +52,14 @@ packages/protocol/src/messages.ts:592-613 (PublicGameStateSchema), packages/clie
 
 ## Implementation notes
 <!-- appended by the worker -->
+- `PublicGameStateSchema` gains `profileId: ShippingProfileIdSchema.optional()` (the same
+  private enum `match.started` uses, so the snapshot inherits the shipping allow-list and
+  cannot leak an experimental id) + `vpToWinOverride: z.number().int().positive().optional()`.
+  Tests assert PRESERVATION, not `.success` — `safeParse` was green the whole time zod was
+  stripping the fields, which is why the regression was invisible.
+- The client suite resolves `@skervik/protocol` through `dist`: the new wsClient test failed
+  with `profileId: undefined` until `pnpm --filter @skervik/protocol build` — that red-then-
+  green is the C3 regression reproduced and fixed. Rebuild protocol before debugging it.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

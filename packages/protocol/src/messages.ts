@@ -598,6 +598,18 @@ export const PublicGameStateSchema = z.object({
   playerOrder: z.array(z.string()).optional(),
   eventIndex: z.number(),
   seedHash: z.string(),
+  // m2-gate-07 (review C3/M2): the match's rule profile and its per-match
+  // victory threshold, as `match.started` carried them and `reduce` folded
+  // them into `GameState`. Absent here, zod's strip-unknown-keys behaviour
+  // silently DROPPED both from every snapshot: a mid-match reconnect on an
+  // `expanded` match re-rendered the radius-2 Classic board (the client
+  // derives topology from `gameState.profileId`, defaulting to `'classic'`),
+  // and the effective victory threshold vanished from client state. Optional
+  // + absent-key, exactly like the pair on {@link MatchStartedEventSchema} —
+  // a snapshot without them still validates and reads through to Classic /
+  // the profile constant, so every existing payload stays byte-unchanged.
+  profileId: ShippingProfileIdSchema.optional(),
+  vpToWinOverride: z.number().int().positive().optional(),
   board: BoardStateSchema.optional(),
   buildings: BuildingsStateSchema.optional(),
   pendingRoadVertexId: z.string().optional(),
