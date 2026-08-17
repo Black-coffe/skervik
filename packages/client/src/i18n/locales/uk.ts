@@ -156,22 +156,27 @@ export const uk: Messages = {
   'lobby.preset.expanded.name': 'Велика лоція',
   'lobby.preset.expanded.description':
     'Розширений архіпелаг для 5–6 капітанів — більше островів і маяків.',
-  'lobby.botCountLabel': 'Команда ботів',
   'a11y.botCountSelector': 'Вибір кількості ботів',
-  'lobby.botCount': {
-    one: '{count} бот',
-    few: '{count} боти',
-    many: '{count} ботів',
-    other: '{count} боти',
+  'lobby.botCountSummary': {
+    one: 'Команда ботів — {count} бот',
+    few: 'Команда ботів — {count} боти',
+    many: 'Команда ботів — {count} ботів',
+    other: 'Команда ботів — {count} боти',
   },
   'lobby.startButton': 'Почати партію',
-  // --- Адаптивна тривалість партії (S2.1.3, m2-gate-02) ---
-  'lobby.durationLabel': 'Приблизна тривалість',
-  'lobby.durationMinutes': {
-    one: 'близько {count} хвилини',
-    few: 'близько {count} хвилин',
-    many: 'близько {count} хвилин',
-    other: 'близько {count} хвилин',
+  // --- Адаптивна тривалість партії та її правки (S2.1.3, m2-gate-02/09) ---
+  'a11y.durationSection': 'Оцінка тривалості партії',
+  'lobby.durationSummary': {
+    one: 'Приблизна тривалість — близько {count} хвилини',
+    few: 'Приблизна тривалість — близько {count} хвилин',
+    many: 'Приблизна тривалість — близько {count} хвилин',
+    other: 'Приблизна тривалість — близько {count} хвилин',
+  },
+  'lobby.durationAdjusted': {
+    one: 'Для такого столу переможну ціль знижено до {count} очка слави.',
+    few: 'Для такого столу переможну ціль знижено до {count} очок слави.',
+    many: 'Для такого столу переможну ціль знижено до {count} очок слави.',
+    other: 'Для такого столу переможну ціль знижено до {count} очок слави.',
   },
   'lobby.durationWarning':
     'Навіть на найкоротшій дистанції така команда грає довше за годину.',

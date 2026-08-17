@@ -103,6 +103,16 @@ export interface LobbyDurationEstimate {
   readonly playerCount: number;
   /** Whole minutes, rounded — the estimate for the profile the room would ACTUALLY run (post-adaptation). */
   readonly minutes: number;
+  /**
+   * The victory target the adaptation actually lowered to, or `null` when the
+   * base profile came back untouched (m2-gate-09, review finding C2). This is
+   * the RULE CHANGE the player is about to live under — the lobby used to show
+   * only a minute count, so a Grand Chart table silently played to 8 renown
+   * instead of 10 with nothing on screen saying so. Read from
+   * `adjustments`, not re-derived: whatever levers core grows later
+   * (S2.1.4/.5/.6), this stays "what the calculator says it did".
+   */
+  readonly loweredVpToWin: number | null;
   /** `true` only for `warningCode: 'exceeds_ceiling_at_vp_floor'` — lowering VP to the floor still doesn't fit the ≤60-min ceiling. */
   readonly exceedsCeiling: boolean;
 }
@@ -134,7 +144,8 @@ function estimateSeatCount(profileId: RuleProfileId, botCount: number): number {
  * pure and separate from the store read below so a test can force the
  * over-ceiling branch with a REAL core result (a tight `targetMinutes`)
  * instead of a hand-built fake. Structured code in, no string out (ADR-0008):
- * the warning's copy lives in the locale files, keyed off `exceedsCeiling`.
+ * the warning's copy lives in the locale files, keyed off `exceedsCeiling`,
+ * and the lowered target off `loweredVpToWin`.
  *
  * `estimatedMinutes` — the estimate for the RETURNED profile — is the number
  * shown, not `baselineMinutes`: the room applies the same adjustment at
@@ -143,9 +154,13 @@ function estimateSeatCount(profileId: RuleProfileId, botCount: number): number {
 export function deriveDurationEstimate(
   result: AdaptiveDurationResult,
 ): LobbyDurationEstimate {
+  const vpAdjustment = result.adjustments.find(
+    (adjustment) => adjustment.knob === 'vpToWin',
+  );
   return {
     playerCount: result.playerCount,
     minutes: Math.round(result.estimatedMinutes),
+    loweredVpToWin: vpAdjustment?.to ?? null,
     exceedsCeiling: result.warningCode === 'exceeds_ceiling_at_vp_floor',
   };
 }

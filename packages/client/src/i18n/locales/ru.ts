@@ -157,22 +157,27 @@ export const ru: Messages = {
   'lobby.preset.expanded.name': 'Большая лоция',
   'lobby.preset.expanded.description':
     'Расширенный архипелаг для 5–6 капитанов — больше островов и маяков.',
-  'lobby.botCountLabel': 'Команда ботов',
   'a11y.botCountSelector': 'Выбор числа ботов',
-  'lobby.botCount': {
-    one: '{count} бот',
-    few: '{count} бота',
-    many: '{count} ботов',
-    other: '{count} бота',
+  'lobby.botCountSummary': {
+    one: 'Команда ботов — {count} бот',
+    few: 'Команда ботов — {count} бота',
+    many: 'Команда ботов — {count} ботов',
+    other: 'Команда ботов — {count} бота',
   },
   'lobby.startButton': 'Начать партию',
-  // --- Адаптивная длительность партии (S2.1.3, m2-gate-02) ---
-  'lobby.durationLabel': 'Примерная длительность',
-  'lobby.durationMinutes': {
-    one: 'около {count} минуты',
-    few: 'около {count} минут',
-    many: 'около {count} минут',
-    other: 'около {count} минут',
+  // --- Адаптивная длительность партии и её правки (S2.1.3, m2-gate-02/09) ---
+  'a11y.durationSection': 'Оценка длительности партии',
+  'lobby.durationSummary': {
+    one: 'Примерная длительность — около {count} минуты',
+    few: 'Примерная длительность — около {count} минут',
+    many: 'Примерная длительность — около {count} минут',
+    other: 'Примерная длительность — около {count} минут',
+  },
+  'lobby.durationAdjusted': {
+    one: 'Для такого стола победная цель снижена до {count} очка славы.',
+    few: 'Для такого стола победная цель снижена до {count} очков славы.',
+    many: 'Для такого стола победная цель снижена до {count} очков славы.',
+    other: 'Для такого стола победная цель снижена до {count} очков славы.',
   },
   'lobby.durationWarning':
     'Даже на самой короткой дистанции такая команда играет дольше часа.',

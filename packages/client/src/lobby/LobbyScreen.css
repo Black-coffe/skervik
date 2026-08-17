@@ -45,6 +45,23 @@
   color: var(--muted);
 }
 
+/* The adaptive readout's two notices (m2-gate-09) — full sentences sitting in
+   the flow under the length label, never `Pill` chips (§11 reserves chips for
+   counts and timers). Tone follows §2's own roles for these tokens rather than
+   inventing a colour: `--accent` ("sea-glass — links, info") for the rule change
+   being disclosed, `--primary` ("kerosene") for the warning state, the same
+   normal→warning step `TimerDisplay` takes. Never colour-only (§10): each notice
+   is a sentence that says what it means, so the hue only reinforces it. */
+.lobby-screen__duration-notice {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--accent);
+}
+
+.lobby-screen__duration-notice--warning {
+  color: var(--primary);
+}
+
 .lobby-screen__presets {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

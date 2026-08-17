@@ -1,7 +1,7 @@
 ---
 story: m2-gate-09
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 6, 2026-08-17; 2 rounds)
 tier: 2
 worker: worker-code
 tracer: false
@@ -26,6 +26,7 @@ locales, accessibly.
 
 ## Files
 - packages/client/src/lobby/LobbyScreen.tsx
+- packages/client/src/lobby/LobbyScreen.css
 - packages/client/src/lobby/LobbyScreen.test.tsx
 - packages/client/src/lobby/lobbyStore.ts
 - packages/client/src/lobby/lobbyStore.test.ts
@@ -61,6 +62,21 @@ Review C2 in plan.md `## Plan deltas`; LobbyScreen.tsx:352-359, lobbyStore.ts:14
 
 ## Implementation notes
 <!-- appended by the worker -->
+- The duration section became an exported `LobbyDurationSection({ estimate })` — the only
+  way to render a non-default pick at all (zustand's frozen `getServerSnapshot`), which is
+  what makes the lowered-target and ceiling notices POSITIVELY testable, in EN/RU/UK (the
+  locale is switched by stubbing `window.localStorage` for `I18nProvider`). Separators
+  folded into the catalogue merged four keys into two summary keys
+  (`lobby.botCountSummary`, `lobby.durationSummary`); `Pill` is gone from this file.
+- Literal recheck: Classic 2-seat is still 34 min (its 10-VP track is untouched by the
+  floor), so the pinned literal did not move. The rewritten shipping-space guard now pins
+  the exact over-ceiling set as `['expanded/5']` (6 seats, 68 min) instead of asserting the
+  set is empty.
+- Round 2 (Files amended to include LobbyScreen.css): `.lobby-screen__duration-notice` and
+  its `--warning` modifier styled from the shared tokens — `--accent` (§2 "sea-glass —
+  links, info") for the disclosure, `--primary` ("kerosene") for the over-ceiling sentence,
+  the same normal→warning step `TimerDisplay` takes, at the file's existing 0.8125rem
+  secondary size. Tone never carries meaning alone (§10): each notice is a sentence.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->

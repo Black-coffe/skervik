@@ -12,13 +12,13 @@ import type { ChangeEvent, KeyboardEvent } from 'react';
 import { useMemo, useRef, useState } from 'react';
 
 import { Button } from '../hud/components/Button.js';
-import { Pill } from '../hud/components/Pill.js';
 import { useUiStore } from '../hud/store.js';
 import { useTranslation } from '../i18n/index.js';
 import type { TranslationKey } from '../i18n/keys.js';
 import type { JoinMode, LobbyJoinFields } from '../net/wsClient.js';
 import {
   deriveLobbyViewState,
+  type LobbyDurationEstimate,
   type LobbyJoinModeChoice,
   maxBotsForProfile,
   selectDurationEstimate,
@@ -83,6 +83,53 @@ const JOIN_MODE_KEYS: Record<
     description: 'lobby.joinMode.joinByCode.description',
   },
 };
+
+export interface LobbyDurationSectionProps {
+  readonly estimate: LobbyDurationEstimate;
+}
+
+/**
+ * The adaptive match-length section (S2.1.3 wired live, m2-gate-02) and — the
+ * point of m2-gate-09, review finding C2 — what the adaptation actually DID to
+ * the rules: the victory target it lowered to (any real adjustment: Grand Chart
+ * at 5–6 seats today), and, when even the VP floor still sails past the hour,
+ * the ceiling warning. Both are plain conditional renders (no debounce, no
+ * animation) carrying `role="status"`, written as SENTENCES rather than
+ * `Pill` chips — DESIGN.md §11 reserves chips for counts and timers. Tone
+ * comes from the shared tokens (§2): info for the disclosure, the `--warning`
+ * modifier for the estimate that still outruns the hour.
+ *
+ * Takes the estimate as a PROP instead of reading the store, so both branches
+ * get positive render tests: zustand v5 feeds `renderToStaticMarkup` a
+ * `getServerSnapshot` backed by `getInitialState()`, frozen at the store's
+ * FIRST snapshot, so a test can never render `LobbyScreen` itself with anything
+ * but the default Classic pick (see `deriveLobbyViewState`'s doc comment for
+ * the full reasoning). Same "pure piece, separately rendered" split the store's
+ * view-state helper already uses.
+ */
+export function LobbyDurationSection({ estimate }: LobbyDurationSectionProps) {
+  const { t } = useTranslation();
+  return (
+    <section className="lobby-screen__section" aria-label={t('a11y.durationSection')}>
+      <span className="lobby-screen__label">
+        {t('lobby.durationSummary', { count: estimate.minutes })}
+      </span>
+      {estimate.loweredVpToWin !== null && (
+        <span className="lobby-screen__duration-notice" role="status">
+          {t('lobby.durationAdjusted', { count: estimate.loweredVpToWin })}
+        </span>
+      )}
+      {estimate.exceedsCeiling && (
+        <span
+          className="lobby-screen__duration-notice lobby-screen__duration-notice--warning"
+          role="status"
+        >
+          {t('lobby.durationWarning')}
+        </span>
+      )}
+    </section>
+  );
+}
 
 export interface LobbyScreenProps {
   /** Fires once, when Start is pressed — `main.tsx` owns turning this into a `connect()` call. */
@@ -308,7 +355,7 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
             {showRuleSelectors && (
               <section className="lobby-screen__section">
                 <span className="lobby-screen__label">
-                  {t('lobby.botCountLabel')} — {t('lobby.botCount', { count: botCount })}
+                  {t('lobby.botCountSummary', { count: botCount })}
                 </span>
                 <div
                   className="lobby-screen__bot-count"
@@ -340,25 +387,11 @@ export function LobbyScreen({ onStart }: LobbyScreenProps) {
               </section>
             )}
 
-            {/* Adaptive match length (S2.1.3 wired live, m2-gate-02): the
-                estimate for the picked preset + table size, and — only when
-                even the VP floor can't fit the 60-min ceiling — the warning.
-                A PLAIN conditional render (no debounce, no animation); the
-                warning borrows `Pill`'s `warning` tone so it carries DESIGN.md
-                tokens rather than a colour of its own. Shown alongside the
-                rule selectors: it describes the very pick they make, and is
+            {/* Adaptive match length + the rule change it made (m2-gate-02,
+                disclosure completed in m2-gate-09) — shown alongside the rule
+                selectors: it describes the very pick they make, and is
                 meaningless for a joiner who inherits the host's rules. */}
-            {showRuleSelectors && (
-              <section className="lobby-screen__section">
-                <span className="lobby-screen__label">
-                  {t('lobby.durationLabel')} —{' '}
-                  {t('lobby.durationMinutes', { count: duration.minutes })}
-                </span>
-                {duration.exceedsCeiling && (
-                  <Pill tone="warning">{t('lobby.durationWarning')}</Pill>
-                )}
-              </section>
-            )}
+            {showRuleSelectors && <LobbyDurationSection estimate={duration} />}
 
             <Button
               variant="primary"

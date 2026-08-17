@@ -132,5 +132,13 @@ plus `bash scripts/wave-check.sh docs/specs/m2-mode-platform/m2-gate` before eac
   miscited as a merge). Routed: 06 core floor clamp + fold guard · 07 snapshot schema
   fields + wsClient test · 08 server test legs + pinned assertions · 09 lobby
   adjustment-warning + i18n/a11y · 10 records (evidence rows, ADR note, wiki, maps).
+- **2026-08-17, story 09 round 2 — notice styling.** Worker's DONE flagged the new
+  `lobby-screen__duration-notice` class has no CSS rule (LobbyScreen.css was outside its
+  Files; `Pill` correctly removed per DESIGN.md §11) — a warning with no warning tone
+  under-delivers C2's disclosure. Files gain LobbyScreen.css; same worker adds the
+  tokened rule (info tone for the lowered-target notice, warning tone for the ceiling
+  notice). Also accepted from the same return: bot-count ` — ` folded into the
+  catalogue as well (the criterion was unqualified), locale-switch-via-localStorage
+  test technique, and `role="status"` per instruction.
 
 **Approved:** owner, 2026-08-17 — plan + 3 briefing answers (Redis→M5, OAuth←creds, adaptive live) accepted; build authorized. Fix round authorized via Q4 (2026-08-17).

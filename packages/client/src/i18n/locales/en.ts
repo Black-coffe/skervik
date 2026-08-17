@@ -147,19 +147,20 @@ export const en: Messages = {
   'lobby.preset.expanded.name': 'Grand Chart',
   'lobby.preset.expanded.description':
     'An expanded archipelago for 5–6 captains — more isles and lighthouses.',
-  'lobby.botCountLabel': 'Bot crew',
   'a11y.botCountSelector': 'Bot count selector',
-  'lobby.botCount': {
-    one: '{count} bot',
-    other: '{count} bots',
+  'lobby.botCountSummary': {
+    one: 'Bot crew — {count} bot',
+    other: 'Bot crew — {count} bots',
   },
   'lobby.startButton': 'Start match',
-  // --- Adaptive match length (S2.1.3 wired live, m2-gate-02) ---
-  'lobby.durationLabel': 'Estimated length',
-  'lobby.durationMinutes': {
-    one: 'about {count} minute',
-    other: 'about {count} minutes',
+  // --- Adaptive match length + what it changed (S2.1.3, m2-gate-02/09) ---
+  'a11y.durationSection': 'Estimated match length',
+  'lobby.durationSummary': {
+    one: 'Estimated length — about {count} minute',
+    other: 'Estimated length — about {count} minutes',
   },
+  'lobby.durationAdjusted':
+    'A table this size lowers the victory target to {count} renown.',
   'lobby.durationWarning':
     'Even on the shortest victory track, a crew this size sails past the hour.',
   // --- Private rooms by code / invite link (S2.5.3) ---

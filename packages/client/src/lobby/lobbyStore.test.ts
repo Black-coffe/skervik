@@ -1,6 +1,7 @@
 import {
   ADAPTIVE_CEILING_MINUTES,
   ADAPTIVE_MIN_PLAYERS,
+  ADAPTIVE_VP_FLOOR,
   computeAdaptiveDuration,
   loadRuleProfile,
   SHIPPING_PROFILE_IDS,
@@ -195,15 +196,46 @@ describe('selectDurationEstimate — seat clamp + the shared core calculator', (
     );
   });
 
-  it('[forcing] every shipping preset × every selectable bot count produces an estimate inside the ceiling and never throws — the clamp keeps the calculator in range for the whole selectable space', () => {
+  it('[forcing] every shipping preset × every selectable bot count produces an estimate and never throws — and exactly ONE pick outruns the ceiling: Grand Chart at its full six-seat table', () => {
+    const overCeiling: string[] = [];
     for (const profileId of SHIPPING_PROFILE_IDS) {
       for (let botCount = 0; botCount <= maxBotsForProfile(profileId); botCount += 1) {
         const estimate = selectDurationEstimate({ profileId, botCount });
-        expect(estimate.minutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
-        // No shipping combination exceeds the ceiling at the VP floor today —
-        // the warning branch is real but currently unreachable from the lobby,
-        // which is exactly why `deriveDurationEstimate` is tested separately.
-        expect(estimate.exceedsCeiling).toBe(false);
+        expect(estimate.minutes).toBeGreaterThan(0);
+        if (estimate.exceedsCeiling) {
+          overCeiling.push(`${profileId}/${botCount}`);
+        } else {
+          expect(estimate.minutes).toBeLessThanOrEqual(ADAPTIVE_CEILING_MINUTES);
+        }
+      }
+    }
+    // Before m2-gate-06 this list was empty — the calculator kept lowering VP
+    // until anything fit, so the warning branch was structurally unreachable
+    // from the lobby (lead-review C1/C2). With the floor clamped at 8, the
+    // six-seat Grand Chart table is honestly over the hour (67.6 min) and the
+    // lobby says so; every other shipping pick still fits. Pinned as an exact
+    // list so a future estimator tweak that silently widens or empties the
+    // warning set fails here rather than passing quietly.
+    expect(overCeiling).toEqual(['expanded/5']);
+  });
+
+  it('[forcing] Grand Chart reports the LOWERED victory target at both its table sizes (5 and 6 seats), and every preset that plays its base rules reports none — the disclosure the lobby renders (review C2)', () => {
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 4 })).toEqual({
+      playerCount: 5,
+      minutes: 58,
+      loweredVpToWin: ADAPTIVE_VP_FLOOR,
+      exceedsCeiling: false,
+    });
+    expect(selectDurationEstimate({ profileId: 'expanded', botCount: 5 })).toEqual({
+      playerCount: 6,
+      minutes: 68,
+      loweredVpToWin: ADAPTIVE_VP_FLOOR,
+      exceedsCeiling: true,
+    });
+
+    for (const profileId of ['classic', 'balanced', 'blitz', 'twoPlayer'] as const) {
+      for (let botCount = 0; botCount <= maxBotsForProfile(profileId); botCount += 1) {
+        expect(selectDurationEstimate({ profileId, botCount }).loweredVpToWin).toBeNull();
       }
     }
   });
@@ -221,9 +253,18 @@ describe('deriveDurationEstimate — the over-ceiling warning branch', () => {
     expect(estimate.minutes).toBe(Math.round(result.estimatedMinutes));
   });
 
-  it('a result that fits leaves exceedsCeiling false', () => {
+  it('a result that fits leaves exceedsCeiling false, and an untouched base profile reports no lowered target', () => {
     const estimate = deriveDurationEstimate(computeAdaptiveDuration('classic', 4));
     expect(estimate.exceedsCeiling).toBe(false);
+    expect(estimate.loweredVpToWin).toBeNull();
+  });
+
+  it('[forcing] loweredVpToWin reads the vpToWin adjustment core reports, not a re-derivation — a forced 20-min target on Classic lands the same value core put in `adjustments`', () => {
+    const result = computeAdaptiveDuration('classic', 4, 20);
+    expect(result.adjustments).toEqual([
+      { knob: 'vpToWin', from: loadRuleProfile('classic').victory.vpToWin, to: 8 },
+    ]);
+    expect(deriveDurationEstimate(result).loweredVpToWin).toBe(8);
   });
 });
 
