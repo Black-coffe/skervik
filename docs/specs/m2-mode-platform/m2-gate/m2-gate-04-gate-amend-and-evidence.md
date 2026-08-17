@@ -1,7 +1,7 @@
 ---
 story: m2-gate-04
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 4, 2026-08-17)
 tier: 2
 worker: worker-code
 tracer: false
@@ -53,6 +53,19 @@ docs/specs/m2-mode-platform/plan.md (M2 GATE paragraph + §6 table) - docs-only 
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Gate paragraph amended in place (two clauses only) with a blockquote directly under it
+  quoting the owner's verbatim Q1/Q2 answers from `brief.md` `## Answers` (2026-08-17), plus
+  an 11-row **Gate evidence** table (one row per clause) and an explicit "Verdict: NOT
+  recorded here" line so the pack stays auditable without claiming a pass. §6: S2.1.7a/7b
+  rewritten to ✅ done with `cac69af` / `3035ba5` — the 7a WIP detail is kept as "History"
+  rather than deleted, since the typecheck blocker it records is the exact core↔wire drift
+  `m2-gate-03` later pinned by test; E2.6 moved from ▶ IN PROGRESS to 🔶 near-closed with
+  S2.6.4 ✅ `7542700`.
+- Two facts were verified against the repo rather than taken from the dispatch: the CI step
+  is named "E2E full-match gate — per-profile match + replay-equality" (`ci.yml:72`) and
+  lists exactly the six e2e files; and `TRANSLATION_KEYS` now holds **191** keys, not 188 —
+  188 was the pre-`m2-gate-02` count and the 3 duration-estimate keys landed on top. The
+  evidence row states 191.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->
