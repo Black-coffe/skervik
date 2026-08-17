@@ -1,7 +1,7 @@
 ---
 story: m2-gate-01
 spec: m2-gate
-status: todo
+status: in-progress -> done (wave 1, 2026-08-17)
 tier: 2
 worker: worker-test
 tracer: false
@@ -56,6 +56,32 @@ memory/map/server.md (e2e section); pattern source: packages/server/src/e2e/twoP
 
 ## Implementation notes
 <!-- appended by the worker -->
+- Added `packages/server/src/e2e/balancedMatch.e2e.test.ts` (5 legs, seed
+  `skervik-balanced-0`, 4 seats, 280 steps / 88 rolls, winner 10 VP) and
+  `packages/server/src/e2e/blitzMatch.e2e.test.ts` (5 legs, seed
+  `skervik-blitz-2`, 4 seats, 200 steps, winner **exactly 8 VP**). Both follow
+  `twoPlayerMatch`/`expandedMatch` boot-free shape (`decideAction` +
+  `validate`/`reduce`, no sockets/FS); seeds pinned by a throwaway scan in-file,
+  removed before finalizing. `ci.yml`'s named step renamed to "E2E full-match
+  gate — per-profile match + replay-equality" and its single vitest invocation
+  extended to all six per-profile e2e files (classic socket, twoPlayer,
+  balanced, blitz, expanded boot-free + expanded multi-client) — no other
+  restructuring; the step count is unchanged at 13 and the YAML was re-parsed to
+  confirm the folded `>-` scalar yields exactly the one-line command.
+- Decisions/surprises: (a) each profile e2e needed a leg that *discriminates* it
+  from a relabeled Classic run, or it would survive the feature breaking —
+  Balanced gets a deck leg (every complete 36-draw cycle in the real log is a
+  permutation of `BALANCED_ROLL_DECK`) plus the clean `verifyMatchRandomness`
+  pass, which only succeeds because the folded `profileId` routes the recompute
+  through `drawBalancedRoll`; a mutation probe confirmed a Classic log of the
+  same length has only **24** distinct pairs in its first 36 rolls, so the deck
+  leg genuinely fails when the deck is bypassed. (b) Blitz's discriminator is a
+  winner *below* Classic's 10 VP plus a same-seed/same-seats `classic` contrast
+  run (200 vs 325 steps, classic winner 10 VP) — a seed whose winner happened to
+  reach 10 could not tell the two thresholds apart, so the 8-VP seed was chosen
+  deliberately. (c) Per the non-goals, blitz has NO verify leg and the file says
+  why in its header comment; blitz's tighter timers are server-consumed only and
+  are unreachable from a boot-free proof, also noted in-file.
 
 ## Findings
 <!-- appended by the worker ONLY on a wall -->
