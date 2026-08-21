@@ -14,24 +14,24 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@colyseus/schema": "^4.0.27",
+    "@colyseus/schema": "^4.0.30",
     "@colyseus/ws-transport": "^0.17.13",
-    "@fastify/cors": "^11.2.0",
+    "@fastify/cors": "^11.3.0",
     "@skervik/bots": "workspace:*",
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
     "colyseus": "^0.17.10",
     "drizzle-orm": "^0.45.2",
-    "fastify": "^5.10.0",
-    "jose": "^6.2.3",
-    "pg": "^8.22.0",
+    "fastify": "^5.12.0",
+    "jose": "^6.2.8",
+    "pg": "^8.23.0",
     "zod": "^4.1.13"
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.17.43",
     "@colyseus/testing": "^0.17.11",
     "@electric-sql/pglite": "^0.5.4",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.21.0",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8",
     "typescript": "^5"

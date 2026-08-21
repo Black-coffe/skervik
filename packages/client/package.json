@@ -16,9 +16,9 @@
     "@skervik/core": "workspace:*",
     "@skervik/protocol": "workspace:*",
     "pixi.js": "^8.19.0",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "zustand": "^5.0.14"
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/react": "^19.2.17",
