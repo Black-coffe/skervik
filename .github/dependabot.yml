@@ -12,10 +12,13 @@ updates:
       include: scope
     groups:
       # Collapse the dev-tooling churn (eslint/prettier/vitest/tsup/types) into
-      # one PR per week instead of a dozen.
+      # one PR per week instead of a dozen. Minors and patches only: a major
+      # (TS 7, Vite 8) bundled into the weekly group blocks the whole group on
+      # migration work — majors arrive as individual PRs instead (see #29).
       dev-dependencies:
         dependency-type: development
         patterns: ['*']
+        update-types: ['minor', 'patch']
 
   # Keep the GitHub Actions used by our workflows current.
   - package-ecosystem: github-actions
