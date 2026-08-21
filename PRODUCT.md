@@ -76,7 +76,7 @@ zero mysticism.
 
 WCAG 2.1 AA floor: body text ≥4.5:1, large text/graphics ≥3:1. Colorblind-safe
 by construction (principle 4), plus planned colorblind modes (M4 hardening,
-but nothing shipped in M1 may *depend* on hue alone). Keyboard navigation for
+but nothing shipped in M1 may _depend_ on hue alone). Keyboard navigation for
 all non-canvas UI; screen-reader coverage for menus/lobby; font-scale setting;
 `prefers-reduced-motion` honored everywhere including canvas animations.
 Trilingual i18n baked in from the first string (keys only, no hardcoded text).

@@ -14,7 +14,7 @@
 // never a secret, never anything a client shouldn't already see about itself.
 import { randomBytes } from 'node:crypto';
 
-import { jwtVerify,SignJWT } from 'jose';
+import { jwtVerify, SignJWT } from 'jose';
 
 /** Token lifetime — long enough to survive a reload/reconnect, short of forever. */
 export const SESSION_TOKEN_TTL = '30d';
