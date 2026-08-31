@@ -29,8 +29,8 @@
   },
   "devDependencies": {
     "@colyseus/sdk": "^0.17.43",
-    "@colyseus/testing": "^0.17.11",
-    "@electric-sql/pglite": "^0.5.5",
+    "@colyseus/testing": "^0.18.5",
+    "@electric-sql/pglite": "^0.5.8",
     "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8",
