@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@skervik/core": "workspace:*",
-    "zod": "^4.1.13"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "tsup": "^8",
