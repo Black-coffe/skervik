@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@colyseus/schema": "^4.0.31",
-    "@colyseus/ws-transport": "^0.17.13",
+    "@colyseus/ws-transport": "^0.18.3",
     "@fastify/cors": "^11.3.0",
     "@skervik/bots": "workspace:*",
     "@skervik/core": "workspace:*",
