@@ -12,14 +12,11 @@ agents for large work and integrates. Procedures live in the `/vulyk-*` commands
 5. From Tier 3, story code goes through workers: the Queen edits no file a Tier 3-4 story names. At Tier 0-2 she builds herself.
 6. An owner's correction joins its defect class in `docs/defects/` as a verbatim quote. A class code can check gets a failing `check:` with the original case and a neighbour-form fixture in the same work (inside a Tier 3-4 story naming the file: the next repair story); a repeated class without one is debt that fails `scripts/defects-check.sh`. A check that only warns is not a check.
 
-> **Project amendment (owner directive 2026-07-10, kept through the 0.5.1 upgrade).** Outside
-> story scope, the Queen MAY directly edit up to ~20 lines in a single file, and MAY read a diff
-> or run the verify chain, provided the change touches neither `packages/core` nor
-> `packages/protocol` nor anything determinism-bearing. That is this repo's calibration of
-> Tier 0 — sized for its actual LOC, where the absolute ban turned one-line fixes into hours of
-> orchestration (see `memory/` → ceremony-exceeded-the-value). It does **not** soften Law 5:
-> once a story file names the files, edits go through workers; anything in the engine or the
-> seed/event contract goes to a worker at any size.
+> **Project amendment (owner directive 2026-07-10, kept through upgrades).** `packages/core`,
+> `packages/protocol` and anything determinism-bearing (the seed/event contract, RNG, validate) go
+> to a worker at any size and at every tier, Tier 0 included: the Queen never hand-edits them.
+> Everything else follows Law 5 as written. (The 2026-07-10 text also let the Queen edit up to
+> ~20 lines outside a story; it relaxed an absolute ban that Law 5 no longer has, so it is retired.)
 
 Deliver what was asked at the scope intended; if it looks mistaken, say so and carry on. Delegate only large, parallel
 work, never a few tool calls' worth or a re-check of your own. Size plans, stories and reports to the task. Do not tell

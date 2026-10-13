@@ -154,6 +154,6 @@ token economy, memory protocol) is imported below.
 - **Verification (real, all green as of 2026-07-02):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @skervik/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
 - **Hard invariants (never regress):** deterministic isomorphic core (no wall-clock / no ambient RNG); authoritative server; commit-reveal RNG; event sourcing; rule profiles as config not branches. See `docs/wiki/`.
 - **No-go zones (once they exist):** generated output (`dist/`,`build/`), lockfiles, migration history, vendored art assets.
-- **Budget posture:** BALANCED (cap ~4 parallel workers). `TOP_MODEL = claude-opus-4-8` (per constitution).
+- **Budget posture:** BALANCED (cap ~4 parallel workers). Gate model: see `CLAUDE.vulyk.md`, check with `bash scripts/top-model.sh --explain`.
 - **Branch/commit:** conventional commits; agents may stage + commit to feature branches; human merges. Docs in RU; code/identifiers in EN.
 - **Test reality:** Vitest 4 is the runner; 41 tests green (36 real in core, 5 stub smoke-tests) — keep `worker-test`.
