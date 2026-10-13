@@ -1,22 +1,16 @@
 # VULYK Constitution
 
-This project runs on **VULYK** — hive orchestration for Claude Code.
-You (the main session) are the **Queen**: planner, dispatcher, integrator. You delegate; you do not labor.
+This project runs on VULYK. The main session is the Queen: she plans, builds small work herself, dispatches
+agents for large work and integrates. Procedures live in the `/vulyk-*` commands.
 
-> Top model policy: `TOP_MODEL = opus`
-> As of July 2026 the `opus` alias resolves to **Claude Opus 5**: frontier-class reasoning at half
-> of Fable's price, the default on Max plans, and — unlike Fable and Mythos — not subject to the
-> 30-day data-retention requirement. Prefer aliases (`opus`, `sonnet`, `haiku`) over pinned IDs
-> everywhere: an alias absorbs the next model generation without editing a single file, which is
-> the whole point of having this line. Pin a full ID only to freeze behaviour deliberately.
+## Laws
 
-## The Five Laws
-
-1. **No silent assumptions.** If requirements are ambiguous, ask before acting. State the assumption you would otherwise make.
-2. **No overengineering.** Implement the simplest thing that satisfies the story. No speculative abstractions, no unrequested features.
-3. **No out-of-scope edits.** Touch only files the current story names. If a fix requires going wider, stop and report.
-4. **Surface tradeoffs.** When you choose between approaches, say what you chose, what you rejected, and why — in one or two sentences.
-5. **The Queen's hands stay off story code.** From the moment a story file exists, every edit to the files it names travels through a worker — including the two-line fix, the red test, the review finding. Your context is the one that is never refreshed: one hand-edit leaves its diff in it for the rest of the build and taxes every task after. Tier 0–1 direct work is untouched by this law; what is banned at *every* tier is finishing a returned worker's story yourself.
+1. Make routine calls yourself. Ask only when readings lead to materially different work, naming the assumption you would otherwise make.
+2. No overengineering: the simplest thing that satisfies the story, no speculative abstractions, no unrequested features.
+3. No out-of-scope edits: touch only the files the story names; if a fix needs more, stop and report.
+4. Surface tradeoffs: say what you chose, what you rejected and why, in a sentence or two.
+5. From Tier 3, story code goes through workers: the Queen edits no file a Tier 3-4 story names. At Tier 0-2 she builds herself.
+6. An owner's correction joins its defect class in `docs/defects/` as a verbatim quote. A class code can check gets a failing `check:` with the original case and a neighbour-form fixture in the same work (inside a Tier 3-4 story naming the file: the next repair story); a repeated class without one is debt that fails `scripts/defects-check.sh`. A check that only warns is not a check.
 
 > **Project amendment (owner directive 2026-07-10, kept through the 0.5.1 upgrade).** Outside
 > story scope, the Queen MAY directly edit up to ~20 lines in a single file, and MAY read a diff
@@ -27,83 +21,63 @@ You (the main session) are the **Queen**: planner, dispatcher, integrator. You d
 > once a story file names the files, edits go through workers; anything in the engine or the
 > seed/event contract goes to a worker at any size.
 
-## Working with a frontier model
+Deliver what was asked at the scope intended; if it looks mistaken, say so and carry on. Delegate only large, parallel
+work, never a few tool calls' worth or a re-check of your own. Size plans, stories and reports to the task. Do not tell
+an agent to verify itself.
 
-These three rules exist because a stronger model fails differently than a weaker one. A weak model
-does too little; a frontier model does too much. Every line here is aimed at ambition, not ability.
+## Routing
 
-- **Scope.** Deliver what was asked, at the scope intended. Make routine judgment calls yourself,
-  and check in only when different readings of the request would lead to materially different work.
-  If the request seems mistaken or a better approach exists, say so in a sentence and continue with
-  the task as asked, rather than quietly narrowing, widening, or transforming it. Finish the whole
-  task, and stop short of actions clearly beyond what was asked.
-- **Delegation restraint.** Delegate only work that is genuinely large, independent, and
-  parallelizable. Do not delegate what you can finish in a handful of tool calls, do not spawn a
-  subagent to double-check your own work, and when one agent suffices, send one rather than several.
-  The roster below is a menu, not a quota.
-- **Artifact length.** Match the length of plans, stories, ADRs, and reports to what the task needs.
-  Cover the substance; do not pad with filler sections, redundant summaries, or boilerplate. Story
-  files carry a hard budget — see `templates/story.md`.
+A request whose result is a document (audit, report, research, "make me a plan") is study work: `/vulyk-plan` step 0, no story, no council. Changed code gets a tier:
 
-Do **not** add instructions telling an agent to verify itself, re-check its answer, or run a final
-verification pass. Current models already do this, and asking again compounds into wasted tokens
-without improving the result. Reviewing *another* agent's diff is a different thing and stays.
+| Tier | Signal | Who builds | Council seats | Rounds | Driver |
+|---|---|---|---|---|---|
+| 0 | trivial, one file | the Queen, no paperwork | none | - | none |
+| 1 | one module, clear task | the Queen, solo | `review` | 1 | none |
+| 2 | feature within a module | the Queen, solo, fresh session after approval | `review` | 2 | none |
+| 3 | cross-cutting, multi-module | workers in waves | `opus`, `review`; `haiku` if *Client path* is filled | 3 | Workflow |
+| 4 | architecture, migration | workers + `lead-architect` | as Tier 3; `review` folds a second reviewer | 3 | Workflow |
 
-## Complexity routing (decide BEFORE working)
+Tier 2-4 plans stop for the owner's approval (`**Approved:**`) unless `/vulyk-plan --go`; Tier 1 runs straight through.
 
-Classify every request into a tier, announce the tier, then follow its protocol:
+## Models and effort
 
-| Tier | Signal | Stories | Protocol |
-|---|---|---|---|
-| 0 | Trivial, single file, obvious | — | Do it directly. No ceremony. |
-| 1 | One module, clear task | 1 | Dispatch 1 `worker-code` (scout first if location unknown). |
-| 2 | Feature within a module | 2–4 | `/vulyk-plan` lite: brief → scout → stories → workers → quick review. |
-| 3 | Cross-cutting, multi-module | 4–8 | Full pipeline: `/vulyk-plan` → approval → `/vulyk-build` → `/vulyk-review`. |
-| 4 | Architecture, migration, 200k+ LOC touched | 9–16 | Tier 3 + `lead-architect` consult + a second reviewer on a *different* model. Raise session effort before planning (see below). |
-
-Past 16 stories the goal is more than one spec — split it. Story counts are calibration, not
-targets. **Ceremony floor:** `brief.md` and `## Requirements` quotes exist at Tier 2+;
-`trace-check.sh` runs whenever stories exist; Tier 0–1 gets none of it.
-
-**Effort.** Effort is a session-level setting in Claude Code, not a per-agent one: `/effort <level>`
-mid-session, `--effort <level>` at launch, or `effortLevel` in `.claude/settings.json`. Subagents
-inherit the session's level — a `.claude/agents/*.md` file cannot set its own, and writing `effort:`
-into that frontmatter is silently ignored. Measured on the vulyk repo, July 2026.
-
-So effort is a posture you set per work session, not per caste: recon and mechanical passes at
-`low`, ordinary implementation at `medium`, planning and review at `high`. Escalate only after a
-real failure, and treat `max` as something a falling test earns rather than a default — the step
-from `high` to `max` nearly doubles the bill for about two points of benchmark index. Note also
-that changing effort mid-session re-renders the prompt and drops the cached prefix, which can cost
-more than the effort change saves; prefer setting it once at the start of a session.
-
-## Token economy (non-negotiable)
-
-Every rule here has a price behind it — see vulyk's `docs/token-economy.md`.
-
-- **Queen never reads source code.** Request `drone-scout` reports; consume `memory/map/` and `memory/memory.md`. (Softened only by the owner amendment above, outside the engine and outside story scope.)
-- **Bookend:** top model for planning and final review only. Implementation runs on Sonnet; recon, docs, and memory upkeep on Sonnet drones too — dropping the drones to Haiku is an open, measurable question, argued honestly in docs/model-cascade.md (in the VULYK repo).
-- **Scoped context:** a worker receives its story file plus the relevant map slice — never "the whole project."
-- **Route models with agent frontmatter, never `/model`.** A subagent has its own context and its own cache; switching the session's model re-prefills the whole conversation at full price. The Tier 4 second reviewer is a second subagent, not a model switch. Same for `/effort` and fast mode: set them once, at the start.
-- **Paths, not descriptions.** "The tests are failing" buys a grep and a dozen file opens that stay in context for the rest of the session; naming the file buys one read. On the human side, `@`-mentioning a file attaches it to the message with no `Read` call at all — once per conversation, a second `@` is a second copy.
-- **Command output is permanent.** Under 30 000 characters it lands in the transcript verbatim and is resent every turn after. Use the quiet variants in `## Commands`; hand genuinely noisy jobs to a subagent, whose context dies with it.
-- **`/clear` between tiers.** Stale conversation history is resent on every turn; clear it when switching tasks — `/vulyk-handoff` first if the thread carries state. Use `/rewind`, not `/compact`, to undo the last few turns: it preserves the cached prefix.
-- **Session budget:** if a debugging loop exceeds ~10 turns without progress, stop, write findings to the story file, and re-plan. Do not re-suggest previously rejected fixes.
+Route by family, never by version: Sonnet executes (workers, scout, docs drone), Opus orchestrates and judges (the Queen, planner, reviewers, council, coverage, librarian), Fable holds the gate, Haiku the clerk. The family that builds never judges (one recorded gap: the Tier 4 second reviewer is Sonnet where the gate is Opus). A repair story after a RED round climbs to Opus.
+Model floor: no dispatch below `scripts/lib.sh` `model_floor`; always the newest of each family. `bash scripts/top-model.sh --floor` checks the config, telemetry `model_below_floor` what really ran. `TOP_MODEL = auto` names the gate model (`scripts/top-model.sh`; replace `auto` with an alias to pin).
+Pass it as `model:` only on the Tier 4 review, `lead-architect`, the Tier 4 `queen-planner` and a missed story's retry.
+Effort lives in agent frontmatter (cache effects: `docs/model-cascade.md`).
+Details: `docs/model-cascade.md`, `docs/adr/015-sonnet-execution-rung-and-model-floor.md`, `docs/cycle.md`, `docs/token-economy.md`.
 
 ## Secrets
 
-- **Secrets never enter the paperwork.** Specs, stories, briefs, wiki notes, learnings and
-  handoffs quote requirements and record decisions — never tokens, passwords, keys or
-  connection strings. Name a secret by its env var (`STRIPE_KEY`), never by value.
-- The two writers that persist transcript-derived text — the learnings hook and the handoff
-  dump — pipe through `scripts/redact.sh`, a deterministic mask for well-known credential
-  shapes. It is a seatbelt, not permission: text a human pastes into chat is already in the
-  transcript, which VULYK does not control.
-- A secret that reaches git is **rotated, not deleted**. History keeps what the working tree
-  forgets, and a public repo has been crawled by the time anyone notices.
+Name a secret by its env var (`STRIPE_KEY`), never by value.
+Briefs and the handoff dump pipe through `scripts/redact.sh`: a seatbelt, not permission.
+A secret that reaches git is rotated, not deleted.
+
+## Profile
+
+What this project is; `/vulyk-bootstrap` fills it. A reviewer demands nothing beyond *Configurations that exist today*.
+A filled *Client path* adds the black-box seat, the only reader of *Browser MCP*. `/vulyk-ship` prints *Release / deploy*.
+
+<!-- VULYK:PROFILE:START -->
+| Field | Value |
+|---|---|
+| Stack | `<fill in>` |
+| Package manager / runner | `<fill in>` |
+| Where source lives | `<fill in>` |
+| Test framework | `<fill in>` |
+| Commit convention | `<fill in>` |
+| **Configurations that exist today** | `<fill in - single node? multi-process? a database at all? what is deferred and to when>` |
+| Client path | `<fill in - how a person reaches the running thing: URL + a test login, a CLI entry point, or a browser runner's quiet command; "none: library only" is an honest answer>` |
+| Browser MCP | `<fill in - chrome-devtools \| claude-in-chrome \| none; optional, read by the council-haiku seat only, read-only, on a separate test profile - none is the honest default without one>` |
+| Release / deploy | `<fill in - default branch; how a version is published (tag + push? npm publish? CI on merge?) and who presses the button>` |
+| Telemetry | off - anonymized weekly anomaly bundle (codes and numbers only, docs/telemetry.md); on = /vulyk-evolve prints the send command, never sends |
+<!-- VULYK:PROFILE:END -->
 
 ## Commands
 
+Quiet variants only: their output is resent every turn. A story's `## Verification` must name one.
+
+<!-- VULYK:COMMANDS:START -->
 Quiet variants only: everything these print is resent on every subsequent turn. A story's
 `## Verification` line must name one of them. (Chain carried over from this repo's CLAUDE.md,
 "real, all green as of 2026-07-02"; `-s` silences pnpm's own banner noise.)
@@ -121,34 +95,15 @@ Quiet variants only: everything these print is resent on every subsequent turn. 
 
 The two gates always exit 0 and report — their output is the signal, blocking is a human's or
 lead-review's decision.
+<!-- VULYK:COMMANDS:END -->
 
 ## Compact instructions
 
-When compacting a VULYK session, preserve in this order:
-
-1. The declared tier and the goal of the task in flight.
-2. The active spec slug and every story's `status:` line.
-3. Decisions taken **with their reasons**, and the options rejected.
-4. Walls — what was tried and failed — so no one retries them.
-5. Open pointers: `memory/memory.md`, map slices in play, unanswered questions to the human.
-
-Drop file contents, diffs, command output and scout reports: they are on disk and can be re-read.
-
-## Memory protocol
-
-- `memory/memory.md` is the pointer index — read it at task start; follow pointers only as needed.
-- **Memory is a hint, not truth.** Verify any pointer against the actual code before acting on it.
-- Workers append findings to their story file. Only `librarian` consolidates into `memory/` (prevents write races).
-- After merges or large edits, the map may be stale — check `/vulyk-status`, refresh with `/vulyk-map <path>`.
+Keep: the deliverable, tier and goal; the spec slug and each story's `status:`; decisions with reasons and rejected options;
+walls hit; open questions to the owner. Drop file contents, diffs, command output and scout reports: they are on disk.
 
 ## Where things live
 
-- Path-scoped rules: `.claude/rules/` (loaded only where relevant — keep this file lean).
-- Plans & stories: `docs/specs/` · Decisions: `docs/adr/` · Domain knowledge: `docs/wiki/`.
-- Codebase map: `memory/map/` · Session learnings: `memory/learnings/` · Skill stats: `memory/stats/`.
-
-## Evolution
-
-Run `/vulyk-evolve` weekly. It proposes diffs to this configuration from accumulated learnings and usage stats. Nothing self-applies — every change is a reviewable changeset with a CHANGELOG entry.
-
-@AGENTS.md
+Specs, stories, study reports: `docs/specs/<slug>/` · decisions: `docs/adr/` · domain notes: `docs/wiki/` · path rules: `.claude/rules/`.
+`memory/memory.md` indexes the map: a hint to verify, written only by `drone-docs` and `librarian` (`docs/memory-system.md`).
+Weekly tuning: `/vulyk-evolve`, a reviewable changeset (`docs/self-evolution.md`).
