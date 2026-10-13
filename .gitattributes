@@ -1,0 +1,7 @@
+# --- VULYK: the Workflow driver must check out with LF (added by install.sh) ---
+.claude/workflows/*.js text eol=lf
+
+# --- VULYK: hooks, the Workflow driver and the manifest must check out with LF (added by install.sh) ---
+*.sh text eol=lf
+.claude/hooks/*.py text eol=lf
+.claude/vulyk-manifest text eol=lf

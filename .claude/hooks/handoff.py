@@ -16,8 +16,15 @@ Modes (argv[1]); hook modes read the hook JSON payload on stdin:
     precompact     PreCompact         -> emergency mechanical handoff dump
     sessionend     SessionEnd         -> mechanical handoff dump on /clear or exit
     sessionstart   SessionStart       -> injects the freshest handoff for this project
+                                         (source clear / compact only, <= 4 000 chars)
     dump           manual             -> writes the mechanical skeleton, prints its path (used by /vulyk-handoff)
     status         debug              -> human-readable current numbers
+
+The context window is detected per session, never assumed: hook payloads do not
+carry it, so detect_window() asks a config pin, then Claude Code's own env knobs,
+then the statusLine JSON claude-statusbar caches on disk, and falls back to what
+the measured size proves. Thresholds are a share of that window, so one config is
+correct on a 200k model and on a 1M one alike.
 
 Storage (all project-local, gitignored):
     .claude/handoff/*.md          handoff documents
@@ -48,18 +55,23 @@ CLAUDE_USER_DIR = os.path.join(HOME, ".claude")
 
 DEFAULTS = {
     "enabled": True,
-    # Standard Claude Code window. Raise to 1000000 if you run a 1M-context model.
-    "context_limit": 200000,
-    # absolute token thresholds -> escalation levels 1, 2, 3 (55% / 70% / ~82%)
-    "thresholds": [110000, 140000, 165000],
+    # Context window. None = detect it per session (see detect_window); an
+    # integer pins it for this project, e.g. 200000 or 1000000.
+    "context_limit": None,
+    # escalation levels 1, 2, 3 as a share of the detected window
+    "thresholds_pct": [55, 70, 82],
+    # legacy absolute token thresholds; when set they win over thresholds_pct
+    "thresholds": None,
     # below this, a session is too small to be worth dumping
     "min_dump_tokens": 25000,
     # prompt-cache TTL: 60 min on subscription plans, 5 on an API key
     # (unless ENABLE_PROMPT_CACHING_1H=1). Checkpointing inside this window
     # re-reads the conversation at cache price; outside it, at full price.
     "cache_ttl_minutes": 60,
-    # SessionStart(startup) only restores a handoff younger than this
+    # SessionStart(resume) only restores a handoff younger than this
     "restore_max_age_hours": 12,
+    # the restored handoff is cut to this many characters
+    "restore_max_chars": 4000,
     # how much transcript tail to parse for a dump (bytes)
     "dump_tail_bytes": 12 * 1024 * 1024,
     "max_user_prompts": 12,
@@ -69,6 +81,14 @@ DEFAULTS = {
 
 # --------------------------------------------------------------------------- utils
 
+def own_hive():
+    """The project this hook is installed in (<root>/.claude/hooks/handoff.py), or None."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if os.path.basename(here) == "hooks" and os.path.basename(os.path.dirname(here)) == ".claude":
+        return os.path.dirname(os.path.dirname(here))
+    return None
+
+
 def project_root(payload):
     root = os.environ.get("CLAUDE_PROJECT_DIR")
     if root and os.path.isdir(root):
@@ -76,7 +96,9 @@ def project_root(payload):
     cwd = (payload or {}).get("cwd")
     if cwd and os.path.isdir(cwd):
         return cwd
-    return os.getcwd()
+    # dump/status run from a shell with no CLAUDE_PROJECT_DIR, and a Bash `cd` inside the
+    # project survives between tool calls: the cwd can be any subfolder, so it is the last resort.
+    return own_hive() or os.getcwd()
 
 
 def handoff_dir(root):
@@ -131,6 +153,169 @@ def human(n):
 
 def now_local():
     return datetime.now(timezone.utc).astimezone()
+
+
+# ------------------------------------------------------------- context window
+
+# Claude Code's stock window. A last-resort default and a floor for the
+# measured fallback - never an assumption about the model actually in use.
+STOCK_CONTEXT_WINDOW = 200000
+# The only larger window Claude Code ships (`model[1m]`).
+LARGE_CONTEXT_WINDOW = 1000000
+# Raw statusLine stdin of the last render, left on disk by claude-statusbar.
+# The top-level file is global: every Claude Code window overwrites it, so it
+# answers for THIS session only when this session rendered last. Daemon mode
+# also keeps a per-session copy, which no other window can touch.
+STATUSBAR_DIR = os.path.join(HOME, ".cache", "claude-statusbar")
+STATUSBAR_CACHE = os.path.join(STATUSBAR_DIR, "last_stdin.json")
+STATUSBAR_CACHE_MAX_AGE_S = 6 * 3600
+
+
+def positive_int(value):
+    """A positive int, rejecting bools and everything else. None otherwise."""
+    if type(value) is not int or value <= 0:
+        return None
+    return value
+
+
+def env_truthy(raw):
+    return str(raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _read_fresh_json(path):
+    """Parsed JSON dict from a file written recently, else None. Never raises."""
+    try:
+        if time.time() - os.stat(path).st_mtime > STATUSBAR_CACHE_MAX_AGE_S:
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def statusbar_available():
+    """True when claude-statusbar has rendered on this machine recently.
+
+    Distinguishes "this session's window is not known YET" from "nothing here
+    will ever know it". A stale directory reads as absent, so uninstalling the
+    tool does not silence the guard forever.
+    """
+    try:
+        if time.time() - os.stat(STATUSBAR_CACHE).st_mtime <= STATUSBAR_CACHE_MAX_AGE_S:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def statusbar_window(payload):
+    """context_window_size as Claude Code itself reported it, or None.
+
+    Hook payloads carry no window size - that field exists only in statusLine
+    input - and the transcript records the model without its `[1m]` suffix, so
+    a hook cannot learn the window from its own contract. claude-statusbar
+    caches the raw statusLine JSON, which does carry it.
+
+    Two files, strictest first: the per-session copy daemon mode keeps, then
+    the global one, which is accepted only when this session rendered last -
+    every other Claude Code window overwrites it with its own numbers. Tool
+    absent, file stale, foreign session, surprise shape: all return None.
+    """
+    session_id = payload.get("session_id")
+    transcript = payload.get("transcript_path")
+
+    if session_id:
+        data = _read_fresh_json(os.path.join(
+            STATUSBAR_DIR, "sessions", session_id, "last_stdin.json"))
+        size = _cached_window_size(data)
+        if size:
+            return size
+
+    data = _read_fresh_json(STATUSBAR_CACHE)
+    if data is None:
+        return None
+    if session_id:
+        if data.get("session_id") != session_id:
+            return None
+    elif transcript:
+        if data.get("transcript_path") != transcript:
+            return None
+    else:
+        return None
+    return _cached_window_size(data)
+
+
+def _cached_window_size(data):
+    if not isinstance(data, dict):
+        return None
+    window = data.get("context_window")
+    if not isinstance(window, dict):
+        return None
+    return positive_int(window.get("context_window_size"))
+
+
+def detect_window(cfg, payload):
+    """(window, source) for this session, or (None, "") when nothing knows.
+
+    Order: a deliberate pin in handoff.config.json, then Claude Code's own env
+    knobs (the same ones claude-statusbar honors), then the statusbar cache.
+    Never raises, never blocks - an unknown window degrades to the measured or
+    stock fallback in resolve_window().
+    """
+    pinned = positive_int(cfg.get("context_limit"))
+    if pinned:
+        return pinned, "config"
+
+    raw = str(os.environ.get("CLAUDE_CODE_AUTO_COMPACT_WINDOW") or "").strip()
+    if raw:
+        try:
+            forced = positive_int(int(raw))
+        except ValueError:
+            forced = None
+        if forced:
+            return forced, "env"
+
+    if env_truthy(os.environ.get("CLAUDE_CODE_DISABLE_1M_CONTEXT")):
+        return STOCK_CONTEXT_WINDOW, "env"
+
+    size = statusbar_window(payload)
+    if size:
+        return size, "statusbar"
+    return None, ""
+
+
+def resolve_window(cfg, tokens=0, remembered=None):
+    """(window, source) actually used for percentages and thresholds.
+
+    Fresh detection always wins, so switching models mid-session corrects
+    itself on the next turn. Then the window this session was already seen to
+    have. Then: a session that has outgrown the stock window proves it is the
+    large one - the only other size Claude Code ships. Below that, stock is
+    both the common case and the safe guess, since warning too early costs a
+    nag while warning too late costs the session.
+    """
+    limit, source = cfg.get("_window") or (None, "")
+    if limit:
+        return limit, source
+    limit = positive_int(remembered)
+    if limit:
+        return limit, "remembered"
+    if tokens > STOCK_CONTEXT_WINDOW * 0.98:
+        return LARGE_CONTEXT_WINDOW, "measured"
+    return STOCK_CONTEXT_WINDOW, "default"
+
+
+def thresholds_for(cfg, limit):
+    """Escalation thresholds in tokens: explicit absolutes, else % of window."""
+    explicit = cfg.get("thresholds")
+    if isinstance(explicit, (list, tuple)) and explicit:
+        return list(explicit)
+    pct = cfg.get("thresholds_pct") or DEFAULTS["thresholds_pct"]
+    try:
+        return [int(limit * float(p) / 100.0) for p in pct]
+    except Exception:
+        return [int(limit * float(p) / 100.0) for p in DEFAULTS["thresholds_pct"]]
 
 
 # ------------------------------------------------------------------- transcript IO
@@ -256,6 +441,22 @@ def newest_transcript_for_cwd(cwd):
         return None
 
 
+def transcript_for_session(session_id):
+    """<session_id>.jsonl in any project folder: found by name, so neither a long path's
+    shortened slug nor a parallel session's newer transcript can stand in for it."""
+    if not re.match(r"^[A-Za-z0-9-]+$", session_id or ""):
+        return None
+    base = os.path.join(CLAUDE_USER_DIR, "projects")
+    try:
+        found = [os.path.join(base, d, session_id + ".jsonl") for d in os.listdir(base)]
+    except Exception:
+        return None
+    found = [f for f in found if os.path.isfile(f)]
+    if not found:
+        return None
+    return max(found, key=os.path.getmtime)
+
+
 # ------------------------------------------------------------------------- state
 
 def state_path(root, session_id):
@@ -292,6 +493,26 @@ def prune_state(root, max_age_days=7):
                 os.remove(p)
     except Exception:
         pass
+
+
+# Sources that actually observed the window, as opposed to guessing it.
+KNOWN_WINDOW_SOURCES = ("config", "env", "statusbar")
+
+
+def remember_window(root, session_id, state, limit, source):
+    """Keep the last observed window in the session state.
+
+    Detection can miss for a tick - the statusbar cache being replaced under
+    us, the tool not having rendered yet. Without a memory that miss reads as
+    the stock window, escalates a level, and the very state that suppresses
+    repeat nags would then silence the REAL warning for the rest of the
+    session. Written once per session, or again if the window genuinely
+    changes.
+    """
+    if source not in KNOWN_WINDOW_SOURCES or state.get("window") == limit:
+        return
+    state["window"] = limit
+    save_state(root, session_id, state)
 
 
 def level_for(tokens, thresholds):
@@ -389,6 +610,15 @@ _REDACT_FALLBACK = [
     re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
     re.compile(r"AIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"[0-9]{8,10}:AA[A-Za-z0-9_-]{33}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"npm_[A-Za-z0-9]{36}"),
+    re.compile(r"pypi-[A-Za-z0-9_-]{50,}"),
+    re.compile(r"hf_[A-Za-z0-9]{30,}"),
+    re.compile(r"gsk_[A-Za-z0-9]{40,}"),
+    re.compile(r"SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"),
+    re.compile(r"[rs]k_live_[A-Za-z0-9]{20,}"),
+    re.compile(r"(?<=hooks\.slack\.com/services/)[A-Za-z0-9/_-]{20,}"),
     re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}"),
     re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?"
                r"(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S),
@@ -426,11 +656,27 @@ def redact_text(root, text):
     return text
 
 
+def create_unique(target_dir, base, doc):
+    """Write doc to <base>.md, or <base>-2.md, -3 ... when the name is taken: another handoff
+    tool may name its files the same way in the same folder, and one must not erase the other."""
+    n = 1
+    while True:
+        path = os.path.join(target_dir, "%s%s.md" % (base, "" if n == 1 else "-%d" % n))
+        try:
+            with open(path, "x", encoding="utf-8") as fh:
+                fh.write(doc)
+            return path
+        except FileExistsError:
+            n += 1
+
+
 def write_handoff(payload, cfg, reason):
     root = project_root(payload)
     cwd = payload.get("cwd") or root
     session_id = payload.get("session_id") or "unknown"
-    transcript = payload.get("transcript_path") or newest_transcript_for_cwd(cwd)
+    transcript = payload.get("transcript_path")
+    if not transcript and not payload.get("_exact_session"):
+        transcript = newest_transcript_for_cwd(cwd)
     tokens, model, _ = context_tokens(transcript)
     entries = parse_entries(transcript, cfg["dump_tail_bytes"]) if transcript else []
     data = harvest(entries, cfg)
@@ -497,11 +743,9 @@ def write_handoff(payload, cfg, reason):
 
     target_dir = handoff_dir(root)
     os.makedirs(target_dir, exist_ok=True)
-    fname = "%s-%s.md" % (stamp.strftime("%Y%m%d-%H%M%S"), str(session_id)[:8])
-    path = os.path.join(target_dir, fname)
     doc = redact_text(root, "\n".join(lines))
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(doc)
+    path = create_unique(target_dir, "%s-%s" % (stamp.strftime("%Y%m%d-%H%M%S"),
+                                                str(session_id)[:8]), doc)
 
     try:
         with open(index_path(root), "w", encoding="utf-8") as fh:
@@ -522,8 +766,7 @@ def write_handoff(payload, cfg, reason):
 
 # ------------------------------------------------------------------------- modes
 
-def banner(tokens, level, cfg, ts=None):
-    limit = cfg["context_limit"]
+def banner(tokens, level, limit, cfg, ts=None):
     pct = (tokens * 100.0 / limit) if limit else 0
     head = "[VULYK] Context %s / %s (%.0f%%)" % (human(tokens), human(limit), pct)
     if level == 1:
@@ -541,32 +784,43 @@ def mode_stop(payload, cfg, root):
     if payload.get("agent_id"):  # subagent stop, not the main loop
         emit(None)
     session_id = payload.get("session_id")
+    state = load_state(root, session_id)
     tokens, _, ts = context_tokens(payload.get("transcript_path"))
-    level = level_for(tokens, cfg["thresholds"])
+    limit, source = resolve_window(cfg, tokens, state.get("window"))
+    remember_window(root, session_id, state, limit, source)
+    if source == "default" and statusbar_available():
+        # The window is merely guessed while something on this machine can
+        # still answer for real - most likely another Claude Code window
+        # rendered last. A wrong denominator is worse than one quiet turn:
+        # that is the bug this guard exists to prevent.
+        emit(None)
+    level = level_for(tokens, thresholds_for(cfg, limit))
     if level == 0:
         emit(None)
-    state = load_state(root, session_id)
     if state.get("stop_level", 0) >= level:
         emit(None)
     state["stop_level"] = level
     state["last_tokens"] = tokens
     save_state(root, session_id, state)
-    emit({"systemMessage": banner(tokens, level, cfg, ts), "suppressOutput": True})
+    emit({"systemMessage": banner(tokens, level, limit, cfg, ts), "suppressOutput": True})
 
 
 def mode_prompt(payload, cfg, root):
     session_id = payload.get("session_id")
+    state = load_state(root, session_id)
     tokens, _, ts = context_tokens(payload.get("transcript_path"))
-    level = level_for(tokens, cfg["thresholds"])
+    limit, source = resolve_window(cfg, tokens, state.get("window"))
+    remember_window(root, session_id, state, limit, source)
+    if source == "default" and statusbar_available():
+        emit(None)  # see mode_stop: never nag against a guessed window
+    level = level_for(tokens, thresholds_for(cfg, limit))
     if level < 2:
         emit(None)
-    state = load_state(root, session_id)
     if state.get("prompt_level", 0) >= level:
         emit(None)
     state["prompt_level"] = level
     save_state(root, session_id, state)
 
-    limit = cfg["context_limit"]
     pct = (tokens * 100.0 / limit) if limit else 0
     urgency = "Strongly" if level >= 3 else "Gently"
     ctx = (
@@ -593,9 +847,16 @@ def mode_dump_hook(payload, cfg, reason, min_tokens_check=True):
           "suppressOutput": True})
 
 
+# SessionStart sources that continue earlier work (ADR-013 D7). A plain `startup` or a
+# `fork` starts on its own topic: restoring there injected the last handoff into every
+# session opened within 12 h, whatever it was about. `resume` is left out too: a resumed
+# session still carries its own context, so the handoff would only repeat it.
+RESTORE_SOURCES = ("clear", "compact")
+
+
 def mode_sessionstart(payload, cfg, root):
     source = (payload.get("source") or "").lower()
-    if source in ("resume", "fork"):
+    if source not in RESTORE_SOURCES:
         emit(None)
     idx = index_path(root)
     try:
@@ -621,8 +882,9 @@ def mode_sessionstart(payload, cfg, root):
             body = fh.read()
     except Exception:
         emit(None)
-    if len(body) > 12000:
-        body = body[:12000] + "\n\n...(truncated)"
+    cap = positive_int(cfg.get("restore_max_chars")) or DEFAULTS["restore_max_chars"]
+    if len(body) > cap:
+        body = body[:cap] + "\n\n...(truncated)"
 
     try:
         meta["consumed_by_startup"] = True
@@ -644,17 +906,22 @@ def mode_sessionstart(payload, cfg, root):
 
 def mode_status(payload, cfg, root):
     cwd = payload.get("cwd") or os.getcwd()
-    transcript = payload.get("transcript_path") or newest_transcript_for_cwd(cwd)
+    transcript = payload.get("transcript_path")
+    if not transcript and not payload.get("_exact_session"):
+        transcript = newest_transcript_for_cwd(cwd)
     tokens, model, ts = context_tokens(transcript)
-    limit = cfg["context_limit"]
+    state = load_state(root, payload.get("session_id"))
+    limit, source = resolve_window(cfg, tokens, state.get("window"))
+    thresholds = thresholds_for(cfg, limit)
     age = minutes_since(ts)
     print("root       : %s" % root)
     print("transcript : %s" % transcript)
     print("model      : %s" % model)
     print("context    : %s / %s (%.1f%%)" % (human(tokens), human(limit),
                                              tokens * 100.0 / limit if limit else 0))
-    print("thresholds : %s" % cfg["thresholds"])
-    print("level      : %d" % level_for(tokens, cfg["thresholds"]))
+    print("window src : %s" % (source or "unknown"))
+    print("thresholds : %s" % thresholds)
+    print("level      : %d" % level_for(tokens, thresholds))
     print("last turn  : %s" % ("%.0f min ago" % age if age is not None else "unknown"))
     print("cache      : %s (ttl %s min)" % (
         "unknown" if age is None
@@ -664,11 +931,102 @@ def mode_status(payload, cfg, root):
     sys.exit(0)
 
 
+def mode_measure(argv):
+    """Read-only transcript inspection for `scripts/telemetry.sh scan` (plan A7).
+
+    `python handoff.py measure <transcript.jsonl> [--sidechain]`. Never writes state,
+    never blocks: an unreadable or missing file prints `{}` and exits 0, same contract
+    as every other guard hook here. `--sidechain` reads a subagent's own file, where
+    every entry carries `isSidechain: true`; without it, only main-thread entries count -
+    matching context_tokens()'s own isSidechain skip.
+    """
+    path = None
+    sidechain = False
+    for a in argv:
+        if a == "--sidechain":
+            sidechain = True
+        elif path is None:
+            path = a
+
+    if not path or not os.path.isfile(path):
+        print("{}")
+        sys.exit(0)
+
+    entries = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or not line.startswith("{"):
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception:
+        print("{}")
+        sys.exit(0)
+
+    tokens, model, _ = context_tokens(path)
+
+    turns = [e for e in entries
+             if e.get("type") == "assistant" and bool(e.get("isSidechain")) == sidechain]
+
+    # context_tokens() reads the main thread only, so a subagent file has no model from it. The
+    # model floor check (telemetry model_below_floor, ADR-015) needs the ID the subagent really
+    # ran on: the newest turn that names a real model (not "<synthetic>").
+    if not model:
+        for e in reversed(turns):
+            m = (e.get("message") or {}).get("model") or ""
+            if m.startswith("claude") or "claude-" in m:
+                model = m
+                break
+
+    first_prefix = 0
+    if turns:
+        usage = (turns[0].get("message") or {}).get("usage") or {}
+        first_prefix = (usage.get("input_tokens") or 0) + (usage.get("cache_creation_input_tokens") or 0)
+
+    last_has_text = False
+    if turns:
+        content = (turns[-1].get("message") or {}).get("content")
+        if isinstance(content, list):
+            last_has_text = any(
+                isinstance(b, dict) and b.get("type") == "text" and b.get("text")
+                for b in content)
+        elif isinstance(content, str):
+            last_has_text = bool(content.strip())
+
+    agent_type = ""
+    meta_path = os.path.splitext(path)[0] + ".meta.json"
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            meta = json.load(fh) or {}
+        agent_type = meta.get("agentType") or ""
+    except Exception:
+        agent_type = ""
+
+    print(json.dumps({
+        "tokens": tokens,
+        "model": model or "",
+        "first_prefix": first_prefix,
+        "assistant_turns": len(turns),
+        "last_has_text": last_has_text,
+        "agent_type": agent_type,
+    }, ensure_ascii=False))
+    sys.exit(0)
+
+
 HOOK_MODES = ("stop", "prompt", "precompact", "sessionend", "sessionstart")
 
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
+    # `measure` is dispatched before anything else: it is called from a terminal and from
+    # scripts/telemetry.sh, never from a hook, and it needs no config, no window and above
+    # all no stdin - a blind read there blocked a direct call (review finding 16).
+    if mode == "measure":
+        mode_measure(sys.argv[2:])
     # Only hook modes consume stdin; dump/status are invoked from a shell where
     # a blind stdin read could block on an open pipe.
     payload = read_stdin_json() if mode in HOOK_MODES else {}
@@ -677,6 +1035,28 @@ def main():
 
     if not cfg.get("enabled", True):
         emit(None)
+
+    # `dump` and `status` run from a shell with no hook payload; fill in what
+    # the window detector needs to recognise the session before it runs. The cwd is
+    # the project root, not the shell's: a Bash `cd` inside the project survives.
+    # `dump <session-id>` (the /vulyk-handoff command passes ${CLAUDE_SESSION_ID}) reads
+    # exactly that session's transcript, and never falls back to another one.
+    if mode in ("dump", "status"):
+        sid = sys.argv[2].strip() if len(sys.argv) > 2 else ""
+        if not payload.get("cwd"):
+            payload["cwd"] = root
+        if sid:
+            payload["session_id"] = sid
+            payload["_exact_session"] = True
+            payload["transcript_path"] = transcript_for_session(sid)
+        if not payload.get("transcript_path") and not sid:
+            payload["transcript_path"] = newest_transcript_for_cwd(payload["cwd"])
+        if not payload.get("session_id") and payload.get("transcript_path"):
+            # transcripts are named <session_id>.jsonl
+            payload["session_id"] = os.path.splitext(
+                os.path.basename(payload["transcript_path"]))[0]
+
+    cfg["_window"] = detect_window(cfg, payload)
 
     if mode == "stop":
         mode_stop(payload, cfg, root)
@@ -692,14 +1072,6 @@ def main():
     elif mode == "sessionstart":
         mode_sessionstart(payload, cfg, root)
     elif mode == "dump":
-        if not payload.get("cwd"):
-            payload["cwd"] = os.getcwd()
-        if not payload.get("transcript_path"):
-            payload["transcript_path"] = newest_transcript_for_cwd(payload["cwd"])
-        if not payload.get("session_id") and payload.get("transcript_path"):
-            # transcripts are named <session_id>.jsonl
-            payload["session_id"] = os.path.splitext(
-                os.path.basename(payload["transcript_path"]))[0]
         path, tokens = write_handoff(payload, cfg, "manual")
         print(path)
         print("context_tokens=%d" % tokens)

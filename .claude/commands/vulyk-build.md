@@ -1,30 +1,92 @@
 ---
-description: Execute approved stories in waves of cascade-routed workers, one commit per story
-argument-hint: [spec slug or story id; defaults to newest approved plan]
+description: Build a planned spec to a council verdict - solo at Tier 1-2 (the Queen builds, one reviewer per round), hive at Tier 3-4 (workers in waves through the Workflow driver)
+argument-hint: [spec slug; defaults to the newest briefed or approved spec with no branch yet]
 ---
 
-Execute the approved plan: "$ARGUMENTS" (default: most recent plan in `docs/specs/` marked approved).
+Build: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md carries `**Briefed:**`
+or `**Approved:**` and no `**Branch:**`).
 
-1. **Load the plan.** Refuse politely if no approval marker - planning and building are separate decisions by design.
+plan.md's `**Tier:**` picks the path: Tier 1-2 solo, Tier 3-4 hive. Every `cycle.sh` verb prints one
+JSON object as its last stdout line; decide from its `ok`, `next` and `status`, never from prose. Bash
+calls that run `advance` or `close-story` carry `timeout: 600000`. After each call print one line: the
+verb, `advance`'s `steps`, and `next`.
 
-2. **Check the waves.** Run `bash scripts/wave-check.sh docs/specs/<slug>` and show its output. A collision, order violation or dangling blocker is a plan defect: fix the story files (merge, split, or re-wave) before dispatching anything. Disjoint `## Files` within a wave is the precondition for parallel dispatch - two concurrent workers on one file silently overwrite each other.
+## Solo (Tier 1-2)
 
-3. **Dispatch by wave, one message per wave.** Launch every story of the current wave as parallel worker calls **in a single message** - that, and nothing else, is what makes them actually run concurrently; one call per message is a serial build wearing parallel clothes. Each story goes to its worker (`worker-code`, then `worker-test` where the story requires tests) with EXACTLY: the story file, its map slice pointer, the relevant `.claude/rules/` paths. Nothing more - scoped context is the law. Cap: 4 concurrent workers; a bigger wave dispatches in slices.
+No driver, no clerk, no court. Loop:
 
-4. **Close each story as its worker returns** - do not wait for the whole wave:
-   1. Read the return report (`STATUS`/`FILES`/`TESTS`/...). If a worker returned prose instead of the contract, take what it did as unverified: run the story's verification yourself via a quiet command before trusting it.
-   2. `bash scripts/scope-check.sh <story-file>` - with per-story commits the default working-tree range is exactly this story's diff, so the numbers are finally per-story, not per-pileup.
-   3. Run the story's `## Verification` command (quiet variant). Red -> back to the worker path, never patched by your hands.
-   4. Commit: `git add` the story's declared files (plus the story file itself) and commit as `story(<slug>-NN): <title>`. **One story, one commit** - it is the rollback point and the review unit. Out-of-scope files flagged by scope-check are a decision, not a default: leave them uncommitted and resolve (amend the story, or descope the change) before they ride along.
-   5. Update the story's `status:` line.
+1. `bash scripts/cycle.sh advance docs/specs/<slug>`. It runs every mechanical step (branch,
+   open-round, judge, the repair story) up to the next thing only an agent can do, and names it `next`.
+2. `build:<W>`: take `status.wave_stories` in order. For each, implement it yourself (its `## Files`
+   only; targeted checks while working), add `## Implementation notes`, set `returned: DONE`, and run
+   `bash scripts/cycle.sh close-story <file> --commit`. On exit 4, read the error, fix, rerun; after
+   three failed reruns write `## Findings` and stop for the owner. A repair story (`# Repair round <n>`)
+   is built the same way; its `## Findings` are the conditions to meet. Back to 1.
+3. `dispatch:review`: dispatch `lead-review` with the Agent tool, no model parameter:
+   `Review <slug>, round <round>. Spec: <spec>. Branch <branch> at <head>. Report: .vulyk/reports/<slug>/round-<round>/review.attempt-<k>.md`
+   with k = `status.seat_attempt.review`; from round 2 add `Since: <since>. Previous round:
+   <spec>/council/round-<round-1>.` Then `bash scripts/cycle.sh advance docs/specs/<slug> --ingest`.
+   If `next` is still `dispatch:review`, the report was rejected: dispatch once more with the
+   `rejected` entry's `error` appended, and `--ingest` again. Then act on the new `next`.
+4. Any other `next` is terminal (below).
 
-5. **Repair has a ceiling: two rounds per story.**
-   - `NEEDS_CONTEXT` -> the story was defective. Fix the story file (or answer the question), then send a **fresh** worker. This round counts against the plan, not the worker.
-   - `WALL` or red verification -> send ONE fresh worker with `## Findings` attached and the repair stated as a condition to satisfy ("make X pass with Y preserved"), not as instructions to follow. Never re-dispatch the identical prompt hoping for luck.
-   - Second failure -> stop the story: mark it `blocked`, and either re-plan it or escalate the design question to `lead-architect`. A third identical attempt is a token bonfire.
+## Hive (Tier 3-4)
 
-6. **Descoping is recorded, never silent.** If you narrow, split or drop a story mid-build, append one line to `## Descoped` in `plan.md`: what was cut, why, and what evidence the build produced. The human sees the plan they approved; a story that quietly shrank is a requirement that quietly vanished.
+1. Floor first, for both launches below: `bash scripts/top-model.sh --floor`. Exit 1 means the hive would dispatch
+   a model below the floor (ADR-015), the clerk on an old Claude Code included: print its `below floor` lines and
+   the fix they name (`claude update`, or the pin), and stop, with no journal line and no launch. Then resolve
+   `top_model="$(bash scripts/top-model.sh)"`; `second_model`, the pairing
+   `bash scripts/top-model.sh --explain` prints (opus beside Fable, sonnet beside Opus) unless plan.md's
+   Tier 4 line names another; `stamp="$(openssl rand -hex 8 2>/dev/null || python -c 'import secrets; print(secrets.token_hex(8))')"`.
+2. Journal and print the line that hands the tree to the loop: `bash scripts/journal.sh
+   docs/specs/<slug> 03-building "launching the hive" "the loop holds the working tree of vulyk/<slug>; to edit, run /vulyk-pause <slug>"`.
+3. Call the Workflow tool with `scriptPath: ".claude/workflows/vulyk-cycle.js"` (never `name:`, which
+   its permission handler rejects) and `args: {spec: "docs/specs/<slug>", stamp, top_model,
+   second_model}`. The driver claims the spec itself; run no `claim` first, and nothing else while it
+   runs. If the call itself throws, run `bash scripts/telemetry.sh record driver_refused 1 0 --spec
+   <slug> --ref driver:<slug>:$(date -u +%Y-%m-%d)`, print the error and stop.
+4. Wake-up: read the returned object, the `journal.md` lines since launch and the newest round's files
+   under `docs/specs/<slug>/council/`; never the run transcript. The run's printed `totalTokens` sums
+   final contexts and is not spend; `python scripts/token-report.py . --spec <slug>` measures spend.
+   - `stop` with a `file` (a story missed twice): set that story's `status: blocked`, append the error
+     under `## Findings`, dispatch `lead-architect` (`model: <top_model>`) with the story and both
+     failures, and stop.
+   - `stop.verb` `claim`: another driver holds the spec. Run the release command the error names only
+     if that driver is known dead.
+   - Any other `stop`: print `stop.error` and the journal tail, and stop. No `stop`: see Terminal.
 
-7. **Track lean.** You hold the plan, the wave number and the status lines - not the diffs, not the test output. Anything longer than a return report gets re-read from disk when needed.
+Without the Workflow tool, run the solo loop from this session with the stamp, but agents do the work:
+- Begin with `advance --stamp <S> --claim`; every later call carries `--stamp <S>`; every exit runs
+  `bash scripts/cycle.sh release docs/specs/<slug> <S>`.
+- `build:<W>`: one message dispatching each `wave_stories` entry to its `worker` with `model: <model>`
+  (`<top_model>` on its second dispatch): `Your story: <file>. Stamp: <S>. Your last step is bash
+  scripts/cycle.sh close-story <file> --commit --stamp <S>.` Then `advance --stamp <S>`. A story still
+  listed is a miss; a second miss is handled as a `stop` with a `file`.
+- `dispatch:<seats>`: one message, every seat, each told to write its report to
+  `.vulyk/reports/<slug>/round-<round>/<seat>.attempt-<k>.md`, k from `status.seat_attempt`. `opus` or
+  `haiku`: `council-<seat>` with `Council round <round> for <slug>, seat <seat>. COURT: <court>.
+  Report: <path>.` and nothing more (never `round_dir`). `review`: `lead-review` as in solo; at Tier 4
+  two dispatches, `model: <top_model>` writing `review-top.attempt-<k>.md` and `model: <second_model>`
+  writing `review-second.attempt-<k>.md`, the second told to probe concurrency, security and migration
+  safety. Then `advance --stamp <S> --ingest`. A seat still listed is re-dispatched once with its
+  `rejected` error; one needing a third dispatch in a round stops the loop.
 
-8. **Close the build.** When all stories are done or blocked: summarize per-story commits and statuses, then run the project's full verification once **without flooding your context** - dispatch it to a worker or pipe through `tail -30`; you need the verdict and the names of what failed, not the log. Recommend `/vulyk-review` (mandatory for Tier 3-4). Suggest `drone-docs` dispatch for map/wiki updates after the review passes.
+## Terminal
+
+- `green`: print the round count and the newest `**Council:**` line, then ask the owner once with
+  `AskUserQuestion`, in the owner's language: «<slug>: council GREEN, round <n>. Выпускаем?», the yes
+  option first and marked recommended. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
+  this session. No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line. Push
+  and publish stay the owner's: ship prints them and never runs them.
+- `escalated`: print plan.md's `## Needs a human` verbatim. The owner chooses: `bash
+  scripts/human-check.sh docs/specs/<slug> ACCEPTED "<note>"`, `bash scripts/cycle.sh reopen
+  docs/specs/<slug> "<decision>"`, or leaving it open.
+- `paused`: stop; `/vulyk-resume <slug>` continues. `shipped`: nothing to build. `briefed`: point at
+  `/vulyk-plan`.
+- `manual:<ids>` (or a driver `stop.verb` `manual`): a story waits on a hand step. Do it (or ask the
+  owner), run `bash scripts/cycle.sh manual-done docs/specs/<slug> <id> "<note>"` per id, then build again.
+- `close-story:<file>`: a story from before 0.18 still says `status: in-progress`. Set it to `todo`
+  if its work is unfinished, or run `bash scripts/cycle.sh close-story <file> --commit` if it is done,
+  then build again.
+- `ok:false` from any verb: print `failed` and `error`, run `bash scripts/journal.sh docs/specs/<slug>
+  03-building "<failed> exit <exit>" "<error>, stopped for a human"`, and stop.

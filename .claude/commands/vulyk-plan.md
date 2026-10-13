@@ -1,15 +1,58 @@
 ---
-description: Queen planning mode - brief, recon, decompose into stories, trace, request approval
-argument-hint: <goal description>
+description: Queen planning mode - deliverable check, tier, brief, recon, grill, stories, trace; Tier 1 builds straight through, Tier 2-4 stop for approval (--go opts out; a document deliverable ends at the report)
+argument-hint: <goal description> [--go] [--study]
 ---
 
-Enter Queen mode for: "$ARGUMENTS"
+Plan: "$ARGUMENTS"
 
-1. **Classify the tier** per the routing matrix in CLAUDE.md. Announce it. Tier 0-1: skip ceremony - say so and either do it (Tier 0) or write a single story and stop for approval (Tier 1). The ceremony floor: brief.md and `## Requirements` quotes exist at Tier 2+; trace-check runs whenever stories exist; Tier 0-1 gets none of it.
-2. **Brief.** Write `docs/specs/<slug>/brief.md`: the request VERBATIM as a `> ` blockquote - the user's words, not your restatement - piped through `bash scripts/redact.sh` (briefs are committed; secrets are not), with the date. Everything downstream traces back to this file; a paraphrase here poisons every gate built on it.
-3. **Briefing questions.** Before asking the human anything, look it up - the repo, `memory/`, the brief itself answer most questions. Ask only what is irreversible, costly, a vendor choice, or a business rule no code can reveal. One question at a time, each with a recommended default so silence has a safe meaning. Append answers to brief.md under `## Answers` (also verbatim).
-4. **Recon, not reading.** Check `memory/memory.md` and relevant `memory/map/` slices first. Dispatch `drone-scout` (parallel, up to 4) only for territory the map does not cover or marks stale. You do not open source files yourself.
-5. **Plan.** For Tier 2: draft the plan inline. For Tier 3-4: delegate synthesis to `queen-planner` with the brief, scout reports and map pointers attached; for Tier 4 also request a `lead-architect` consult on the central design fork before stories are finalized. Plan file follows `templates/plan.md` - contracts between concurrent stories are decided here, in the one context that has seen the whole plan.
-6. **Stories.** Ensure `docs/specs/<slug>/` contains plan.md plus one story file per unit of work (template: `templates/story.md`). Each story: verbatim `## Requirements` quotes from brief.md, files to touch, acceptance criteria, verification command, map slice pointer, model tier of its worker, and its `wave:`/`blocked_by:` lines. Wave rule: stories in one wave run concurrently, so their `## Files` must be disjoint - when two stories need the same file, either merge them, move the shared file into its own earlier story, or push one to a later wave via `blocked_by`.
-7. **Check waves and trace.** Run `bash scripts/wave-check.sh docs/specs/<slug>` and `bash scripts/trace-check.sh docs/specs/<slug>` - both deterministic, both free. Wave-check catches the collision that would silently eat a worker's diff mid-build; trace-check catches the story nobody asked for and the requirement no story carries. Fix findings in the story files now; a plan approved with either defect ships it.
-8. **Stop for approval.** Present: tier, story list with one-line summaries grouped by wave, open assumptions (Law 1), estimated token posture (how many worker dispatches, where top-model tokens will be spent), and both check verdicts - including which brief lines no story covers, because deciding "that line is context, not a requirement" belongs to the human, not the planner. Do NOT proceed to implementation - that is /vulyk-build, run after human approval.
+0. Deliverable first. Decide what the owner gets back: changed code or a document. A request to
+   validate, audit, monitor, assess, research, compare, or "make me a spec / a plan / a report" is study
+   work, and so is `--study`. Study work never cuts a story, dispatches a worker or opens a council:
+   write `docs/specs/<slug>/brief.md` (step 2), recon as in step 3 with at most two scouts, and write
+   `docs/specs/<slug>/report.md`: findings with `file:line` evidence, options with the recommended one
+   first and why, and the candidate stories the owner could approve next time (a list, not story
+   files). Commit it as `study(<slug>): <title>` and stop. The owner turns a report into code by running
+   `/vulyk-plan` again, in their own words. When both readings are genuinely possible, ask one question.
+1. Tier. Classify per the constitution's routing table and announce it with a one-line reason. Tier 0:
+   do it now, no paperwork. Tier 1-4 continue. The floor: `brief.md` with `## Asks` at Tier 1+,
+   verbatim `## Requirements` quotes in stories at Tier 2+, `wave-check.sh` and `trace-check.sh`
+   whenever stories exist.
+2. Brief. Write `docs/specs/<slug>/brief.md`: the request verbatim as a `> ` blockquote, piped through
+   `bash scripts/redact.sh`, with the date. A bug report's error text, stack trace and reproduction go
+   in verbatim too. Everything downstream traces back to this file, so never paraphrase it.
+3. Recon. Read `memory/memory.md` and the relevant `memory/map/` slices first. A targeted question about
+   a file or two: read them yourself. Dispatch `drone-scout` only for broad or unmapped territory:
+   Tier 1 none (one if the location is unknown), Tier 2 at most one, Tier 3 at most two, Tier 4 at most
+   four, in parallel.
+4. Grill, Tier 2-4. Follow `templates/grill.md`; it owns every rule of the round. Its output lands in
+   `brief.md` as `## Answers` then `## Asks`. Tier 1 skips it: `## Asks` is the task phrase as item 1.
+5. Plan. Tier 1-2: write plan.md yourself from `templates/plan.md`. Tier 3-4: dispatch `queen-planner`
+   with the brief, scout reports and map pointers; Tier 4 also consults `lead-architect` on the central
+   design fork, and both Tier 4 dispatches carry `model: <top_model>` (`bash scripts/top-model.sh`).
+   Tier 3 passes no model parameter.
+6. Stories, from `templates/story.md`, each with `model: sonnet`: `opus` only for a long-horizon or
+   judgment-heavy story, with the reason in one line (ADR-015). At Tier 1-2 you build them yourself in
+   order, so cut by review unit: Tier 1 exactly one story, Tier 2 one to three. At Tier 3-4 each story
+   is one worker's job, and it earns its own worker only when it runs in parallel with its wave-mates
+   on disjoint `## Files`; fold the rest together.
+7. Check. `bash scripts/wave-check.sh docs/specs/<slug>` and `bash scripts/trace-check.sh
+   docs/specs/<slug>`. Fix what they report in the story files now, including any `## Verification`
+   segment that is not a `## Commands` cell.
+8. Coverage, Tier 3-4. Dispatch `drone-coverage` with exactly two paths, brief.md and plan.md. An absent
+   or partial ask rides forward as a `## Assumptions` line in plan.md, never silently.
+9. Close the plan.
+   - Tier 1 runs straight through: `bash scripts/cycle.sh briefed docs/specs/<slug> --commit --mode
+     mini-brief`, then `/vulyk-build <slug>` in this session.
+   - Tier 2-4 stop for approval by default. Show the plan in the owner's language: the tier, the stories
+     by wave (one line each), the `## Assumptions`, and what the build will spend (Tier 2: you build,
+     one reviewer per round; Tier 3-4: the workers and seats). Wait. On approval, fill `**Approved:**`
+     with the owner and the date, run `bash scripts/journal.sh docs/specs/<slug> 02-approved "approved
+     by <owner>" branch`, and commit the spec directory (`vulyk(<slug>): approved`). A "no" or a change
+     request reopens steps 5-7 once; a second one is a new brief.
+   - Straight-through opt-in, only with `--go` or when the grill's last answer asked for it: instead of
+     waiting, `bash scripts/cycle.sh briefed docs/specs/<slug> --commit` (`--mode assumed` in
+     no-question mode) and continue.
+10. Launch.
+   - Tier 2 after approval: tell the owner to `/clear` and run `/vulyk-build <slug>` in a fresh
+     session. The build needs the files, not this planning conversation. Stop here.
+   - Tier 2 with `--go`, and Tier 3-4: run `/vulyk-build <slug>` now.

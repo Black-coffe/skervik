@@ -1,14 +1,39 @@
 ---
-description: Adversarial review gate - lead-review hunts for reasons NOT to merge
-argument-hint: [spec slug, branch, or file scope; defaults to working tree changes]
+description: One council round on demand - advance opens it, the required seats are dispatched, advance --ingest records and judges
+argument-hint: [spec slug; defaults to the spec on the current branch]
 ---
 
-Run the merge gate on: "$ARGUMENTS" (default: current working tree changes against the base branch).
+Run one council round on: "$ARGUMENTS" (default: the spec whose `**Branch:**` matches the current
+branch). Every call below that runs `advance` carries `timeout: 600000`.
 
-1. **Run the scope gate first - it costs nothing and it decides what to look at.** For each story in scope: `bash scripts/scope-check.sh <story-file>`. It compares the story's `## Files` block against the real diff and appends the numbers to `memory/stats/scope.jsonl`. Files it flags go into the review packet as the first thing `lead-review` reads: an out-of-scope file is either a story that was written wrong or a worker that went wide, and knowing which is worth more than any single bug found later. Report the two numbers to the human alongside the verdict.
-2. Assemble the review packet: the diff, the story/plan files it implements, and pointers to `docs/wiki/` notes + ADRs for the touched modules.
-3. Dispatch `lead-review` with the packet. For Tier 4 changes, dispatch a SECOND reviewer instructed to attack the first one's likely blind spots (concurrency, security, data migration safety). Make it a **different model** - two copies of one model are blind in the same places, and adversarial framing does not fix that. `claude-fable-5` is the intended pairing; see `docs/model-cascade.md` for the cost and data-retention tradeoff before enabling it.
-4. On `BLOCK`: convert every finding worth acting on - not only the criticals - into a fix story in the same spec directory and route back through `/vulyk-build`. Do not hand-patch findings in the main session, whatever their size: fixes stay in the cascade (Law 5), each in its own story with its own commit.
-5. On `PASS`: present the verdict and the full finding list - `lead-review` reports everything and ranks it; deciding what to act on is your job, not its. After merge, dispatch `drone-docs` with the diff to refresh map and wiki, and remind about `scripts/git-hooks/post-merge` staleness flags.
+1. Claim and advance. `stamp="$(openssl rand -hex 8 2>/dev/null || python -c 'import secrets;
+   print(secrets.token_hex(8))')"`, then `bash scripts/cycle.sh advance docs/specs/<slug> --stamp
+   $stamp --claim`. `ok:false` with `held by`: another driver holds the spec; print its `error` and
+   stop. Otherwise act on `next`:
+   - `dispatch:<seats>`: go to step 2.
+   - `green`: the newest round is green and current. If the owner still wants a round, run `bash
+     scripts/cycle.sh open-round docs/specs/<slug> --commit --stamp $stamp` (the tier's ceiling still
+     counts it; exit 6 means it is reached), then `advance --stamp $stamp` again.
+   - `build:<W>`: stories are open, or the last round was RED and `advance` has cut the repair story.
+     Release and point at `/vulyk-build`.
+   - `escalated`, `paused`, `shipped`, `briefed`, or any `ok:false`: release and report it as
+     `/vulyk-build`'s Terminal section does.
+2. Dispatch exactly the seats `next` names, in one message, as `/vulyk-build` describes: each writes to
+   `.vulyk/reports/<slug>/round-<round>/<seat>.attempt-<k>.md` with k from `status.seat_attempt`;
+   blind seats get slug, round, `court` and the report path only, never `round_dir`; `lead-review` gets
+   the spec, branch, head, report path, and from round 2 `since` and the previous round's directory,
+   with no model parameter at Tier 1-3 and two reviewers (`review-top`, `review-second`) at Tier 4.
+3. Record and judge: `bash scripts/cycle.sh advance docs/specs/<slug> --stamp $stamp --ingest`. A seat
+   still listed in `next` was rejected: re-dispatch it once with its `rejected` error appended, then
+   `--ingest` again.
+4. Release, whatever happened: `bash scripts/cycle.sh release docs/specs/<slug> $stamp`. Print the
+   newest `**Council:**` line of plan.md and act on `next`:
+   - `green`: ask the owner once with `AskUserQuestion`, in the owner's language: «<slug>: council
+     GREEN, round <n>. Выпускаем?», yes first and recommended. Yes: run `vulyk-ship` with the Skill
+     tool (args `<slug>`). No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line.
+   - `build:<W>`: the round was RED and the repair story is written; it is built through `/vulyk-build`,
+     never by hand in this command.
+   - `escalated`: print `## Needs a human` from plan.md verbatim. The owner chooses: `human-check.sh
+     ACCEPTED`, `cycle.sh reopen "<decision>"`, or leaving the spec open.
 
-The gate's verdict is advice to the human, not authority over them - but overriding a BLOCK should be a conscious, stated decision.
+The council's verdict is what this command produces; there is no stop for the owner inside it.

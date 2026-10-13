@@ -4,14 +4,32 @@
     "SessionStart": [
       {
         "hooks": [
-          { "type": "command", "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-brief.sh\"" }
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-brief.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/vulyk-update-check.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/top-model-brief.sh\""
+          },
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defects-inject.sh\" reset"
+          }
         ]
       }
     ],
     "SessionEnd": [
       {
         "hooks": [
-          { "type": "command", "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-end-learnings.sh\"" }
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/anomaly-scan.sh\""
+          }
         ]
       }
     ],
@@ -19,16 +37,52 @@
       {
         "matcher": "Skill",
         "hooks": [
-          { "type": "command", "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-usage-counter.sh\"" }
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-usage-counter.sh\""
+          }
         ]
       }
     ],
     "PreCompact": [
       {
         "hooks": [
-          { "type": "command", "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-guard.sh\"" }
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-guard.sh\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defect-intake.sh\""
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defects-inject.sh\""
+          }
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/cycle.sh:*)",
+      "Bash(bash scripts/journal.sh:*)"
+    ]
+  },
+  "enabledPlugins": {
+    "cc-plugin-you-should-know@builtin": true
   }
 }

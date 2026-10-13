@@ -1,20 +1,42 @@
 #!/usr/bin/env bash
-# VULYK wave gate - deterministic pre-dispatch check for parallel builds.
+# VULYK story gate - deterministic pre-dispatch check over a whole spec.
 #
 # Two stories dispatched concurrently that both touch one file is the silent-overwrite
 # failure mode of every parallel agent setup: the second write wins, nobody reports it,
 # and the diff looks plausible. This script makes that collision visible BEFORE the
-# wave is dispatched. Like scope-check.sh it is deterministic, model-free and free.
+# wave is dispatched - and, since v0.8.0, two more defects that only look harmless: a
+# story naming a path the tree does not have, and a story whose verification command
+# cannot fail for the files it touches. Like scope-check.sh it is deterministic,
+# model-free and free.
 #
 #   Usage: scripts/wave-check.sh <spec-dir>
 #          scripts/wave-check.sh docs/specs/oauth
 #
 # For every story file in the spec dir (frontmatter `story:` present, plan.md excluded)
-# it reads `wave:`, `blocked_by:` and the `## Files` block, then reports:
+# it reads `wave:`, `blocked_by:`, the `## Files` block and the `## Verification` block,
+# then reports:
 #   collision  - two stories in the SAME wave declare overlapping paths
 #   order      - a story's wave is not strictly later than each of its blockers' waves
 #   dangling   - a `blocked_by:` id that matches no story file in the spec
+#   manual     - a `blocked_by: manual:<id>` whose id is not one plain file name (0.19): a hand
+#                step, satisfied by <spec>/manual/<id>; every declared step is listed at the end
 #   no-files   - a story with an empty `## Files` block (unmeasurable, uncollidable)
+#   missing    - a declared path whose own parent directory does not exist: a typo, or a
+#                plan that has not noticed it must create that directory first
+#   empty-glob - a declared glob matching nothing in the tree right now
+#   no-verify  - a story with an empty `## Verification` block: its green means nothing
+#   verify-gap - the verification command names paths and none of them intersect this
+#                story's `## Files` - the command may not be able to fail for this work
+#   repeat     - a `repeat:` line under `## Verification` that is not a positive integer
+#   verify-cell - a `## Verification` segment that is not a `## Commands` cell of the
+#                constitution (CLAUDE.vulyk.md if present, else CLAUDE.md): close-story
+#                refuses to run it, so the gap surfaces here at plan time, not mid-build
+#
+# Limits, stated rather than hidden: a verification command that names NO path (a whole
+# suite) cannot be judged here, and a path that resolves but is simply the wrong file
+# passes. `missing` is a question about existence, never about correctness. A command
+# token counts as a path only when the tree agrees - it exists, or it is a glob - so a
+# package name like `@scope/pkg`, a branch name or a URL is not mistaken for one.
 #
 # Overlap matching mirrors scope-check.sh: exact path, glob, and directory prefix
 # ("src/auth/" covers everything beneath it). Globs are compared both ways.
@@ -23,12 +45,31 @@
 # job at plan time and the human's at approval.
 
 set -u
+shopt -s nullglob globstar 2>/dev/null || true
+
+# lib.sh carries the one ## Commands parser (command_cell_exists) and the one constitution
+# lookup close-story uses - the verify-cell check below must agree with it byte for byte.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib.sh
+. "$HERE/lib.sh"
 
 SPEC="${1:-}"
 if [ -z "$SPEC" ] || [ ! -d "$SPEC" ]; then
   echo "wave-check: usage: $0 <spec-dir>   (e.g. docs/specs/oauth)" >&2
   exit 0
 fi
+
+# Declared paths are repo-relative, so they resolve from the repo root. Without a repo
+# there is nothing to resolve them against - say so once, and keep every other check.
+SPEC_ABS="$(cd "$SPEC" && pwd)"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+RESOLVE=1
+if [ -n "$ROOT" ] && cd "$ROOT" 2>/dev/null; then
+  case "$SPEC_ABS" in "$ROOT"/*) SPEC="${SPEC_ABS#"$ROOT"/}" ;; esac
+else
+  RESOLVE=0
+fi
+CONSTITUTION=""; [ "$RESOLVE" -eq 1 ] && CONSTITUTION="$(constitution_file "$ROOT")"
 
 # --- gather stories ----------------------------------------------------------
 STORIES=""
@@ -47,6 +88,12 @@ fm() { # fm <file> <key> - first frontmatter-style "key: value", value printed r
   awk -v k="$2" -F': *' '$1 == k { sub(/[[:space:]]*#.*$/, "", $2); print $2; exit }' "$1"
 }
 
+blockers_of() { # blockers_of <file> - the `blocked_by:` entries, one per line. Not fm: its
+  # ': *' split cuts `manual:<id>` at the colon (0.19, the same rule as cycle.sh's blockers_of).
+  awk '/^blocked_by:/ { sub(/^blocked_by:/, ""); sub(/#.*$/, ""); gsub(/[][\r]/, ""); gsub(/,/, "\n"); print; exit }' "$1" \
+    | sed 's/^ *//; s/ *$//' | grep -v '^$' || true
+}
+
 files_of() { # the `## Files` block, comments skipped (same parser as scope-check.sh)
   awk '
     /^##[[:space:]]+Files[[:space:]]*$/ { inblock=1; next }
@@ -54,6 +101,16 @@ files_of() { # the `## Files` block, comments skipped (same parser as scope-chec
     inblock && /^<!--/                  { incomment=1 }
     incomment                           { if (/-->/) incomment=0; next }
     inblock && /^-[[:space:]]+/         { sub(/^-[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); if ($0 != "") print }
+  ' "$1"
+}
+
+verify_of() { # the `## Verification` block, comments and backticks stripped
+  awk '
+    /^##[[:space:]]+Verification[[:space:]]*$/ { inblock=1; next }
+    /^##[[:space:]]/                           { inblock=0 }
+    inblock && /^<!--/                         { incomment=1 }
+    incomment                                  { if (/-->/) incomment=0; next }
+    inblock && NF                              { gsub(/`/, ""); sub(/^[[:space:]]+/, ""); sub(/[[:space:]]+$/, ""); if ($0 != "") print }
   ' "$1"
 }
 
@@ -69,18 +126,127 @@ overlap() { # overlap <path-or-glob> <path-or-glob> - 0 if the two can hit one f
   return 1
 }
 
+path_status() { # path_status <declared-path> - ok | new | missing | empty-glob
+  local p="$1"
+  case "$p" in
+    */)
+      [ -d "$p" ] && { echo ok; return; }
+      echo missing; return ;;
+    *[*?[]*)
+      local m
+      # shellcheck disable=SC2206
+      m=( $p )
+      [ "${#m[@]}" -gt 0 ] && { echo ok; return; }
+      echo empty-glob; return ;;
+  esac
+  [ -e "$p" ] && { echo ok; return; }
+  [ -d "$(dirname "$p")" ] && { echo new; return; }
+  echo missing
+}
+
 PROBLEMS=0
+MANUAL=""
 report() { PROBLEMS=$((PROBLEMS+1)); echo "  ! $1"; }
 
 # --- per-story sanity --------------------------------------------------------
 for f in $STORIES; do
   id="$(fm "$f" story)"
   [ -n "$id" ] || id="$(basename "$f" .md)"
-  [ -n "$(files_of "$f")" ] || report "no-files:  $id declares nothing under '## Files' - neither scope nor collisions can be checked"
+  declared="$(files_of "$f")"
+  [ -n "$declared" ] || report "no-files:  $id declares nothing under '## Files' - neither scope nor collisions can be checked"
+
+  # 1. do the declared paths resolve against the tree?
+  if [ "$RESOLVE" -eq 1 ] && [ -n "$declared" ]; then
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      case "$(path_status "$p")" in
+        missing)
+          report "missing:   $id names '$p' and its parent directory does not exist - a typo, or a directory no story creates" ;;
+        empty-glob)
+          report "empty-glob: $id names '$p', which matches nothing in the tree - the scope gate will measure an empty set" ;;
+      esac
+    done <<PATHS_EOF
+$declared
+PATHS_EOF
+  fi
+
+  # 2. can this story's verification turn red for this story?
+  verify="$(verify_of "$f")"
+  if [ -z "$verify" ]; then
+    report "no-verify: $id names no command under '## Verification' - nothing about it can turn red"
+  else
+    reps="$(printf '%s\n' "$verify" | awk -F': *' '$1 ~ /^repeat$/ { gsub(/[[:space:]]/, "", $2); print $2; exit }')"
+    if [ -n "$reps" ]; then
+      case "$reps" in
+        *[!0-9]*) report "repeat:    $id declares 'repeat: $reps' - must be a positive integer (how many times the command runs)" ;;
+        0)        report "repeat:    $id declares 'repeat: 0' - a command run zero times verifies nothing" ;;
+      esac
+    fi
+    if [ -n "$declared" ]; then
+      # A token is a PATH only if the tree agrees: it exists, or it is a glob. Plenty of
+      # command tokens carry a slash and mean nothing of the sort - `@scope/package`,
+      # `feat/branch`, a URL - and treating those as paths reported every story in a
+      # pnpm/npm monorepo as a verify-gap (found by the S2.6.5a battle test, 2026-08-18).
+      cmd_paths=""
+      for tok in $(printf '%s\n' "$verify" | grep -v '^repeat:' | tr ' \t' '\n\n' | grep '/' | grep -v '^-' | tr -d "\"'" | grep -v '^$'); do
+        case "$tok" in
+          *[*?[]*) cmd_paths="${cmd_paths}${tok}
+" ;;
+          *) [ -e "$tok" ] && cmd_paths="${cmd_paths}${tok}
+" ;;
+        esac
+      done
+      if [ -n "$cmd_paths" ]; then
+        hit=0
+        while IFS= read -r cp; do
+          [ -z "$cp" ] && continue
+          while IFS= read -r dp; do
+            [ -z "$dp" ] && continue
+            if overlap "$cp" "$dp"; then hit=1; break; fi
+          done <<DECL_EOF
+$declared
+DECL_EOF
+          [ "$hit" -eq 1 ] && break
+        done <<CMDP_EOF
+$cmd_paths
+CMDP_EOF
+        [ "$hit" -eq 0 ] && report "verify-gap: $id's verification names paths that do not intersect its '## Files' - check the command can fail for THIS story (an ignore file or a wrong directory makes green vacuous)"
+      fi
+    fi
+    # 3. will close-story agree to run it? The same rule it applies (R11/C-4, r2m9): a line is
+    #    a cell whole, or every ` && ` segment is one; "none — reviewed by lead-review" runs
+    #    nothing and passes. `repeat:` is not a command.
+    if [ "$RESOLVE" -eq 1 ]; then
+      while IFS= read -r vl; do
+        [ -n "$vl" ] || continue
+        [ "$vl" = "none — reviewed by lead-review" ] && continue
+        command_cell_exists "$CONSTITUTION" "$vl" && continue
+        while IFS= read -r seg; do
+          [ -n "$seg" ] || continue
+          command_cell_exists "$CONSTITUTION" "$seg" \
+            || report "verify-cell: $id's verification '$seg' is not a ## Commands cell of $(basename "$CONSTITUTION") - close-story will refuse to run it"
+        done <<SEG_EOF
+$(verification_segments "$vl")
+SEG_EOF
+      done <<VL_EOF
+$(printf '%s\n' "$verify" | awk -F': *' '$1 !~ /^repeat$/')
+VL_EOF
+    fi
+  fi
 
   wave="$(fm "$f" wave)"; [ -n "$wave" ] || wave=1
-  blockers="$(fm "$f" blocked_by | tr -d '[]' | tr ',' '\n' | sed 's/^ *//; s/ *$//' | grep -v '^$' || true)"
+  blockers="$(blockers_of "$f")"
   for b in $blockers; do
+    case "$b" in
+      manual:*)
+        mid="${b#manual:}"
+        case "$mid" in
+          ''|.*|-*|*/*|*\\*|*..*|*\"*|*\'*)
+            report "manual:    $id is blocked_by '$b' - a manual step id is one plain file name under $SPEC/manual/ (no /, \\, .., quotes, leading . or -)" ;;
+          *) case " $MANUAL " in *" $mid "*) ;; *) MANUAL="${MANUAL:+$MANUAL }$mid" ;; esac ;;
+        esac
+        continue ;;
+    esac
     bf=""
     for g in $STORIES; do
       [ "$(fm "$g" story)" = "$b" ] && { bf="$g"; break; }
@@ -121,11 +287,18 @@ EOF1
 done
 
 N="$(printf '%s' "$STORIES" | grep -c .)"
+# 0.19: the hand steps this spec waits on - the driver stops at each until manual-done records it
+for mid in $MANUAL; do
+  if [ -f "$SPEC/manual/$mid" ]; then mst=done; else mst=pending; fi
+  echo "wave-check: manual step '$mid' ($mst) - record it with: bash scripts/cycle.sh manual-done $SPEC $mid [note]"
+done
+[ "$RESOLVE" -eq 1 ] || echo "wave-check: not a git repo - path resolution skipped; every other check ran."
 if [ "$PROBLEMS" -eq 0 ]; then
-  echo "wave-check: $SPEC - $N stories, waves are dispatchable (no collisions, order holds)"
+  echo "wave-check: $SPEC - $N stories, dispatchable (no collisions, order holds, paths resolve, every story can turn red)"
 else
   echo "wave-check: $SPEC - $N stories, $PROBLEMS problem(s) above."
   echo "  -> Fix at plan time: merge the colliding stories, split the shared file out,"
-  echo "     or move one story to a later wave. Do NOT dispatch a colliding wave."
+  echo "     move one story to a later wave, correct the path, or name a command that"
+  echo "     actually covers the story's files. Do NOT dispatch a colliding wave."
 fi
 exit 0

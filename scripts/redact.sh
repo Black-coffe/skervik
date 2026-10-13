@@ -3,11 +3,11 @@
 #
 #   Usage: some-writer | scripts/redact.sh > file
 #
-# Masks well-known credential shapes before transcript-derived text is written to
-# disk. Wired into the two writers that persist free text a human once typed or
-# pasted: session-end-learnings.sh (memory/learnings/ - committed to git) and
-# handoff.py (.claude/handoff/ - gitignored, but re-injected into future sessions
-# and routinely shared). The patterns are intentionally loud rather than clever:
+# Masks well-known credential shapes before free text a human once typed or pasted
+# is written to disk: /vulyk-plan's brief.md (committed to git), handoff.py
+# (.claude/handoff/ - gitignored, but re-injected into future sessions and routinely
+# shared), and the free-text notes cycle.sh, human-check.sh, ship-check.sh and
+# acceptance-log.sh write to the ledgers. The patterns are intentionally loud rather than clever:
 # a false positive costs one unreadable line, a false negative costs a rotation.
 #
 # handoff.py mirrors a minimal subset of these patterns as a built-in fallback for
@@ -33,6 +33,15 @@ SED_ARGS=( -E
   -e "s|xox[baprs]-[A-Za-z0-9-]{10,}|$MASK|g"
   -e "s|sk-[A-Za-z0-9_-]{20,}|$MASK|g"
   -e "s|AIza[0-9A-Za-z_-]{35}|$MASK|g"
+  -e "s|[0-9]{8,10}:AA[A-Za-z0-9_-]{33}|$MASK|g"
+  -e "s|glpat-[A-Za-z0-9_-]{20,}|$MASK|g"
+  -e "s|npm_[A-Za-z0-9]{36}|$MASK|g"
+  -e "s|pypi-[A-Za-z0-9_-]{50,}|$MASK|g"
+  -e "s|hf_[A-Za-z0-9]{30,}|$MASK|g"
+  -e "s|gsk_[A-Za-z0-9]{40,}|$MASK|g"
+  -e "s|SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}|$MASK|g"
+  -e "s|[rs]k_live_[A-Za-z0-9]{20,}|$MASK|g"
+  -e "s|hooks\.slack\.com/services/[A-Za-z0-9/_-]{20,}|hooks.slack.com/services/$MASK|g"
   -e "s|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}|$MASK|g"
   -e "s|[Bb]earer[[:space:]]+[A-Za-z0-9._~+/-]{16,}=*|Bearer $MASK|g"
   -e "s#(://)[^/[:space:]:@]+:[^/[:space:]@]+@#\1$MASK@#g"

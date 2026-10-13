@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# SessionStart hook: say which model holds the gate on this account (ADR-012, narrowed to
+# Tier 4 and retries by ADR-013 D3), so the Queen dispatches it without anyone remembering
+# the plan terms.
+#
+# One `[VULYK]` line into context. The resolution itself lives in scripts/top-model.sh -
+# this hook only reads it out and adds the one thing the resolver cannot know: whether the
+# Queen's own session is pinned to hers (always opus), and the model floor (ADR-015). It never
+# writes anything. Pinning is a
+# decision (`scripts/top-model.sh --apply`), and a hook that edits settings behind your back
+# is the failure mode this framework spends its update check preventing.
+#
+# Fails open: no resolver, no bash, an odd profile - silence, exit 0.
+#
+#   VULYK_TOP_MODEL_BRIEF=0   disable the line
+set -uo pipefail
+
+[ "${VULYK_TOP_MODEL_BRIEF:-1}" = "0" ] && exit 0
+ROOT="${CLAUDE_PROJECT_DIR:-$(pwd)}"
+RESOLVER="$ROOT/scripts/top-model.sh"
+[ -f "$RESOLVER" ] || exit 0
+
+# Two resolver runs, not four: `--explain` carries the alias and the Queen's pin as well.
+EXPLAIN="$(bash "$RESOLVER" --explain 2>/dev/null)"
+MODEL="$(printf '%s\n' "$EXPLAIN" | sed -n 's/^top model : \([^ ]*\).*/\1/p' | head -1)"
+[ -n "$MODEL" ] || exit 0
+PLAN="$(printf '%s\n' "$EXPLAIN" | sed -n 's/^plan      : //p' | head -1)"
+SECOND="$(printf '%s\n' "$EXPLAIN" | sed -n 's/^second reviewer (Tier 4): //p' | head -1)"
+BY="$(printf '%s\n' "$EXPLAIN" | sed -n 's/^decided by: \([a-z]*\) - .*/\1/p' | head -1)"
+
+NAME="$(printf '%s\n' "$EXPLAIN" | sed -n 's/^top model : [^(]*(\(.*\))$/\1/p' | head -1)"
+[ -n "$NAME" ] || NAME="$MODEL"
+
+# The model floor (ADR-015): what is configured here, then what really ran below it this week -
+# telemetry's model_below_floor rows, read off the transcripts' own model IDs.
+FLOOR="$(bash "$RESOLVER" --floor 2>/dev/null)"
+FLOOR_LINE="$(printf '%s\n' "$FLOOR" | tail -1)"
+HITS="$(printf '%s\n' "$FLOOR" | grep '^below floor' | head -3 | tr '\n' ';' | sed 's/;$//')"
+[ -n "$HITS" ] && FLOOR_LINE="$FLOOR_LINE: $HITS"
+RAN_BELOW=0
+LOG="$ROOT/memory/stats/anomalies.jsonl"
+if [ -f "$LOG" ]; then
+  SINCE="$(date -u -d '7 days ago' +%Y-%m-%d 2>/dev/null || date -u -v-7d +%Y-%m-%d 2>/dev/null || true)"
+  RAN_BELOW="$(grep '"code":"model_below_floor"' "$LOG" 2>/dev/null \
+    | sed -n 's/.*"ts":"\([0-9-]\{10\}\).*/\1/p' | awk -v s="${SINCE:-0000-00-00}" '$1 >= s' | wc -l | tr -d ' ')"
+fi
+[ "${RAN_BELOW:-0}" -gt 0 ] 2>/dev/null && FLOOR_LINE="$FLOOR_LINE. RAN BELOW THE FLOOR $RAN_BELOW time(s) in 7 days - memory/stats/anomalies.jsonl, code model_below_floor"
+
+if printf '%s\n' "$EXPLAIN" | grep -q '^queen session: pinned opus in '; then
+  SESSION="Queen session pinned to opus."
+else
+  SESSION="Queen session NOT pinned to opus - tell the owner: \`/model opus\` now (cache is cold, the switch is free) and \`bash scripts/top-model.sh --apply\` so the next launch starts there."
+fi
+
+# Workflow driver gate: a hook cannot see which tools the session was launched with, so it
+# makes no claim about the CLI version (a version floor is not the same as the tool being
+# enabled). /vulyk-build's own step 1 decides this in-session from the tool list.
+WORKFLOW="Workflow driver: decided in-session (Tier 3-4: Workflow tool present -> vulyk-cycle.js, else the same advance loop run by the Queen; Tier 1-2 build solo)."
+
+echo "[VULYK] gate model: $MODEL ($NAME) - by ${BY:-plan}, plan ${PLAN:-unknown}. Dispatch model: $MODEL for the Tier 4 lead-review (second reviewer: ${SECOND:-opus}), lead-architect, a Tier 4 queen-planner and a missed story's retry; lead-review at Tier 1-3 and everything else run on their frontmatter (judgment on opus, execution on sonnet, the clerk on haiku). ${FLOOR_LINE:+$FLOOR_LINE. }$SESSION $WORKFLOW Details: bash scripts/top-model.sh --explain"
+exit 0
