@@ -16,6 +16,7 @@
 .claude/commands/vulyk-gc.md
 .claude/commands/vulyk-handoff.md
 .claude/commands/vulyk-map.md
+.claude/commands/vulyk-models.md
 .claude/commands/vulyk-pause.md
 .claude/commands/vulyk-plan.md
 .claude/commands/vulyk-resume.md
@@ -33,8 +34,14 @@
 .claude/hooks/skill-usage-counter.sh
 .claude/hooks/top-model-brief.sh
 .claude/hooks/vulyk-update-check.sh
+.claude/hooks/ysk-offer.sh
+.claude/mods/vulyk-pulse/.claude-plugin/plugin.json
+.claude/mods/vulyk-pulse/hooks/core.test.ts
+.claude/mods/vulyk-pulse/hooks/core.ts
+.claude/mods/vulyk-pulse/hooks/hooks.json
+.claude/mods/vulyk-pulse/hooks/register.tsx
+.claude/mods/vulyk-pulse/types/index.d.ts
 .claude/rules/README.md
-.claude/rules/example-api.md
 .claude/settings.json
 .claude/skills/README.md
 .claude/skills/_meta/insight-harvester/SKILL.md
@@ -57,7 +64,9 @@ scripts/git-hooks/post-merge
 scripts/human-check.sh
 scripts/injection-check.sh
 scripts/journal.sh
+scripts/leak-check.sh
 scripts/lib.sh
+scripts/model-profile.sh
 scripts/redact.sh
 scripts/release-check.sh
 scripts/scope-check.sh
@@ -72,5 +81,6 @@ scripts/wave-check.sh
 templates/adr.md
 templates/grill.md
 templates/plan.md
+templates/rule-example.md
 templates/story.md
 templates/wiki-note.md

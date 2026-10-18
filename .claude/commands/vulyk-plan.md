@@ -9,10 +9,11 @@ Plan: "$ARGUMENTS"
    validate, audit, monitor, assess, research, compare, or "make me a spec / a plan / a report" is study
    work, and so is `--study`. Study work never cuts a story, dispatches a worker or opens a council:
    write `docs/specs/<slug>/brief.md` (step 2), recon as in step 3 with at most two scouts, and write
-   `docs/specs/<slug>/report.md`: findings with `file:line` evidence, options with the recommended one
-   first and why, and the candidate stories the owner could approve next time (a list, not story
-   files). Commit it as `study(<slug>): <title>` and stop. The owner turns a report into code by running
-   `/vulyk-plan` again, in their own words. When both readings are genuinely possible, ask one question.
+   `docs/specs/<slug>/report.md`: findings with `file:line` evidence, what was not read or run,
+   options with the recommended one first and why, and the candidate stories the owner could
+   approve next time (a list, not story files). Commit it as `study(<slug>): <title>` and stop. The
+   owner turns a report into code by running `/vulyk-plan` again, in their own words. When both
+   readings are genuinely possible, ask one question.
 1. Tier. Classify per the constitution's routing table and announce it with a one-line reason. Tier 0:
    do it now, no paperwork. Tier 1-4 continue. The floor: `brief.md` with `## Asks` at Tier 1+,
    verbatim `## Requirements` quotes in stories at Tier 2+, `wave-check.sh` and `trace-check.sh`
@@ -29,12 +30,18 @@ Plan: "$ARGUMENTS"
 5. Plan. Tier 1-2: write plan.md yourself from `templates/plan.md`. Tier 3-4: dispatch `queen-planner`
    with the brief, scout reports and map pointers; Tier 4 also consults `lead-architect` on the central
    design fork, and both Tier 4 dispatches carry `model: <top_model>` (`bash scripts/top-model.sh`).
-   Tier 3 passes no model parameter.
-6. Stories, from `templates/story.md`, each with `model: sonnet`: `opus` only for a long-horizon or
-   judgment-heavy story, with the reason in one line (ADR-015). At Tier 1-2 you build them yourself in
+   Tier 3 passes `model: <p>` from `p="$(bash scripts/model-profile.sh --role planner)"` only when it is not
+   `opus` (else no model parameter). At Tier 3-4, when `bash scripts/model-profile.sh --role routine` prints
+   `haiku`, add the line `routine stories: model: haiku` to the planner's brief.
+6. Stories, from `templates/story.md`, with no `model:` line (the worker's frontmatter decides):
+   `model: opus` only for a long-horizon or judgment-heavy story, with the reason in one line (ADR-015);
+   `model: haiku` for a routine or reusable story (helpers, boilerplate, a repeated pattern) only when
+   `--role routine` prints `haiku`, with the reason in one line. At Tier 1-2 you build them yourself in
    order, so cut by review unit: Tier 1 exactly one story, Tier 2 one to three. At Tier 3-4 each story
    is one worker's job, and it earns its own worker only when it runs in parallel with its wave-mates
-   on disjoint `## Files`; fold the rest together.
+   on disjoint `## Files`; fold the rest together. A story that adds a branch, a loop, a parser, or
+   handling of money, security or data writes names the test that fails when that logic breaks (a
+   test file in its `## Files`); one such test, not coverage, and a trivial change names none.
 7. Check. `bash scripts/wave-check.sh docs/specs/<slug>` and `bash scripts/trace-check.sh
    docs/specs/<slug>`. Fix what they report in the story files now, including any `## Verification`
    segment that is not a `## Commands` cell.
@@ -47,7 +54,8 @@ Plan: "$ARGUMENTS"
      by wave (one line each), the `## Assumptions`, and what the build will spend (Tier 2: you build,
      one reviewer per round; Tier 3-4: the workers and seats). Wait. On approval, fill `**Approved:**`
      with the owner and the date, run `bash scripts/journal.sh docs/specs/<slug> 02-approved "approved
-     by <owner>" branch`, and commit the spec directory (`vulyk(<slug>): approved`). A "no" or a change
+     by <owner>" branch`, and commit the spec directory (`vulyk(<slug>): approved`; `chore(vulyk-<slug>): approved` when the
+     Profile's Commit convention names conventional commits, as `cycle.sh` writes it). A "no" or a change
      request reopens steps 5-7 once; a second one is a new brief.
    - Straight-through opt-in, only with `--go` or when the grill's last answer asked for it: instead of
      waiting, `bash scripts/cycle.sh briefed docs/specs/<slug> --commit` (`--mode assumed` in
