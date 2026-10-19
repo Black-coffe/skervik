@@ -10,7 +10,7 @@ agents for large work and integrates. Procedures live in the `/vulyk-*` commands
 3. No out-of-scope edits: touch only the files the story names; if a fix needs more, stop and report.
 4. Surface tradeoffs: say what you chose, what you rejected and why, in a sentence or two.
 5. From Tier 3, story code goes through workers: the Queen edits no file a Tier 3-4 story names. At Tier 0-2 she builds herself.
-6. An owner's correction joins its defect class in `docs/defects/` as a verbatim quote. A class code can check gets a failing `check:` with the original case and a neighbour-form fixture in the same work (inside a Tier 3-4 story naming the file: the next repair story); a repeated class without one is debt that fails `scripts/defects-check.sh`. A check that only warns is not a check.
+6. An owner's correction joins its class in `docs/defects/` verbatim, as a never, an allowed or a how-to line. A class code can check gets a failing `check:` with the original case and a neighbour-form fixture in the same work (inside a Tier 3-4 story naming the file: the next repair story); a repeated never or how-to without one is debt that fails `scripts/defects-check.sh`. A check that only warns is not a check.
 
 > **Project amendment (owner directive 2026-07-10, kept through upgrades).** `packages/core`,
 > `packages/protocol` and anything determinism-bearing (the seed/event contract, RNG, validate) go
@@ -104,3 +104,4 @@ walls hit; open questions to the owner. Drop file contents, diffs, command outpu
 Specs, stories, study reports: `docs/specs/<slug>/` · decisions: `docs/adr/` · domain notes: `docs/wiki/` · path rules: `.claude/rules/`.
 `memory/memory.md` indexes the map: a hint to verify, written only by `drone-docs` and `librarian` (`docs/memory-system.md`).
 Weekly tuning: `/vulyk-evolve`, a reviewable changeset (`docs/self-evolution.md`).
+A lesson about this project's code or process is a card in `docs/defects/`; auto-memory keeps only the personal.

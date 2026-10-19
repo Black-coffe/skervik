@@ -28,6 +28,7 @@
 .claude/hooks/context-guard.sh
 .claude/hooks/defect-intake.sh
 .claude/hooks/defects-inject.sh
+.claude/hooks/defects_lib.py
 .claude/hooks/handoff.py
 .claude/hooks/handoff.sh
 .claude/hooks/session-start-brief.sh
@@ -42,6 +43,7 @@
 .claude/mods/vulyk-pulse/hooks/register.tsx
 .claude/mods/vulyk-pulse/types/index.d.ts
 .claude/rules/README.md
+.claude/rules/always.md
 .claude/settings.json
 .claude/skills/README.md
 .claude/skills/_meta/insight-harvester/SKILL.md
@@ -59,6 +61,7 @@ memory/stats/skills.json
 scripts/acceptance-log.sh
 scripts/cycle.sh
 scripts/defects-check.sh
+scripts/defects-index.sh
 scripts/evolve-ledger.py
 scripts/git-hooks/post-merge
 scripts/human-check.sh
@@ -66,6 +69,7 @@ scripts/injection-check.sh
 scripts/journal.sh
 scripts/leak-check.sh
 scripts/lib.sh
+scripts/memory-triage.sh
 scripts/model-profile.sh
 scripts/redact.sh
 scripts/release-check.sh
