@@ -101,6 +101,23 @@ marker() { # marker <plan.md> <Name> -> prints the line's value, empty if absent
   printf '%s' "$v"
 }
 
+# The one staleness rule for a recorded verdict (post-037-tails): is a check given at <head-sha>
+# against <pack-fp> still about this pack at this commit? ship-check.sh (both stage-05 branches)
+# and human-check.sh --check call it, so an ACCEPTED override can never skip the rule the
+# no-council branch applies. Pack first; a <head-sha>..HEAD range that is paperwork_only stays
+# current, so /vulyk-ship's own release-paperwork commit does not stale the gate.
+verdict_stale() { # verdict_stale <spec-dir> <head-sha> <pack-fp> -> CURRENT (0) | STALE (pack) | STALE (commit) (1)
+  local root now was
+  [ "$3" = "$(pack_fingerprint "$1")" ] || { echo "STALE (pack)"; return 1; }
+  case "$2" in ''|-*) echo "STALE (commit)"; return 1 ;; esac   # never hand git an option
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "STALE (commit)"; return 1; }
+  now="$(git -C "$root" rev-parse --verify -q 'HEAD^{commit}' 2>/dev/null)"
+  was="$(git -C "$root" rev-parse --verify -q "$2^{commit}" 2>/dev/null)"
+  if [ -n "$now" ] && [ "$was" = "$now" ]; then echo "CURRENT"; return 0; fi
+  if [ -n "$was" ] && paperwork_only "$root" "$was" "$now"; then echo "CURRENT"; return 0; fi
+  echo "STALE (commit)"; return 1
+}
+
 # The one `## Asks` parser: cycle.sh counts and quotes the items (asks_count, ask_item) and
 # trace-check.sh traces story quotes to them, so the two can never read a different list. Asks
 # written only as `> ` quotes once passed trace-check, counted zero in cycle.sh and stopped
@@ -175,6 +192,27 @@ command_cell_exists() { # command_cell_exists <constitution> <command> -> 0 iff 
 $cells
 EOF
   return 1
+}
+
+command_cell_round_only() { # command_cell_round_only <constitution> <command> -> 0 iff <command>
+  # matches (command_cell_exists' rule) the Command cell of a `## Commands` row whose Purpose cell
+  # carries `round-only`: a slow suite only the council round runs. A command found in a marked row
+  # and an unmarked one is round-only. The marked rows alone are fed to command_cell_exists.
+  [ -f "$1" ] || return 1
+  local marked rc
+  marked="$(mktemp)" || return 1
+  awk '
+    /^## Commands[[:space:]]*$/ { inblock=1; print; next }
+    /^##[[:space:]]/            { if (inblock) exit }
+    inblock && /^\|/ {
+      line = $0; sub(/^\|/, "", line)
+      i = index(line, "|"); if (!i) next
+      if (substr(line, 1, i - 1) ~ /(^|[^[:alnum:]_-])round-only($|[^[:alnum:]_-])/) print
+    }
+  ' "$1" > "$marked"
+  command_cell_exists "$marked" "$2"; rc=$?
+  rm -f "$marked"
+  return "$rc"
 }
 
 verification_segments() { # verification_segments <line> -> one &&-separated segment per line

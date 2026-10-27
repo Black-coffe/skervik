@@ -72,7 +72,7 @@ A filled *Client path* adds the black-box seat, the only reader of *Browser MCP*
 
 ## Commands
 
-Quiet variants only: their output is resent every turn. A story's `## Verification` must name one.
+Quiet variants only: output is resent each turn. A story's `## Verification` names one, never a `round-only` row: wave-check flags it, close-story refuses it.
 
 <!-- VULYK:COMMANDS:START -->
 Quiet variants only: everything these print is resent on every subsequent turn. A story's
