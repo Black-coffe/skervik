@@ -82,7 +82,7 @@ Quiet variants only: everything these print is resent on every subsequent turn. 
 | Purpose | Command |
 |---|---|
 | Single package tests | `pnpm -s --filter <pkg> test` |
-| Full test suite | `pnpm -s -r test` |
+| Full suite / build (round-only) | `pnpm -s -r test` |
 | Core determinism gate | `pnpm -s --filter @skervik/core test` |
 | Lint | `pnpm -s -r lint` |
 | Typecheck | `pnpm -s typecheck` |
