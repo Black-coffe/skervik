@@ -20,11 +20,15 @@ Plan: "$ARGUMENTS"
    whenever stories exist.
 2. Brief. Write `docs/specs/<slug>/brief.md`: the request verbatim as a `> ` blockquote, piped through
    `bash scripts/redact.sh`, with the date. A bug report's error text, stack trace and reproduction go
-   in verbatim too. Everything downstream traces back to this file, so never paraphrase it.
+   in verbatim too. Everything downstream traces back to this file, so never paraphrase it. When the
+   request carries a stack trace, run `bash scripts/trace-autopsy.sh docs/specs/<slug>/brief.md` right
+   after: `autopsy.md` beside the brief lists its repo frames, each code line and the last commits that
+   touched it at HEAD (a lead, not a verdict).
 3. Recon. Read `memory/memory.md` and the relevant `memory/map/` slices first. A targeted question about
    a file or two: read them yourself. Dispatch `drone-scout` only for broad or unmapped territory:
    Tier 1 none (one if the location is unknown), Tier 2 at most one, Tier 3 at most two, Tier 4 at most
-   four, in parallel. Tier 2-4: run `bash scripts/symbol-map.sh --exact <file>` once per file the plan is
+   four, in parallel. A frame line in `autopsy.md` makes the location known: Tier 1-2 send no scout for it.
+   Tier 2-4: run `bash scripts/symbol-map.sh --exact <file>` once per file the plan is
    likely to name (one call on many files is cut at 1536 bytes after a few) and keep every output: the
    planner dispatch receives it. Checklist, Tier 2-4: meta-tests, docs/ADR, `.env.example`, re-exports,
    sibling files with the same pattern.
@@ -38,13 +42,16 @@ Plan: "$ARGUMENTS"
    default permission mode the three lenses may ask for web search (a refusal is safe: their outside
    facts come back `не подтверждено`). VULYK grants no web permission itself. Then dispatch
    `drone-horizon` three times in one message, `lens: altitude`, `depth` and `range`, each with the brief
-   path and a one-paragraph recon summary (what was not found and where it was looked for), with no model
-   parameter. Each returns up to three proposals: `what`, `why`, `cost`, `check`, `sources`, `status`,
+   path, a one-paragraph recon summary (what was not found and where it was looked for) and the Profile rows
+   *Configurations that exist today* and *Owner language* copied verbatim, with no model parameter. Each returns up to three proposals: `what`, `why`, `cost`, `check`, `sources`, `status`,
    `kind` (`gap` or `extension`) and an `ask line`. A lens that fails or returns nothing is noted, and the
    step goes on with the others. Cut the candidates to at most three: merge duplicates, and drop what
    contradicts the Profile's *Configurations that exist today* or the repo, or is not tied to the owner's
-   goal. Write `docs/specs/<slug>/horizon.md`: the terms and where they were searched, every candidate
-   with its verdict (kept, merged or dropped, one-line reason), and the kept proposals with their fields.
+   goal. A kept `kind: gap` stays a gap only when you name the ask or the verbatim request fragment that
+   fails without it, and write that fragment beside it; otherwise relabel it `extension`. Number the kept
+   proposals `H1`-`H3`. Write `docs/specs/<slug>/horizon.md`: the terms and where they were searched, every candidate
+   with its verdict (kept, merged or dropped, one-line reason), and the kept proposals, numbered, with their
+   fields and, for a gap, the fragment it rests on.
    Proposals never go into `brief.md` by themselves; only what the owner picks in the grill does.
 4. Grill, Tier 2-4. Follow `templates/grill.md`; it owns every rule of the round, horizon questions
    included. Its output lands in `brief.md` as `## Answers` then `## Asks`. Tier 1 skips it: `## Asks`
@@ -56,6 +63,15 @@ Plan: "$ARGUMENTS"
    Tier 3 passes `model: <p>` from `p="$(bash scripts/model-profile.sh --role planner)"` only when it is not
    `opus` (else no model parameter). At Tier 3-4, when `bash scripts/model-profile.sh --role routine` prints
    `haiku`, add the line `routine stories: model: haiku` to the planner's brief.
+   A `queen-planner` or `lead-architect` dispatch that returns the Fable-limit refusal (an error carrying
+   `You've reached your Fable limit` / `model_requires_usage_credits`, or a text that starts with `Agent
+   terminated early due to an API error` and carries `reached your Fable limit`; a quote is not it) and was not already on `opus` is redispatched
+   once with the same prompt and `model: opus`; then, `<from>` the model it was passed (`""` when none):
+   `bash scripts/journal.sh docs/specs/<slug> 01-spec "fallback: <agent> plan <from> -> opus (Fable
+   limit; ADR-015 exception)" "plan"`, `bash scripts/telemetry.sh record fable_limit_fallback 1 0 --spec
+   <slug> --ref <slug>:plan:<agent> --model fable --agent <agent>`, and one sentence to the owner, in the
+   owner's language; then go on. A second refusal stops planning and is reported as it is today. No
+   other error is retried this way.
 6. Stories, from `templates/story.md`, with no `model:` line (the worker's frontmatter decides):
    `model: opus` only for a long-horizon or judgment-heavy story, with the reason in one line (ADR-015);
    `model: haiku` for a routine or reusable story (helpers, boilerplate, a repeated pattern) only when
@@ -63,8 +79,11 @@ Plan: "$ARGUMENTS"
    order, so cut by review unit: Tier 1 exactly one story, Tier 2 one to three. At Tier 3-4 each story
    is one worker's job, and it earns its own worker only when it runs in parallel with its wave-mates
    on disjoint `## Files`; fold the rest together. A story that adds a branch, a loop, a parser, or
-   handling of money, security or data writes names the test that fails when that logic breaks (a
-   test file in its `## Files`); one such test, not coverage, and a trivial change names none.
+   handling of money, security or data writes is marked `red: required` by you, the planner, and names
+   the test that fails when that logic breaks: a test file in its own `## Files` whose path appears in
+   its `## Verification` (so `stamp-red` seals it), with `red_reason:` prefilled when the assertion is
+   known. A marked story gets no `worker-test` story in a later wave; its test is in the same story.
+   One such test, not coverage, and a trivial change names none.
 7. Check. `bash scripts/wave-check.sh docs/specs/<slug>` and `bash scripts/trace-check.sh
    docs/specs/<slug>`. Fix what they report in the story files now, including any `## Verification`
    segment that is not a `## Commands` cell.

@@ -37,7 +37,7 @@ Produce the hive status report. Read only metadata; this command stays cheap.
    `council: <specs> specs · median <n> rounds to green · <n> escalations · <n> escaped defects`.
 3. Defects. If `docs/defects/` holds no card, print `defects: no library`; otherwise print
    `defects: ` followed by the output of `bash scripts/defects-index.sh --counts`.
-4. Token spend. `python scripts/token-report.py . --since "$(date -u -d '-14 days' +%Y-%m-%d)"` and
+4. Token spend. `bash scripts/py.sh scripts/token-report.py . --since "$(date -u -d '-14 days' +%Y-%m-%d 2>/dev/null || date -u -v-14d +%Y-%m-%d)"` and
    print its per-spec lines as-is: raw and weighted tokens, dispatches, rounds. The `totalTokens` a
    Workflow run prints is a sum of final contexts, not spend; quote this report instead.
 5. Stories. Run `bash scripts/state.sh` and read `.claude/state.json` into a table: spec, `stage`, story,
@@ -47,7 +47,7 @@ Produce the hive status report. Read only metadata; this command stays cheap.
    specs may still carry `in-progress`. Report `unrecognised` counts out loud.
 6. Memory freshness. `memory/map/*` `last-verified` dates against recent git churn in their modules
    (`git log --since` per path); flag stale ones, and a `.stale` flag left by `scripts/git-hooks/post-merge`.
-7. Maintenance. Print the brief's due lines: `echo '{}' | bash .claude/hooks/session-start-brief.sh | grep -E 'maintenance due|waits for'`, else `maintenance: nothing due`.
+7. Maintenance. Print the brief's due lines: `echo '{}' | bash .claude/hooks/session-start-brief.sh | grep -E 'maintenance due|waits for|tool\.check'`, else `maintenance: nothing due`. A `tool.check` line names an enabled mod that can approve a call the git guard denied.
 8. Skill usage. Top and bottom entries of `memory/stats/skills.json`; name the candidates the next
    `/vulyk-evolve` will examine.
 9. Budget posture. Show `bash scripts/top-model.sh --explain`: the gate model, the plan it came from,

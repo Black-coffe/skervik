@@ -74,10 +74,51 @@ fi
 # map: the post-merge git hook's flag.
 [ -f "$MEM/map/.stale" ] && due "map (flagged stale after a merge: refresh the modules changed since, then delete memory/map/.stale)" vulyk-map
 
+# memory triage: Claude Code's own auto memory index loads its first 200 lines / 25 KB into every session;
+# at 80% of either the private memory is sorted into cards / personal / delete before the tail is dropped.
+# Offered, never run as maintenance (0.41.1): the triage reads every private memory file, the owner decides.
+memline=""
+tri="$(dirname "${BASH_SOURCE[0]}")/../../scripts/memory-triage.sh"
+adir="$( [ -f "$tri" ] && cd "$ROOT" 2>/dev/null && bash "$tri" --dir 2>/dev/null)"
+idx="$adir/MEMORY.md"
+if [ -n "$adir" ] && [ -f "$idx" ]; then
+  lines=$(awk 'END { print NR }' "$idx"); bytes=$(wc -c < "$idx" | tr -d ' ')   # NR: a last line without \n counts
+  # The last triage's mark (memory-triage.sh --mark): what it left behind is not due again until it grows.
+  ml="" mb=""; mk="$ROOT/.claude/state/memory-triage.txt"
+  [ -f "$mk" ] && read -r ml mb < "$mk"
+  [[ $ml =~ ^[0-9]+$ && $mb =~ ^[0-9]+$ ]] || ml=""
+  if { [ "$lines" -ge 160 ] || [ "$bytes" -ge 20480 ]; } &&
+     { [ -z "$ml" ] || [ "$lines" -ge $((ml + 20)) ] || [ "$bytes" -ge $((mb + 2048)) ]; }; then
+    memline="[VULYK] memory triage (MEMORY.md $lines lines, $((bytes / 1024)) KB of 200 lines / 25 KB) - Claude Code's own auto memory. After the owner's current task, ask them once whether to run /vulyk-gc memory now (Skill tool; it reads every private memory file). On a no, run bash scripts/memory-triage.sh --mark, which keeps the signal quiet until the index grows."
+  fi
+fi
+
 if [ -n "$items" ]; then
   echo "[VULYK] maintenance due: $items. After the owner's current task, on ${def:-the default branch} with a clean tree (memory/stats/skills.json aside: the Skill counter rewrites it), run each through the Skill tool ($skills) without asking, then tell the owner in one line what changed; otherwise leave it for a later session."
 fi
+[ -n "$memline" ] && echo "$memline"
 [ -n "$pending" ] && echo "[VULYK] evolve changeset $pending waits for the owner's review (merge = accept, delete the branch = reject): tell the owner once."
+
+# A mod that answers tool.check (uncommitted-work-guard-01): on a personal login it can approve a call
+# a PreToolUse hook denied, the git guard included, in silence. A heuristic, read-only: the plugins
+# enabled in the user and project settings, their install paths in installed_plugins.json, a grep of
+# each one's hooks/ folder. Nothing found prints nothing.
+conf="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"; mods=""
+enabled="$(cat "$conf/settings.json" "$ROOT/.claude/settings.json" "$ROOT/.claude/settings.local.json" 2>/dev/null |
+  grep -oE '"[^"]+@[^"]+"[[:space:]]*:[[:space:]]*true' | sed -E 's/^"([^"]+)".*/\1/' | sort -u)"
+if [ -n "$enabled" ] && [ -f "$conf/plugins/installed_plugins.json" ]; then
+  reg="$(tr -d '\r\n' < "$conf/plugins/installed_plugins.json")"
+  for key in $enabled; do
+    while IFS= read -r p; do
+      [ -n "$p" ] || continue
+      if grep -rqsF 'tool.check' "$p/hooks" 2>/dev/null; then mods="${mods:+$mods, }$key"; break; fi
+    done <<EOF
+$(printf '%s' "$reg" | grep -oE "\"$key\"[[:space:]]*:[[:space:]]*\[[^]]*\]" |
+  grep -oE '"installPath"[[:space:]]*:[[:space:]]*"[^"]*"' | sed -E 's/.*:[[:space:]]*"([^"]*)"$/\1/' | sed 's#\\\\#/#g')
+EOF
+  done
+fi
+[ -n "$mods" ] && echo "[VULYK] a mod that handles tool.check is enabled: $mods. On a personal login it can approve a call a PreToolUse hook denied, the git guard included (a heuristic: a grep of its hooks folder). Tell the owner once."
 
 # litopys, the session chronicle plugin (0.19, plan 1.7): offered once. Installed = an
 # `enabledPlugins` key starting `litopys@` in either settings file; declined = a Profile row

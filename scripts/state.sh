@@ -19,6 +19,9 @@
 #
 # Exit status is always 0: this reports, it does not block.
 set -u
+# date_epoch lives in lib.sh, found beside this file before the cd below.
+# shellcheck source=scripts/lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "state: CANNOT RUN - not a git repo, so there is no project root to scan." >&2
@@ -45,9 +48,15 @@ j() {
   printf '%s' "${v:0:120}"
 }
 
-field() { # field <file> <name>
+field() { # field <file> <name> - from the leading --- frontmatter block only: a report quoting the story
+  # template in its body is not a story. Exit 1 when the block has no such key.
   awk -F': *' -v k="$2" '
-    $1 == k { v = $2; sub(/[[:space:]]*#.*$/, "", v); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); print v; exit }
+    BEGIN { r = 1 }
+    { sub(/\r$/, "") }
+    NR == 1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    /^---[[:space:]]*$/ { exit }
+    $1 == k { v = $2; sub(/[[:space:]]*#.*$/, "", v); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v); print v; r = 0; exit }
+    END { exit r }
   ' "$1"
 }
 
@@ -75,7 +84,7 @@ for dir in $( [ -d "$TARGET" ] && find "$TARGET" -type d | LC_ALL=C sort || dirn
   stories=""
   for f in "$dir"/*.md; do
     [ -f "$f" ] || continue
-    grep -q '^story:' "$f" 2>/dev/null || continue
+    field "$f" story >/dev/null 2>&1 || continue
     stories="$stories $f"
   done
   if [ -z "$stories" ]; then
@@ -125,9 +134,11 @@ for dir in $( [ -d "$TARGET" ] && find "$TARGET" -type d | LC_ALL=C sort || dirn
   done
 
   # A snapshot older than the newest story file it describes is, by definition, behind it.
-  snap_epoch="$(date -u -d "$SNAP" +%s 2>/dev/null || echo 0)"
+  # An epoch neither date can read is unknown, and unknown reports stale - never fresh by a `0`.
+  snap_epoch="$(date_epoch "$SNAP")" || snap_epoch=""
   stale=false
-  [ "$snap_epoch" -gt 0 ] && [ "$newest" -gt "$snap_epoch" ] && stale=true
+  if [ -z "$snap_epoch" ]; then stale=true
+  elif [ "$newest" -gt "$snap_epoch" ]; then stale=true; fi
 
   # Which of the six confirmations (docs/cycle.md) the spec has reached - read off plan.md's
   # marker lines and the two verdict ledgers, the same files ship-check.sh reads. A marker

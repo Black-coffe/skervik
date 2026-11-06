@@ -6,7 +6,7 @@ argument-hint: [spec slug; defaults to the spec on the current branch]
 Run one council round on: "$ARGUMENTS" (default: the spec whose `**Branch:**` matches the current
 branch). Every call below that runs `advance` carries `timeout: 600000`.
 
-1. Claim and advance. `stamp="$(openssl rand -hex 8 2>/dev/null || python -c 'import secrets;
+1. Claim and advance. `stamp="$(openssl rand -hex 8 2>/dev/null || bash scripts/py.sh -c 'import secrets;
    print(secrets.token_hex(8))')"`, then `bash scripts/cycle.sh advance docs/specs/<slug> --stamp
    $stamp --claim`. `ok:false` with `held by`: another driver holds the spec; print its `error` and
    stop. Otherwise act on `next`:
@@ -18,7 +18,9 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
      Release and point at `/vulyk-build`.
    - `escalated`, `paused`, `shipped`, `briefed`, or any `ok:false`: release and report it as
      `/vulyk-build`'s Terminal section does.
-2. Dispatch exactly the seats `next` names, in one message, as `/vulyk-build` describes: each writes to
+2. First the round's test gate: `bash scripts/cycle.sh suite docs/specs/<slug> --commit --stamp $stamp`, one Bash
+   call per step with `timeout: 600000`, repeated until the last line says `"done":true` (`ok:false`: print its
+   `error`, release and stop). Then dispatch exactly the seats `next` names, in one message, as `/vulyk-build` describes: each writes to
    `.vulyk/reports/<slug>/round-<round>/<seat>.attempt-<k>.md` with k from `status.seat_attempt`;
    blind seats get slug, round, `court` and the report path only, never `round_dir`; `lead-review` gets
    the spec, branch, head, report path, and from round 2 `since` and the previous round's directory,
@@ -26,6 +28,15 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
    profile is not `sonnet-builds` (else no model parameter), and two reviewers (`review-top`,
    `review-second`) at Tier 4. Blind seats get `model: <s>` from `s="$(bash scripts/model-profile.sh --role
    seat)"` only when the profile (`bash scripts/model-profile.sh`) is not `sonnet-builds`.
+   A seat whose dispatch returns the Fable-limit refusal (an error carrying `You've reached your Fable
+   limit` / `model_requires_usage_credits`, or a text that starts with `Agent terminated early due to an
+   API error` and carries `reached your Fable limit`; a report quoting it is a report) and was not already on `opus` is redispatched once with the same
+   prompt and agent type and `model: opus`; then, `<from>` the model it was passed (`""` when none):
+   `bash scripts/journal.sh docs/specs/<slug> 04-council "fallback: <agent> round-<round>/<seat> <from>
+   -> opus (Fable limit; ADR-015 exception)" "ingest"`, `bash scripts/telemetry.sh record
+   fable_limit_fallback 1 0 --spec <slug> --ref <slug>:round-<round>/<seat>:<agent> --model fable
+   --agent <agent>`, and one sentence to the owner, in the owner's language. A refusal on the
+   redispatch is the existing path: the seat stays absent. No other error is retried this way.
 3. Record and judge: `bash scripts/cycle.sh advance docs/specs/<slug> --stamp $stamp --ingest`. A seat
    still listed in `next` was rejected: re-dispatch it once with its `rejected` error appended, then
    `--ingest` again.

@@ -16,7 +16,7 @@
 # frontmatter model (`opus` or `sonnet`, ADR-015), whatever the plan. Fable holds the gate wherever
 # the plan includes it, Opus everywhere else. Per Anthropic's plan terms (Sept 2026) that means:
 #
-#   Max 5x / Max 20x, Team & Enterprise premium seats  -> fable   (up to half the weekly limit
+#   Max, Ultra (ex-Max 5x/20x), Team/Ent premium seats -> fable   (up to half the weekly limit
 #                                                                  is Fable at no extra cost)
 #   Pro, Team standard seats, Enterprise standard seats -> opus    (Fable bills to usage credits
 #                                                                  on top of the subscription)
@@ -45,6 +45,9 @@
 #   CLAUDE_CONFIG_DIR                            honoured, as Claude Code honours it
 set -u
 
+# One hint line under --help and --explain: where the gate goes, and what a hive's own judge script does instead.
+GATE_HINT="gate: the Tier 4 review, the Tier 4 planner, lead-architect (Tier 4, or a story missed twice), a missed story's retry. A hive's own judge: bash scripts/model-profile.sh --role seat, and pass --effort explicitly."
+
 MODE="print"
 case "${1:-}" in
   "")            MODE="print" ;;
@@ -53,7 +56,7 @@ case "${1:-}" in
   --apply)       MODE="apply" ;;
   --check)       MODE="check" ;;
   --floor)       MODE="floor" ;;
-  -h|--help)     sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help)     sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; echo "$GATE_HINT"; exit 0 ;;
   *)             echo "error: unknown flag $1 (try --help)" >&2; exit 2 ;;
 esac
 
@@ -220,6 +223,7 @@ case "$MODE" in
       economy)     echo "dispatched for: the Tier 4 lead-review (beside the second reviewer), lead-architect, a Tier 4 queen-planner, a missed story's retry; lead-review at Tier 1-3 and the rest follow the economy profile (bash scripts/model-profile.sh --explain)" ;;
       *)           echo "dispatched for: the Tier 4 lead-review (beside the second reviewer), lead-architect, a Tier 4 queen-planner, a missed story's retry; lead-review at Tier 1-3 runs on its frontmatter (opus)" ;;
     esac
+    echo "$GATE_HINT"
     P="$(pinned_model)"
     if [ -z "$P" ]; then
       echo "queen session: not pinned - the session starts on the account default (Opus since Claude Code 2.1.280). Run: bash scripts/top-model.sh --apply"
@@ -338,7 +342,7 @@ EOF
     # Existing file: it carries the owner's permissions and standing approvals, so merge one
     # key and touch nothing else. Python is what the framework already depends on for
     # handoff.py; without it, say exactly what to add rather than rewriting JSON with sed.
-    PY="$(command -v python3 || command -v python || command -v py || true)"
+    vulyk_python || true; PY="$VULYK_PY"
     if [ -z "$PY" ]; then
       echo "cannot merge without python: add  \"model\": \"$QUEEN\"  to $LOCAL by hand"
       exit 1

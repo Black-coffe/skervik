@@ -79,11 +79,20 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|WebFetch|WebSearch|Agent|mcp__.*",
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Read|Bash|WebFetch|WebSearch|Agent|mcp__.*",
         "hooks": [
           {
             "type": "command",
             "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defects-inject.sh\""
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/git-guard.sh\""
           }
         ]
       }
