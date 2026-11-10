@@ -67,4 +67,3 @@ docs/specs/*/DRIVER
 # Per-machine or derived. Committing any of them creates a second account of
 # something the repository already holds, which is the failure mode the framework
 # spends most of its checks preventing.
-docs/specs/weekly-budget/DRIVER
