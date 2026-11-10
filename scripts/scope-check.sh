@@ -23,8 +23,8 @@
 # The story file itself is never counted: the build loop commits it alongside the code
 # (status line, one-commit-per-story), so it is bookkeeping, not scope.
 #
-# With no range given, a path another story of the same spec declares under `## Files` (or
-# that story's own file) is not counted either while that story is not `done` (ADR-013 D5): a
+# With no range given, a path another story of the same spec and the same `wave:` declares under
+# `## Files` (or that story's own file) is not counted either while that story is not `done` (ADR-013 D5): a
 # wave's workers share one working tree, and a sibling's uncommitted diff is its scope, not
 # this story's excess. A path this story declares itself is always its own. With an explicit
 # range nothing is excluded.
@@ -86,10 +86,11 @@ fi
 
 # --- what actually changed ---------------------------------------------------
 if [ -n "$RANGE" ]; then
-  CHANGED="$(git -c core.quotePath=false diff --name-only "$RANGE" 2>/dev/null)"
+  CHANGED="$(git -c core.quotePath=false diff --name-only --no-renames "$RANGE" 2>/dev/null)"
 else
-  # quotePath off: a non-ASCII name must come back as itself to match its `## Files` line.
-  CHANGED="$(git -c core.quotePath=false diff --name-only HEAD 2>/dev/null; git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null)"
+  # quotePath off: a non-ASCII name must come back as itself to match its `## Files` line. --no-renames
+  # (both diffs): a rename names only its new path, so code moved into paperwork vanished from the count.
+  CHANGED="$(git -c core.quotePath=false diff --name-only --no-renames HEAD 2>/dev/null; git -c core.quotePath=false ls-files --others --exclude-standard 2>/dev/null)"
 fi
 # The story file rides along with every per-story commit (its status line changes) -
 # drop it from the measurement entirely so each entry reflects code, not bookkeeping.
@@ -113,8 +114,13 @@ $CHANGED
 EOF
 CHANGED="$(printf '%s' "$KEPT" | grep -v '^$')"
 
-# Siblings (working tree only): every other story file of this spec that is not `done`.
+# Siblings (working tree only): every other story file of this spec that is not `done`. Its own story
+# file is dropped whatever its wave (the cycle's bookkeeping); its declared ## Files only when it shares
+# this story's `wave:` (G3, no wave reads as 1): only a wave-mate edits the tree at the same time, so a
+# later wave's declared file edited now is this story's excess.
+fm_wave() { awk -F': *' '$1 == "wave" { sub(/[[:space:]]*#.*$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }' "$1"; }
 if [ -z "$RANGE" ]; then
+  MYWAVE="$(fm_wave "$STORY")"; [ -n "$MYWAVE" ] || MYWAVE=1
   SIBLING_DECLARED=""
   for sib in "$(dirname "$STORY_REL")"/*.md; do
     [ -f "$sib" ] && [ "$sib" != "$STORY_REL" ] || continue
@@ -123,7 +129,10 @@ if [ -z "$RANGE" ]; then
     [ "$sst" = done ] && continue
     # the sibling's own story file too: its worker writes `returned:` there, in the same tree
     SIBLING_DECLARED="${SIBLING_DECLARED}${sib}
-$(files_of "$sib")
+"
+    swave="$(fm_wave "$sib")"; [ -n "$swave" ] || swave=1
+    [ "$swave" = "$MYWAVE" ] || continue
+    SIBLING_DECLARED="${SIBLING_DECLARED}$(files_of "$sib")
 "
   done
   if [ -n "$(printf '%s' "$SIBLING_DECLARED" | tr -d '[:space:]')" ]; then

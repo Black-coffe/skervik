@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse hook: before a tool touches a place a `text` defect card names in `paths:`, put that
+# PreToolUse hook: before a tool touches a place a defect card (any but revoked) names in `paths:`, put that
 # card's Never (✗), How-to (→) and Allowed (✓) lines in front of the agent. Cards are read by
 # defects_lib.py beside this file. Contract: docs/specs/rules-tree/plan.md ## Contracts, Delivery.
 #
@@ -13,26 +13,51 @@
 # dated line; the rest fold into one `+N cards: <ref>, ...` line. An Allowed-only card whose
 # `exception:` does not name a Never card matched here gets one `✓ withheld:` line instead; beside an
 # unlinked How-to card its lines are shown marked `(the How-to of <ref> comes first)`.
-# Cards declaring block with a check: are not injected (the gate runs it, fixtures or not), revoked cards never are. Each card is shown once
+# Revoked cards are never injected. Each card is shown once
 # per session_id + agent_id; state: .claude/state/defects/inject-<session>.txt under the repo root
 # ($CLAUDE_PROJECT_DIR, else the input's cwd).
 #
 # Never blocks: no python, no docs/defects/, bad JSON or any error -> silent exit 0.
 # The Python half lives below the `exit 0`, inside a no-op heredoc; bash never runs it, python reads
 # it back out of this file (one interpreter start, stdin passes straight through).
-# stdin is read once so a non-working interpreter (the Windows Store `python3` alias exits 9009
-# without running anything) falls through to the next one; 0 or 1 means python itself ran.
+# stdin is read once so a non-working interpreter falls through to the next one: a preset $VULYK_PY
+# (as scripts/lib.sh trusts it), then python3, python, py. Only exit 0 means the Python half ran (it
+# always ends in sys.exit(0)); its output is held until then, so the Windows Store `python3` alias
+# (9009), a Python 2 that cannot read this file (1) or a broken install prints nothing.
 IN="$(cat)"
 # Read is on the matcher for story files only: every other Read exits here, without a python start.
 re='"tool_name"[[:space:]]*:[[:space:]]*"Read"'
 if [[ $IN =~ $re ]]; then
   case "$IN" in *docs/specs/*|*'docs\\specs\\'*) ;; *) exit 0 ;; esac
 fi
-for PY in python3 python; do
+# No card file (docs/defects/*.md, */*.md; never README.md / INDEX.md in any case, never fixtures/): exit
+# before python starts (O3). Any other tool (WebFetch, Agent, mcp__*) has no path and no command line: only
+# a `tool:` entry can match it, so with no `tool:` in a card file it exits here too (P10-11). grep's 1 is
+# "read them all, none there"; a read error (2) goes on to python. `reset` always goes on.
+re='"tool_name"[[:space:]]*:[[:space:]]*"'
+re_path='"tool_name"[[:space:]]*:[[:space:]]*"(Edit|Write|MultiEdit|NotebookEdit|Bash|Read)"'
+if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ "${1:-}" != reset ]; then
+  DD="$CLAUDE_PROJECT_DIR/docs/defects"; CARDS=()
+  for f in "$DD"/*.md "$DD"/*/*.md; do
+    [ -f "$f" ] || continue
+    case "$f" in
+      "$DD"/fixtures/*|*/[Rr][Ee][Aa][Dd][Mm][Ee].[Mm][Dd]|*/[Ii][Nn][Dd][Ee][Xx].[Mm][Dd]) continue ;;
+    esac
+    CARDS+=("$f")
+  done
+  [ "${#CARDS[@]}" -eq 0 ] && exit 0
+  if [[ $IN =~ $re ]] && ! [[ $IN =~ $re_path ]]; then
+    grep -qsF 'tool:' "${CARDS[@]}"
+    [ $? -eq 1 ] && exit 0
+  fi
+fi
+for PY in ${VULYK_PY:+"$VULYK_PY"} python3 python py; do
   command -v "$PY" >/dev/null 2>&1 || continue
-  printf '%s' "$IN" | "$PY" -S -c 'import sys;sys.argv=sys.argv[1:];p=sys.argv[0];s=open(p,encoding="utf-8").read();exec(compile(s.split("\n#<py>\n",1)[1].split("\nPYTHON\n",1)[0],p,"exec"))' \
-    "${BASH_SOURCE[0]}" "$@" 2>/dev/null
-  case $? in 0|1) exit 0 ;; esac
+  # the trailing `.` keeps the output's last newline through $(...)
+  OUT="$(printf '%s' "$IN" | "$PY" -S -c 'import sys;sys.argv=sys.argv[1:];p=sys.argv[0];s=open(p,encoding="utf-8").read();exec(compile(s.split("\n#<py>\n",1)[1].split("\nPYTHON\n",1)[0],p,"exec"))' \
+    "${BASH_SOURCE[0]}" "$@" 2>/dev/null && printf .)" || continue
+  printf '%s' "${OUT%.}"
+  exit 0
 done
 exit 0
 
@@ -48,13 +73,10 @@ STORY = re.compile(r'docs/specs/[^/]+/[^/]+\.md')
 
 
 def injected_as(card):
-    # A card that DECLARES block with a check: is not injected, fixtures or not - the gate
-    # (defects-check.sh <arg>) runs that check (0.19.1). Fixtures decide debt, not this.
-    # Anything else not revoked - text, block without a check, an unknown status - is text.
+    # Every card not revoked - text, block (its check also runs in close-story via
+    # defects-check.sh --files), an unknown status - is shown as text.
     if card.status == 'revoked':
         return 'revoked'
-    if card.status == 'block' and card.check:
-        return 'block'
     return 'text'
 
 
@@ -163,7 +185,10 @@ def main():
         cmd = ti.get('command') or ''
         if not isinstance(cmd, str):
             return
-        for t in re.split(r'[\s;|&<>()]+', cmd):
+        # A quoted string with a space in it is one more token, whole: the split alone cut
+        # "docs/My Notes/a.md" into pieces no glob matches (P10-15).
+        quoted = [a or b for a, b in re.findall(r'"([^"]*)"|\'([^\']*)\'', cmd)]
+        for t in re.split(r'[\s;|&<>()]+', cmd) + [q.strip() for q in quoted if re.search(r'\s', q.strip())]:
             t = t.strip('\'"`')
             for part in {t, t.rsplit('=', 1)[-1]}:
                 part = rel(part.strip('\'"`'), root)
@@ -198,7 +223,7 @@ def main():
             continue
         if card.never:
             # Every live Never card on this target counts against an unlinked Allowed card (a How-to prohibits nothing),
-            # also one already shown or one the gate runs: the prohibition wins when unlinked.
+            # also one already shown: the prohibition wins when unlinked.
             nevers.append(card)
         elif card.howto:
             howtos.append(card)
@@ -211,7 +236,7 @@ def main():
     hits.sort(key=lambda h: h[2].ref)
     hits.sort(key=lambda h: (h[0], h[1]), reverse=True)
 
-    text = 'Defect classes for this target (docs/defects/, text cards - no check guards them):'
+    text = 'Defect classes for this target (docs/defects/):'
     room, shown, rest = budget(), [], []
     for _, _, card in hits:
         lines = [card.ref + ' — ' + (fm_scalar(card.fm.get('title', '')) or card.ref)]

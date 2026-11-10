@@ -32,7 +32,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/anomaly-scan.sh\""
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/anomaly-scan.sh\"",
+            "timeout": 30
           }
         ]
       }

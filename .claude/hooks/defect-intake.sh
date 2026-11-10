@@ -2,9 +2,10 @@
 # UserPromptSubmit hook: hears the owner in every channel and tells the session to file his words in
 # docs/defects/ (contract: docs/specs/rules-tree/plan.md `## Contracts`, Capture; cards are read by
 # .claude/hooks/defects_lib.py). One line per finding:
-#   - the explicit phrase «внеси в запрет / правило / разрешение» (RU/UK/EN), typed or pasted ->
-#     write the never / how-to / allowed card now, verbatim;
-#   - typed text that looks like a correction (a timecode, a correction word, a card's `keys:`) ->
+#   - the explicit phrase «внеси в запрет / правило / разрешение» (RU/UK/EN), typed ->
+#     write the never / how-to / allowed card now, verbatim; found only in a paste, quote or fence -> ask first;
+#   - typed text that looks like a correction (a timecode by a media cue or a correction word, a correction
+#     word, a card's `keys:` at a word start) ->
 #     file the quote now and report one line with «отмени»;
 #   - a correction word or card key only inside <pasted_content> -> ask the owner whether these are
 #     his words first. A paste that starts with $VULYK_DICTATION_TAG (when set) counts as typed.
@@ -21,16 +22,20 @@
 # Never blocks: no python, no docs/defects/, bad JSON or any error -> silent exit 0.
 # The Python half lives below the `exit 0`, inside a no-op heredoc; bash never runs it, python reads
 # it back out of this file (one interpreter start, stdin passes straight through).
-# stdin is read once so a non-working interpreter (the Windows Store `python3` alias exits 9009
-# without running anything) falls through to the next one; 0 or 1 means python itself ran.
+# stdin is read once so a non-working interpreter falls through to the next one: a preset $VULYK_PY
+# (as scripts/lib.sh trusts it), then python3, python, py. Only exit 0 means the Python half ran (it
+# always ends in sys.exit(0)); its output is held until then, so the Windows Store `python3` alias
+# (9009), a Python 2 that cannot read this file (1) or a broken install prints nothing.
 # `--lexicon` prints the correction lexicon as portable ERE lines instead (for `litopys corrections
 # --lexicon`, read by /vulyk-evolve) and reads no stdin: one word list, two consumers.
 if [ "${1:-}" = "--lexicon" ]; then IN=""; else IN="$(cat)"; fi
-for PY in python3 python; do
+for PY in ${VULYK_PY:+"$VULYK_PY"} python3 python py; do
   command -v "$PY" >/dev/null 2>&1 || continue
-  printf '%s' "$IN" | "$PY" -S -c 'import sys;sys.argv=sys.argv[1:];p=sys.argv[0];s=open(p,encoding="utf-8").read();exec(compile(s.split("\n#<py>\n",1)[1].split("\nPYTHON\n",1)[0],p,"exec"))' \
-    "${BASH_SOURCE[0]}" "$@" 2>/dev/null
-  case $? in 0|1) exit 0 ;; esac
+  # the trailing `.` keeps the output's last newline (the --lexicon list) through $(...)
+  OUT="$(printf '%s' "$IN" | "$PY" -S -c 'import sys;sys.argv=sys.argv[1:];p=sys.argv[0];s=open(p,encoding="utf-8").read();exec(compile(s.split("\n#<py>\n",1)[1].split("\nPYTHON\n",1)[0],p,"exec"))' \
+    "${BASH_SOURCE[0]}" "$@" 2>/dev/null && printf .)" || continue
+  printf '%s' "${OUT%.}"
+  exit 0
 done
 exit 0
 
@@ -55,11 +60,22 @@ SIDE_NOTE = re.compile(r'(?:^|(?<=>))[ \t]*here is a note offered by a side agen
                        r'(?:\n[ \t]*(?:>[^\n]*)?(?=\n|\Z))*',
                        re.S | re.I | re.M)
 # Stems match at a word start ("переделай" also takes "переделайте"); whole phrases need both edges.
-STEMS = ['опять', 'снова', 'я же говорил', 'я же казав', 'знову', 'переделай', 'переделать', 'обрезал']
-WORDS = ['не так', 'again', 'i said', 'i told you', 'why did you', 'not what i asked']
+# «снова» and "again" are not here: a report says "ran it again" with no complaint in it (P10-08).
+STEMS = ['опять', 'я же говорил', 'я же казав', 'знову', 'переделай', 'переделать', 'обрезал']
+WORDS = ['не так', 'i said', 'i told you', 'why did you', 'not what i asked']
 LEXICON = re.compile(r'(?<!\w)(?:' + '|'.join(map(re.escape, STEMS)) + r')'
                      r'|(?<!\w)(?:' + '|'.join(map(re.escape, WORDS)) + r')(?!\w)')
-TIMECODE = re.compile(r'\b\d{1,2}:\d{2}\b')
+# A media timecode (m:ss, mm:ss, h:mm:ss). Not a clock (after a date; before am/pm/UTC/GMT/Z or an offset),
+# a line:col (`x.sh:12:34`) or an offset itself (after `:`, `+`, `-` or a word character): those fired on
+# every report (P10-08).
+TIMECODE = re.compile(r'(?<![\w:+-])(?<!\d{4}-\d{2}-\d{2}T)(?<!\d{4}-\d{2}-\d{2} )'
+                      r'\d{1,2}:[0-5]\d(?::[0-5]\d)?(?:[.,]\d+)?'
+                      r'(?![\w:]|\s*(?:[ap]\.?m\b|utc\b|gmt\b|[+-]\d{2}:?\d{2}\b))', re.I)
+# A bare clock time («at 14:32 the build ran») is no correction: a timecode counts only with a media cue or a
+# correction word within NEAR characters of it (mass-audit-fixes-03).
+MEDIA = re.compile(r'(?<!\w)(?:video|видео|відео|ролик|кадр|frame|сек|second|voice|голос|audio|аудио|аудіо'
+                   r'|звук|scene|сцен|clip|клип|кліп|track|трек|subtitle|субтитр|timecode|таймкод|sec(?!\w))', re.I)
+NEAR = 48
 # The explicit phrase (RU, UK, EN); the last group names the branch. RU/UK allow up to three words
 # between the verb and the preposition («внеси это / вот это в запрет»).
 PHRASES = [
@@ -111,7 +127,12 @@ def strip(text, pats):
 def triggers(text, cards, timecode=True):
     low = text.lower()
     why, refs = [], []
-    tc = TIMECODE.search(text) if timecode else None
+    tc = None
+    for m in (TIMECODE.finditer(text) if timecode else ()):
+        near = text[max(0, m.start() - NEAR):m.end() + NEAR]
+        if MEDIA.search(near) or LEXICON.search(near.lower()):
+            tc = m
+            break
     if tc:
         why.append('timecode ' + tc.group(0))
     lx = LEXICON.search(low)
@@ -120,7 +141,8 @@ def triggers(text, cards, timecode=True):
     for c in cards:
         if c.status == 'revoked':
             continue
-        if any(k.strip().lower() and k.strip().lower() in low for k in c.keys):
+        # A key matches at a word start, as a stem does: "cut" takes "cutting", never "execute" (P10-08).
+        if any(k.strip() and re.search(r'(?<!\w)' + re.escape(k.strip().lower()), low) for k in c.keys):
             refs.append(c.ref)
     if refs:
         why.append('card keys')
@@ -145,6 +167,11 @@ def typed_line(why, refs):
             ' (date · material · place — «words»; a class code can check gets a failing check:, Law 6)')
 
 
+def phrase_ask_lines(branches):
+    return ['[VULYK] a pasted or quoted text asks to file a ' + b + ' card: ask the owner in one line whether'
+            ' these are their words before filing' for b in branches]
+
+
 def paste_line(why):
     return ('[VULYK] a pasted text looks like a correction (' + ', '.join(why) + '): ask the owner in one'
             ' line whether these are their words before filing')
@@ -165,9 +192,6 @@ def on_prompt(data, cards):
     if not isinstance(prompt, str) or not prompt.strip():
         return []
     text = strip(SIDE_NOTE.sub(' ', prompt), HARNESS)
-    branches = phrase_branches(text)                     # pastes and fences included
-    if branches:
-        return phrase_lines(branches)
     tag = os.environ.get('VULYK_DICTATION_TAG', '')
     pastes = []
 
@@ -183,6 +207,12 @@ def on_prompt(data, cards):
         pastes.append(m.group(0))
         return ' '
     typed = QUOTES.sub(quote, typed)
+    branches = phrase_branches(typed)                    # the owner's typed words (and a dictation paste)
+    if branches:
+        return phrase_lines(branches)
+    branches = phrase_branches(text)                     # only in a paste, a quote or a fence: ask first
+    if branches:
+        return phrase_ask_lines(branches)
     why, refs = triggers(typed, cards)
     if why:
         return [typed_line(why, refs)]
@@ -212,8 +242,11 @@ def on_answer(data, cards):
         q = next((q for q in qs if q.get('question') == question), None)
         rest = answer
         for label in sorted(labels(q) if q else every, key=len, reverse=True):
-            if label in rest:
-                rest = rest.replace(label, ' ')
+            # A whole comma-separated part only (the answer joins chosen labels and free text with ", "):
+            # "Blue" in "not Blue" or "Reddish" is no choice the owner made (P10-09).
+            part = re.compile(r'(?:^|(?<=,))[ \t]*' + re.escape(label) + r'[ \t]*(?=,|\Z)')
+            if part.search(rest):
+                rest = part.sub(' ', rest)
                 lines.append('[VULYK] decision: «' + clip(label, 120) + '» on «' + clip(str(question), 160) + '»')
         rest = SIDE_NOTE.sub(' ', rest).strip(' \t\r\n,;"\'«»“”')
         if rest:

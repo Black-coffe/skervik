@@ -55,9 +55,6 @@ bootstrap/interview.md
 docs/defects/README.md
 memory/learnings/README.md
 memory/map/README.md
-memory/map/agents-and-commands.md
-memory/map/cycle.md
-memory/map/scripts.md
 memory/memory.md
 memory/stats/skills.json
 scripts/acceptance-log.sh
