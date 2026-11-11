@@ -25,6 +25,7 @@
 .claude/commands/vulyk-ship.md
 .claude/commands/vulyk-status.md
 .claude/commands/vulyk-update.md
+.claude/handoff.config.json
 .claude/hooks/anomaly-scan.sh
 .claude/hooks/context-guard.sh
 .claude/hooks/defect-intake.sh
@@ -63,6 +64,7 @@ scripts/defects-check.sh
 scripts/defects-index.sh
 scripts/evolve-ledger.py
 scripts/git-hooks/post-merge
+scripts/handoff-window-check.py
 scripts/human-check.sh
 scripts/injection-check.sh
 scripts/journal.sh
