@@ -1,5 +1,5 @@
 ---
-description: Stage 06 of the cycle - fix history, merge locally, print the publish command, open the next circle. Pushes only the spec branch, for its CI run; never publishes or deploys. Its only tag is the VULYK source's local dev-build tag, never pushed.
+description: Stage 06 of the cycle - fix history, merge locally, print the publish command, open the next circle. Pushes only the spec branch, for its CI run, and only to a private origin; never publishes or deploys. Its only tag is the VULYK source's local dev-build tag, never pushed.
 argument-hint: [spec slug; defaults to the newest spec with a GREEN council row or a human check recorded]
 ---
 
@@ -17,7 +17,10 @@ Ship: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md c
    merging the default branch into the spec branch and opening a new council round, because the
    resolution is code no GREEN round has seen. Run it only on the owner's yes.
    The `ci` line wants a green CI run on the branch head (or the newest commit with only paperwork after
-   it). On `ci: no CI run for <sha>`, run it yourself: `git push -u origin <branch>`, then
+   it). On `ci: no CI run for <sha>`, first ask where `origin` points: `gh repo view --json visibility -q
+   .visibility`. `PUBLIC` (or no answer): never push the spec branch there, since it carries every unpublished
+   commit of the default branch; ask the owner (a private CI mirror, or his override to ship without branch CI)
+   and stop until he answers. A private origin: run it yourself, `git push -u origin <branch>`, then
    `gh workflow run <file under .github/workflows/> --ref <branch>` (skip it when the push itself started
    a run; a workflow with neither a push nor a `workflow_dispatch` trigger for the branch: say so and stop).
    Wait for the run (`gh run watch <id> --exit-status`, Bash `timeout: 600000`, again while it runs), then
@@ -69,7 +72,13 @@ Ship: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md c
      canary (for a busy one, the session to close). a red canary stops the rollout: revert that canary's upgrade commit, hold the reverted canary
      and every hive not yet upgraded with the canary's failure as the reason, and tell the owner.
    - End on `bash scripts/hives-behind.sh` exit 0, and print its `held` lines to the owner with their reasons.
-3. Publish: print, then stop. Under a `to publish, run:` heading, print the publish step exactly as the
+3. Publish: review the outward text, print, then stop. Before the publish command is printed, dispatch `lead-review`
+   on the outward text: the `CHANGELOG.md` section going out, the release notes, and the `UNASKED:` and Minor lines
+   of the spec folders being published (their `council/round-*/` seat files and `review.md`). Its one rule: flag
+   every line that names a gate bypass or a hole not fixed in the version being published. The main session moves
+   each flagged line to a private file under `~/.vulyk/` and removes it from the outward text, then asks
+   `lead-review` again; the publish command is printed only after a clean pass (card public-release-per-change).
+   Under a `to publish, run:` heading, print the publish step exactly as the
    *Release / deploy* row names it, with the version. When that step pushes and tags and the repo has CI
    (`.github/workflows/`), print it in this order: push the release commit, wait for CI on that commit
    to be green, then tag and push the tag; a red run means no tag. Do not run it, ask about it, or check

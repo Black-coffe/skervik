@@ -27,12 +27,14 @@
 .claude/commands/vulyk-update.md
 .claude/hooks/anomaly-scan.sh
 .claude/hooks/context-guard.sh
+.claude/hooks/court-guard.sh
 .claude/hooks/defect-intake.sh
 .claude/hooks/defects-inject.sh
 .claude/hooks/defects_lib.py
 .claude/hooks/git-guard.sh
 .claude/hooks/handoff.py
 .claude/hooks/handoff.sh
+.claude/hooks/owner-guard.sh
 .claude/hooks/session-start-brief.sh
 .claude/hooks/skill-usage-counter.sh
 .claude/hooks/top-model-brief.sh
@@ -55,8 +57,6 @@ bootstrap/interview.md
 docs/defects/README.md
 memory/learnings/README.md
 memory/map/README.md
-memory/memory.md
-memory/stats/skills.json
 scripts/acceptance-log.sh
 scripts/cycle.sh
 scripts/defects-check.sh
@@ -91,10 +91,13 @@ scripts/top-model.sh
 scripts/trace-autopsy.py
 scripts/trace-autopsy.sh
 scripts/trace-check.sh
+scripts/upgrade-base-check.sh
+scripts/version-order.sh
 scripts/vulyk-update.sh
 scripts/wave-check.sh
 templates/adr.md
 templates/grill.md
+templates/memory.md
 templates/plan.md
 templates/rule-example.md
 templates/story.md
