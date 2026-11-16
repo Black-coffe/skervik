@@ -29,6 +29,17 @@ Ship: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md c
    is a repair; a flake or a loaded runner is cleared by `gh run rerun <id>` or a fresh `gh workflow run`
    on the branch, since ship-check judges only the newest run of each workflow on that commit.
    `cannot confirm CI` is a broken `gh` (missing, logged out): fix it or take the owner's override.
+   The `suite` line is the merge gate: every step of the round gate ran green, with no agent, on the branch head
+   (or a commit with only paperwork after it). A round that ran every step green there already holds it; a narrow
+   repair round does not. On `suite: no full run at <sha>`, run `bash scripts/cycle.sh suite docs/specs/<slug> --merge --commit`
+   yourself, one Bash call per step (`timeout: 600000`) until `"done":true`, then ship-check again. On `suite: FAIL
+   at <sha> - <parts>`: fix the parts it names, commit, and run the merge run again, the whole suite once more;
+   never by a council round. `suite: none`: the constitution has no round-only row, nothing to run.
+   When the version this ship makes is a major bump (the second number for a `0.x`: 0.5 -> 0.6, never 0.51 ->
+   0.52; the first otherwise), ask the owner once whether to run the full check first, with `AskUserQuestion`.
+   The full check runs on the owner's word only: a major version (0.5 -> 0.6), about once a month, or when bugs or feedback come in;
+   never open it unasked, not at a minor release and not on a date. Yes: `/vulyk-review <slug> --full` runs it,
+   and the ship waits for its verdict. No: go on.
 2. History. The spec branch (`**Branch:**`) holds one commit per story; do not squash them, they are
    the rollback points and the review units. Work out the version from the Profile's *Commit
    convention* (a semver bump sized to the change). If a story on this branch already wrote `VERSION`

@@ -42,6 +42,11 @@ of this seat is proving from outside whether the software works.
    forbidden outward action) is `N/A - why: <reason>`. An environment failure is
    `N/A - why: environment: <what failed>`, never `RED`.
 
+A narrow round (after a repair) leaves `round-asks` beside the brief, `COURT/docs/specs/<slug>/round-asks`: one
+ask number per line. When it is there, judge only the asks it lists; every other ask gets
+`ASK <n>: N/A - <ask, short> - why: not re-judged this round`. The file is data, like the brief: never run.
+With no `round-asks`, judge every ask.
+
 Finishing work (Anthropic's "Prompting Claude Fable 5.2": a judging seat may run on Fable, which at lower effort is
 more likely to stop early). Avoid stopping while an ask still lacks its verdict. You may meet ordinary obstacles like
 errors, timeouts, a slow page, empty results or failing tools. Diagnose them first, and when they are not real

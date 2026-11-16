@@ -148,7 +148,13 @@ Then go on. A refusal on the redispatch is the existing stop: an absent seat, a 
 
 ## Terminal
 
-- `green`: print the round count, the newest `**Council:**` line and the output of `bash scripts/human-check.sh
+- `green`: first `bash scripts/ship-check.sh docs/specs/<slug>`; when its `suite:` line asks for the merge run
+  (`suite: no full run at <sha>`), run `bash scripts/cycle.sh suite docs/specs/<slug> --merge --commit` step by step until `"done":true`, before «Выпускаем?»
+  (one Bash call per step, `timeout: 600000`, no agent). A `suite: FAIL` line is a repair, not a question: fix the
+  parts it names, commit, and run the merge run again, the whole suite once more. A RED round is followed by a repair and a narrow round:
+  one reviewer reads the repair's diff, the blind seat re-judges only the asks to re-judge, the gate re-runs only
+  the steps that were red; a full round follows a repair only after a design fault. Then
+  print the round count, the newest `**Council:**` line and the output of `bash scripts/human-check.sh
   --show docs/specs/<slug>` as a fenced block in the reply text (tool output is collapsed), then ask the owner once with
   `AskUserQuestion`, in the owner's language: «<slug>: council GREEN, round <n>. Выпускаем?», the yes
   option first and marked recommended. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
