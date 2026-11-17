@@ -2389,11 +2389,44 @@ verify_rec_new() { # verify_rec_new <record> <files-hash> <stamp> <verify-hash> 
     [ -z "${5:-}" ] || printf 'outd=%s\n' "$5"; } > "$1"
 }
 
-verify_rec_drop() { # verify_rec_drop <record> - remove the record and its results directory; the directory
-  # only when it is one stamp-red made (vulyk-sr.*), a real directory the caller owns, never through a symlink
+sr_root() { local r="${TMPDIR:-/tmp}"; printf '%s' "${r%/}"; } # sr_root -> the temp root stamp-red's stored output lives in
+
+outd_why() { # outd_why <path> -> why a recorded stored-output path is not stamp-red's own, or nothing when it
+  # is (R1): a real directory (no link) directly under the temp root, named vulyk-sr.<x>, owned by the caller
+  local p="$1"
+  if [ -z "$p" ]; then echo "no results directory in the record"
+  elif [ "${p%/*}" != "$(sr_root)" ]; then echo "results directory $p is not directly under the temp root $(sr_root)"
+  elif case "${p##*/}" in vulyk-sr.?*) false ;; *) true ;; esac; then echo "results directory $p lacks the vulyk-sr. prefix"
+  elif [ -L "$p" ]; then echo "results directory $p is a symlink"
+  elif [ ! -d "$p" ]; then echo "results directory $p is not a directory"
+  elif [ ! -O "$p" ]; then echo "results directory $p is not owned by the caller"
+  fi
+}
+
+sr_sweep() { # sr_sweep - removes stamp-red's own stored-output directories (outd_why's rule) older than a day
+  local root d; root="$(sr_root)"
+  find "$root/" -mindepth 1 -maxdepth 1 -type d -name 'vulyk-sr.?*' -mmin +1440 2>/dev/null | while IFS= read -r d; do
+    d="$root/${d##*/}"
+    [ -z "$(outd_why "$d")" ] && rm -rf -- "$d"
+  done
+  return 0
+}
+
+verify_rec_drop() { # verify_rec_drop <record> - remove the record, and its results directory only when outd_why
+  # vouches for it; any other recorded path is neither read nor removed
   local od; od="$(verify_rec_get "$1" outd)"
-  case "${od##*/}" in vulyk-sr.*) [ -d "$od" ] && [ ! -L "$od" ] && [ -O "$od" ] && rm -rf -- "$od" ;; esac
+  [ -n "$od" ] && [ -z "$(outd_why "$od")" ] && rm -rf -- "$od"
   rm -f -- "$1"
+}
+
+red_rec() { verify_rec "$1" stamp-red.receipt; } # red_rec <story-file> -> the path of stamp-red's receipt record (D1)
+
+red_rec_put() { # red_rec_put <story-file> <tests-hash> <impl-hash> <stamped> - the receipt record stamp-red keeps
+  # after a finished run: tests=, impl=, stamped=, written whole (a re-stamp replaces it)
+  local rec dir top; rec="$(red_rec "$1")"; dir="$(dirname "$rec")"; top="$(dirname "$dir")"
+  mkdir -p "$dir" || return 1
+  [ -f "$top/.gitignore" ] || printf '*\n' > "$top/.gitignore"
+  printf 'tests=%s\nimpl=%s\nstamped=%s\n' "$2" "$3" "$4" > "$rec"
 }
 
 verify_nth_line() { # verify_nth_line <cmd-list> <reps> <k> -> the k-th line verify_run runs (counted across reps)
@@ -2416,10 +2449,10 @@ verify_resume_start() { # verify_resume_start <verb> <record> <files-hash> <stam
   # is honoured only when head (equal to HEAD, or only paperwork commits since: lib.sh paperwork_only),
   # stamp (`-` for none), the ## Files hash and the ## Verification hash all equal this call's, and every
   # skipped line j has a line=j entry for its current text: close-story needs that entry's exit 0;
-  # stamp-red needs outd= to be a directory, not a symlink, owned by the caller ([ -d ] [ ! -L ] [ -O ]),
-  # holding j.code / j.line equal to the entry and j.out whose sha256 is the entry's fourth field (the
-  # output this chain wrote, upgrade-findings-07). Anything else: VR_START=1, the record and its directory
-  # dropped, one stderr line saying why. No record at all is the silent strict path.
+  # stamp-red needs outd= to pass outd_why (directly under the temp root, vulyk-sr. prefix, a real
+  # directory, not a symlink, owned by the caller), holding j.code / j.line equal to the entry and j.out whose sha256 is the entry's fourth field (the
+  # output this chain wrote, upgrade-findings-07). Anything else: VR_START=1, the record dropped (its
+  # directory only when outd_why vouches for it), one stderr line saying why. No record at all is the silent strict path.
   local verb="$1" rec="$2" why="" h nx j e lt lrc eh oh od=""
   VR_START=1; VR_OUTD=""
   [ -e "$rec" ] || [ -L "$rec" ] || return 0
@@ -2436,11 +2469,7 @@ verify_resume_start() { # verify_resume_start <verb> <record> <files-hash> <stam
   fi
   if [ -z "$why" ] && [ "$verb" = stamp-red ]; then
     od="$(verify_rec_get "$rec" outd)"
-    if [ -z "$od" ]; then why="no results directory in the record"
-    elif [ -L "$od" ]; then why="results directory $od is a symlink"
-    elif [ ! -d "$od" ]; then why="results directory $od is not a directory"
-    elif [ ! -O "$od" ]; then why="results directory $od is not owned by the caller"
-    fi
+    why="$(outd_why "$od")"
   fi
   j=1
   while [ -z "$why" ] && [ "$j" -lt "$nx" ]; do
@@ -2708,8 +2737,10 @@ EOF
 }
 
 red_gate() { # red_gate <story-file> - close-story's refusals for a marked story (exit 4); returns
-  # when the receipt stands. A missing receipt line or section is a refusal, never a pass.
-  local story="$1" rva th ih now msg=""
+  # when the receipt stands. A missing receipt line or section is a refusal, never a pass. The receipt
+  # stands only when stamp-red's own record (red_rec, guards-1115-03 D1) holds the same tests and impl
+  # hashes; no record, or other hashes, is a refusal naming stamp-red.
+  local story="$1" rva th ih now msg="" rec
   rva="$(fm_raw "$story" red_verified_at)"
   ih="$(awk "$FENCE_AWK"' fence_line($0) || fence_n { next }
     /^## Red receipt[[:space:]]*$/ { in_r=1; next } in_r && /^##[[:space:]]/ { exit }
@@ -2724,7 +2755,12 @@ red_gate() { # red_gate <story-file> - close-story's refusals for a marked story
     }
     red_sets "$story"
     now="$(red_hash "$RED_SEALED")"
-    if [ "$now" != "$th" ]; then msg="test changed after red receipt: re-run stamp-red"
+    rec="$(red_rec "$story")"
+    if [ ! -f "$rec" ] || [ -L "$rec" ] || [ -z "$(verify_rec_get "$rec" tests)" ]; then
+      msg="red receipt has no stamp-red record: run cycle.sh stamp-red $story"
+    elif [ "$(verify_rec_get "$rec" tests)" != "$th" ] || [ "$(verify_rec_get "$rec" impl)" != "$ih" ]; then
+      msg="red receipt differs from its stamp-red record: run cycle.sh stamp-red $story"
+    elif [ "$now" != "$th" ]; then msg="test changed after red receipt: re-run stamp-red"
     elif [ "$(red_hash "$RED_IMPL")" = "$ih" ]; then msg="no implementation change since red receipt"
     fi
   fi
@@ -2810,6 +2846,13 @@ $RED_IMPL
 EOF
 }
 
+sr_exit() { # sr_exit - stamp-red's EXIT trap: the stored output in SR_OUTD removed (a pause empties it
+  # first), then red_baseline_restore
+  [ -z "${SR_OUTD:-}" ] || rm -rf -- "$SR_OUTD"
+  SR_OUTD=""
+  red_baseline_restore
+}
+
 red_baseline_restore() { # red_baseline_restore - the EXIT trap of red_baseline_swap: each file back byte for
   # byte (cp -p of the copy), a file that was absent removed again; then the copies are dropped
   local i flag p
@@ -2871,14 +2914,19 @@ cmd_stamp_red() { # cmd_stamp_red <story-file> [<stamp>] [<baseline 0|1>] - red-
   local VH VL VREC OUTD; VH="$(verify_files_hash "$STORY")"; VL="$(verify_text_hash "1
 $CMD_LIST")"
   VREC="$(verify_rec "$STORY" stamp-red)"
+  sr_sweep   # guards-1115-03 (S14): stored output an unresumed pause left a day ago or more goes first
   verify_resume_start stamp-red "$VREC" "$VH" "$STAMP" "$VL" "$CMD_LIST" 1
   OUTD="$VR_OUTD"
   if [ "$VR_START" -eq 1 ]; then
-    OUTD="$(mktemp -d "${TMPDIR:-/tmp}/vulyk-sr.XXXXXX")" || { emit false stamp-red 2 error "mktemp -d failed"; exit 2; }
+    OUTD="$(mktemp -d "$(sr_root)/vulyk-sr.XXXXXX")" || { emit false stamp-red 2 error "mktemp -d failed"; exit 2; }
     verify_rec_new "$VREC" "$VH" "$STAMP" "$VL" "$OUTD" || { rm -rf "$OUTD"; emit false stamp-red 2 error "could not write $VREC"; exit 2; }
   fi
+  # guards-1115-03 (S14): from here every way out removes the stored output (and puts a --baseline working
+  # copy back); only a pause clears SR_OUTD first and keeps it for the resumed call
+  SR_OUTD="$OUTD"
+  trap sr_exit EXIT; trap 'exit 130' INT; trap 'exit 143' TERM; trap 'exit 129' HUP
   VR_REC="$VREC" verify_run "$CMD_LIST" 1 "$OUTD"
-  if [ "$VR_PAUSE" -gt 0 ]; then verify_pause stamp-red "$VREC" "$VR_PAUSE"; fi
+  if [ "$VR_PAUSE" -gt 0 ]; then SR_OUTD=""; verify_pause stamp-red "$VREC" "$VR_PAUSE"; fi
   # audit-fixes-1113-03: a later line can rewrite an earlier line's <k>.out after its hash was recorded; each
   # stored output is re-hashed against its line= entry before the verdict reads it again.
   local k oh
@@ -2914,6 +2962,9 @@ $CMD_LIST")"
   # when ten passing lines follow it (post-046-tails).
   TAIL="$( { grep -F -- "$REASON" "$OUTD/$HIT.out" | head -n 3; tail -n 10 "$OUTD/$HIT.out"; } | tr -d '\r' | bash "$HERE/redact.sh")"
   rm -rf "$OUTD"
+  # guards-1115-03 (D1): the receipt's hashes go into the cycle's own record first; close-story's red gate
+  # accepts the story's receipt only when it carries the same ones. A failed re-stamp leaves the last one.
+  red_rec_put "$STORY" "$TH" "$IH" "$TS" || { emit false stamp-red 2 error "could not write $(red_rec "$STORY")"; exit 2; }
   PATHS="$(printf '%s\n' "$RED_SEALED" | sed '/^$/d' | paste -sd, - | sed 's/,/, /g')"
 
   # Frontmatter: red_verified_at replaced, or added right after red_reason:. Body: an old
@@ -3625,6 +3676,7 @@ cmd_open_round() { # cmd_open_round <spec> <commit:0|1> [<stamp>]
   pause_guard "$SPEC" open-round
   driver_guard "$SPEC" open-round "$STAMP"
   branch_guard "$SPEC" open-round
+  sr_sweep   # guards-1115-03 (S14): stamp-red stored output a day old or more
 
   local SLUG PLAN; SLUG="$(slug_of "$SPEC")"; PLAN="$SPEC/plan.md"
 
