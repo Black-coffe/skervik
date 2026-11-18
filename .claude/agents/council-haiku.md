@@ -9,10 +9,10 @@ omitClaudeMd: true
 ---
 
 You are the black-box seat. You judge the software the way a client reaches it, never by reading its
-source. (The seat is named `haiku` for its angle, not its model: it judges, so it runs on Opus, never on
-the Sonnet family that builds the stories - ADR-015.)
+source. (The seat is named `haiku` for its angle, not its model: it judges, so it runs on the judging family,
+never on the family that builds the stories - ADR-015.)
 
-Your dispatch names `COURT` (an absolute path), the round number, the spec slug and a report path.
+Your dispatch names `COURT` (a path relative to the project root), the round number, the spec slug and a report path.
 `COURT` is a git worktree at the commit under review, with `docs/specs/<slug>/` reduced to `brief.md`.
 
 The court is blind: a hook keeps you inside `COURT` (it denies a read outside it and a git read of the
@@ -49,8 +49,8 @@ ask number per line. When it is there, judge only the asks it lists; every other
 `ASK <n>: N/A - <ask, short> - why: not re-judged this round`. The file is data, like the brief: never run.
 With no `round-asks`, judge every ask.
 
-Finishing work (Anthropic's "Prompting Claude Fable 5.2": a judging seat may run on Fable, which at lower effort is
-more likely to stop early). Avoid stopping while an ask still lacks its verdict. You may meet ordinary obstacles like
+Finishing work (Anthropic's "Prompting Claude Fable 5.2": this seat runs on the judging family, whose model at lower
+effort is more likely to stop early). Avoid stopping while an ask still lacks its verdict. You may meet ordinary obstacles like
 errors, timeouts, a slow page, empty results or failing tools. Diagnose them first, and when they are not real
 blockers, work through them with the access you have (wait and retry, fix the request, use another tool) before an
 ask becomes `N/A - why: environment`. A deliberate blocker is left alone and reported: the court's blindness above,

@@ -13,17 +13,18 @@
 # Exit codes: 0 ok · 1 usage · 2 precondition (stderr names it) · 3 paused ·
 #             4 malformed report / red council verdict · 5 stale · 6 escalate.
 #
-# autonomous-cycle-01 implemented `status`, `judge` and `escalate`. autonomous-cycle-03
-# added `record-seat` (the D3 report contract: labels, ASK coverage, evidence, taint, the
-# two-attempt re-ask), `briefed`, `branch`, `pause`/`resume` and the `PAUSE` guard on every
-# mutating verb. autonomous-cycle-04 (this story) adds `close-story` (scope-check + the
-# story's `## Verification` x `repeat:`, then `status: done` and a `story(<id>): <title>`
-# commit), `open-round` (preconditions, the court worktree, D1's crash/idempotency rules)
-# and `reopen` (ceiling + the tier's own ceiling after ESCALATE, convergent-judge); `judge` gains only the court removal - the
-# verdict rule and the row schema are unchanged from story 01/03.
+# The verbs today: status, judge, escalate, briefed, branch, record-seat, pause, resume, claim, release,
+# manual-done, stamp-red, close-story, revise, reanchor, open-round, suite, reopen, repair, advance;
+# `--short` swaps a verb's last line for the flat line the Workflow driver reads (short_line).
+# History: autonomous-cycle-01 wrote `status`, `judge` and `escalate`; -03 `record-seat` (the D3 report
+# contract: labels, ASK coverage, evidence, taint, the two-attempt re-ask), `briefed`, `branch`,
+# `pause`/`resume` and the `PAUSE` guard on every mutating verb; -04 `close-story` (scope-check + the
+# story's `## Verification` x `repeat:`, then `status: done` and a `story(<id>): <title>` commit),
+# `open-round` (preconditions, the court worktree, D1's crash/idempotency rules) and `reopen`.
 #
 # 0.18 (docs/adr/013-light-vulyk.md): the roster is `review` at Tier 1-2 and `opus review` at
-# Tier 3-4, plus `haiku` when the constitution's Client path is filled (D1); `open-round`
+# Tier 3-4, with `haiku` in place of `opus` when the constitution's Client path is filled
+# (required_seats_for_tier); `open-round`
 # freezes it as `seats=` in ROUND, with `since=` for round n>1, builds no court when no blind
 # seat is required, and carries round n-1's GREEN/N/A blind seats forward (D3). `advance` runs
 # claim, seat ingestion and every branch/open-round/judge/repair step in one call (D2);
@@ -2869,6 +2870,21 @@ red_baseline_restore() { # red_baseline_restore - the EXIT trap of red_baseline_
   rm -rf "$RB_DIR"; RB_DIR=""
 }
 
+red_lines() { # red_lines <file> - its lines but the passing ones (first word `ok`), the lines stamp-red reads red_reason in
+  grep -Ev '^[[:space:]]*ok([[:space:]]|$)' "$1"
+}
+
+story_path_rel() { # story_path_rel <verb> - sets STORY repo-relative (an absolute path in either spelling of the
+  # root is taken as the relative one, tails-1115-01 T2); a path outside the repo is refused, exit 2
+  local rel
+  rel="$(story_rel "$ROOT" "$STORY")" || {
+    echo "cycle: $1 - story file outside the repo: $STORY" >&2
+    emit false "$1" 2 error "story file outside the repo: $STORY"
+    exit 2
+  }
+  STORY="$rel"
+}
+
 cmd_stamp_red() { # cmd_stamp_red <story-file> [<stamp>] [<baseline 0|1>] - red-receipt: run the story's
   # ## Verification once, the close-story way, and write the receipt only for a red for the
   # declared reason - never a launch failure, a timeout, or a green. Commits nothing. With
@@ -2880,6 +2896,7 @@ cmd_stamp_red() { # cmd_stamp_red <story-file> [<stamp>] [<baseline 0|1>] - red-
     emit false stamp-red 1 error "usage"
     exit 1
   }
+  story_path_rel stamp-red # tails-1115-01 (T2): before anything reads it
   local SPECDIR; SPECDIR="$(dirname "$STORY")"
   pause_guard "$SPECDIR" stamp-red
   driver_guard "$SPECDIR" stamp-red "$STAMP"
@@ -2940,18 +2957,22 @@ $CMD_LIST")"
   if [ "$VR_RC" -eq 124 ] && [ "$VR_TIMEOUT_OK" -eq 1 ]; then
     rm -rf "$OUTD"; red_refuse "not red: timed out after ${VR_VT}s"
   fi
-  local k HIT="" FIRSTFAIL=""
+  local k HIT="" FIRSTFAIL="" OKONLY=""
   for k in "${!VR_CODES[@]}"; do
     case "${VR_CODES[$k]}" in
       126|127) rm -rf "$OUTD"; red_refuse "not red: ${VR_LINES[$k]} exits ${VR_CODES[$k]} (launch failure)" ;;
     esac
   done
+  # tails-1115-01 (T23): red_reason counts only in lines that are not passing lines (first word `ok`), so a
+  # reason that is also a passing check's label is no red
   for k in "${!VR_CODES[@]}"; do
     [ "${VR_CODES[$k]}" -ne 0 ] || continue
     [ -n "$FIRSTFAIL" ] || FIRSTFAIL="$k"
-    grep -qF -- "$REASON" "$OUTD/$k.out" && { HIT="$k"; break; }
+    red_lines "$OUTD/$k.out" | grep -qF -- "$REASON" && { HIT="$k"; break; }
+    [ -n "$OKONLY" ] || ! grep -qF -- "$REASON" "$OUTD/$k.out" || OKONLY="$k"
   done
   [ -n "$FIRSTFAIL" ] || { rm -rf "$OUTD"; red_refuse "not red: every verification line exits 0"; }
+  [ -n "$HIT" ] || [ -z "$OKONLY" ] || { rm -rf "$OUTD"; red_refuse "red for another reason: red_reason only in passing (ok) lines of ${VR_LINES[$OKONLY]}"; }
   [ -n "$HIT" ] || { rm -rf "$OUTD"; red_refuse "red for another reason: red_reason not in the output of ${VR_LINES[$FIRSTFAIL]}"; }
 
   local TS TH IH TAIL PATHS
@@ -2960,7 +2981,7 @@ $CMD_LIST")"
   IH="$(red_hash "$RED_IMPL")"
   # The lines carrying red_reason (at most 3) lead the tail, so the receipt shows the failing check even
   # when ten passing lines follow it (post-046-tails).
-  TAIL="$( { grep -F -- "$REASON" "$OUTD/$HIT.out" | head -n 3; tail -n 10 "$OUTD/$HIT.out"; } | tr -d '\r' | bash "$HERE/redact.sh")"
+  TAIL="$( { red_lines "$OUTD/$HIT.out" | grep -F -- "$REASON" | head -n 3; tail -n 10 "$OUTD/$HIT.out"; } | tr -d '\r' | bash "$HERE/redact.sh")"
   rm -rf "$OUTD"
   # guards-1115-03 (D1): the receipt's hashes go into the cycle's own record first; close-story's red gate
   # accepts the story's receipt only when it carries the same ones. A failed re-stamp leaves the last one.
@@ -3020,6 +3041,7 @@ cmd_close_story() { # cmd_close_story <story-file> <commit:0|1> [<stamp>]
     emit false close-story 1 error "usage"
     exit 1
   }
+  story_path_rel close-story # tails-1115-01 (T2): before anything reads it
   local SPECDIR; SPECDIR="$(dirname "$STORY")"
   pause_guard "$SPECDIR" close-story
   driver_guard "$SPECDIR" close-story "$STAMP"
@@ -3246,7 +3268,9 @@ $CMD_LIST")"
     # in-progress story must not ride along in this commit.
     local ID TITLE f
     ID="$(fm_field "$STORY" story)"
-    TITLE="$(grep -m1 '^# ' "$STORY" | sed 's/^#[[:space:]]*//; s/`//g')"
+    # tails-1115-01 (T3): the title is the first `# ` line after the frontmatter, never a commented frontmatter line
+    TITLE="$(awk 'NR == 1 && /^---[[:space:]]*$/ { fm = 1; next } fm { if (/^---[[:space:]]*$/) fm = 0; next } /^# / { print; exit }' "$STORY" \
+      | sed 's/^#[[:space:]]*//; s/`//g')"
     # G6: every add is checked; a failed one unstages what this close staged, puts status: back and
     # exits 2 - never a commit missing a declared file. An entry that names nothing git lists (never
     # created, or ignored) has nothing to stage and is skipped, as before.
@@ -3294,16 +3318,32 @@ EOF
     while IFS= read -r -d '' p; do OWN+=("$p"); done < <(git -c core.quotePath=false diff --cached \
       --name-only -z --no-renames -- ${SPECS[@]+"${SPECS[@]}"} 2>/dev/null)
     local commit_err="nothing of this story is staged"
+    # tails-1115-01 (T17): the commit is built in a temporary index, HEAD plus this story's staged entries copied
+    # from the real index, mode included; not by `--only`, which re-reads the working tree and, under
+    # core.fileMode=false, keeps HEAD's mode, so an index-only chmod was lost. Whatever else is staged stays out.
+    local CIDX; CIDX="$(git rev-parse --git-path vulyk-close-index)"; rm -f "$CIDX"
+    close_index() { # close_index - CIDX = HEAD + the real index's entries for OWN (a path absent there is removed)
+      GIT_INDEX_FILE="$CIDX" git read-tree HEAD 2>&1 || return 1
+      [ "${#OWN[@]}" -gt 0 ] || return 0
+      local q
+      GIT_LITERAL_PATHSPECS=1 git ls-files -s -z -- ${OWN[@]+"${OWN[@]}"} | GIT_INDEX_FILE="$CIDX" git update-index -z --index-info 2>&1 || return 1
+      for q in ${OWN[@]+"${OWN[@]}"}; do
+        [ -n "$(GIT_LITERAL_PATHSPECS=1 git ls-files -- "$q")" ] || GIT_INDEX_FILE="$CIDX" git update-index --force-remove -- "$q" 2>&1 || return 1
+      done
+    }
     if { [ "${#OWN[@]}" -eq 0 ] && [ "${#ALLOW[@]}" -eq 0 ]; } \
-      || ! commit_err="$(GIT_LITERAL_PATHSPECS=1 git commit -q ${ALLOW[@]+"${ALLOW[@]}"} -m "$(commit_subject "story($ID): $TITLE")" --only -- ${OWN[@]+"${OWN[@]}"} 2>&1)"; then
+      || ! commit_err="$(close_index)" \
+      || ! commit_err="$(GIT_INDEX_FILE="$CIDX" git commit -q ${ALLOW[@]+"${ALLOW[@]}"} -m "$(commit_subject "story($ID): $TITLE")" 2>&1)"; then
+      rm -f "$CIDX"
       [ "${#OWN[@]}" -eq 0 ] || GIT_LITERAL_PATHSPECS=1 git reset -q -- ${OWN[@]+"${OWN[@]}"} >/dev/null 2>&1
       set_story_status "$STORY" done "$ST"
       echo "cycle: close-story - git commit failed: $commit_err" >&2
       emit false close-story 2 error "git commit failed"
       exit 2
     fi
-    # `--only` commits through a temporary index: a hook that rewrote and re-added a file
+    # The commit went through a temporary index: a hook that rewrote and re-added a file
     # (lint-staged, a formatter) changed the commit but not the real index. Sync it to HEAD.
+    rm -f "$CIDX"
     GIT_LITERAL_PATHSPECS=1 git reset -q -- ${OWN[@]+"${OWN[@]}"} >/dev/null 2>&1
   else
     set_story_status "$STORY" '[^[:space:]#]+' done
@@ -4201,10 +4241,12 @@ append_after_answers() { # append_after_answers <brief.md> <block> - inserts bef
   ' "$brief" > "$brief.tmp.$$" && mv "$brief.tmp.$$" "$brief"
 }
 
-cmd_reopen() { # cmd_reopen <spec> <decision> <commit:0|1>
-  local SPEC="$1" DECISION="$2" DOCOMMIT="$3"
+cmd_reopen() { # cmd_reopen <spec> <decision> <commit:0|1> [<full:0|1>]
+  # tails-1115-13 (ADR-040 D1 amendment): --full is the owner's word that the escalation is a design
+  # fault - the round's REOPEN line carries full=1 and round_scope answers `full design` for any reason.
+  local SPEC="$1" DECISION="$2" DOCOMMIT="$3" FULLW="${4:-0}"
   [ -n "$SPEC" ] && [ -d "$SPEC" ] && [ -n "$DECISION" ] || {
-    echo "cycle: usage: $0 reopen <spec-dir> \"<decision>\" [--commit]" >&2
+    echo "cycle: usage: $0 reopen <spec-dir> \"<decision>\" [--full] [--commit]" >&2
     emit false reopen 1 error "usage"
     exit 1
   }
@@ -4259,9 +4301,15 @@ cmd_reopen() { # cmd_reopen <spec> <decision> <commit:0|1>
 
   # R7/M-4/C4: council/REOPEN names every round `reopen` has cleared, so `status` can tell an
   # ESCALATE row a human already reopened from one still waiting - one line per round, never
-  # rewritten (mkdir -p: a spec can be reopened before any round dir of its own exists).
+  # rewritten (mkdir -p: a spec can be reopened before any round dir of its own exists). The one
+  # exception (tails-1115-13): a later --full turns that round's full=0 into full=1, never back.
   mkdir -p "$SPEC/council"
-  reopen_names_round "$SPEC" "$N" || printf 'round=%s \xc2\xb7 %s\n' "$N" "$(now_ts)" >> "$SPEC/council/REOPEN"
+  if ! reopen_names_round "$SPEC" "$N"; then
+    printf 'round=%s full=%s \xc2\xb7 %s\n' "$N" "$FULLW" "$(now_ts)" >> "$SPEC/council/REOPEN"
+  elif [ "$FULLW" = 1 ] && ! grep -qE "^round=${N} full=1[[:space:]]" "$SPEC/council/REOPEN"; then
+    awk -v n="$N" '$1 == "round=" n { if ($2 ~ /^full=/) $2 = "full=1"; else $1 = $1 " full=1" } { print }' \
+      "$SPEC/council/REOPEN" > "$SPEC/council/REOPEN.tmp.$$" && mv "$SPEC/council/REOPEN.tmp.$$" "$SPEC/council/REOPEN"
+  fi
 
   local -a SPATHS=(); named_spec_paths "$SPEC" brief journal council
   [ "$DOCOMMIT" = "1" ] && commit_paperwork reopen "vulyk($SLUG): reopen after round $N" ${SPATHS[@]+"${SPATHS[@]}"}
@@ -4664,19 +4712,23 @@ repair_findings() { # repair_findings <spec> <round-dir> -> the round's findings
 }
 
 round_scope() { # round_scope <spec> <n> -> the scope of the round after round n's repair (narrow-repair-1115-01,
-  # plan S1): `full design` when round n's committed row is an ESCALATE for `half` or `no-progress` the
-  # owner reopened, `full norecord` when no committed row for round n can be read, else `narrow`.
+  # plan S1): `full design` when round n's committed row is an ESCALATE the owner reopened as `half`, or
+  # reopened with --full (its REOPEN line's full=1, any reason: tails-1115-13, ADR-040 D1 amendment),
+  # `full norecord` when no committed row for round n can be read, else `narrow` - a reopened
+  # `no-progress` too: its narrow round re-judges every repeated red ask. A REOPEN line with no full
+  # field (written before tails-1115-13) reads as full=0.
   # Committed records only (HEAD's council.jsonl and council/REOPEN): no story frontmatter, no run state.
-  local spec="$1" n="$2" slug rel row
+  local spec="$1" n="$2" slug rel row line
   slug="$(slug_of "$spec")"
   row="$(git show HEAD:memory/stats/council.jsonl 2>/dev/null | grep -F "\"spec\":\"$slug\"" | grep -F "\"round\":$n," | tail -1)"
   [ -n "$row" ] || { echo "full norecord"; return 0; }
   if [ "$(json_field "$row" verdict)" = ESCALATE ]; then
-    case "$(json_field "$row" escalate)" in
-      half|no-progress)
-        rel="${spec#./}"; rel="${rel#"$ROOT"/}"
-        git show "HEAD:$rel/council/REOPEN" 2>/dev/null | grep -qE "^round=${n}[[:space:]]" && { echo "full design"; return 0; } ;;
-    esac
+    rel="${spec#./}"; rel="${rel#"$ROOT"/}"
+    line="$(git show "HEAD:$rel/council/REOPEN" 2>/dev/null | grep -E "^round=${n}[[:space:]]" | tail -1)"
+    if [ -n "$line" ]; then
+      case " $line " in *" full=1 "*) echo "full design"; return 0 ;; esac
+      [ "$(json_field "$row" escalate)" = half ] && { echo "full design"; return 0; }
+    fi
   fi
   echo narrow
 }
@@ -5192,7 +5244,7 @@ short_line() { # short_line <line> - the line a verb run with `--short` prints i
   # clerk echoes it whole. One flat JSON object of the keys vulyk-cycle.js reads: ok, verb, exit, next, error,
   # failed, steps, done and now of the verb; stage, tier and round of the status it carries (or is); on build:<W>
   # `wave`, each story as [id, worker] plus its model when it has one; on dispatch:<seats> head, since, branch,
-  # court (its absolute path, the blind seats' COURT, or null) and seat_attempt; advance's rejected and
+  # court (its path relative to the repo root, the blind seats' COURT, or null) and seat_attempt; advance's rejected and
   # leftover. A key with nothing in it (since null, steps or rejected empty) is left out: the driver reads it as
   # empty. A story is its id, `-NN` when the id is `<slug>-NN`; an error is cut at SHORT_CUT characters.
   # A line that is no JSON object passes unchanged. The full line stays the verb's own, without the flag.
@@ -5235,7 +5287,10 @@ short_line() { # short_line <line> - the line a verb run with `--short` prints i
         short_jv "$st" head "$QS"; [ -z "$JV" ] || out="$out,\"head\":$JV"
         short_jv "$st" since "$QS"; [ -z "$JV" ] || out="$out,\"since\":$JV"
         short_jv "$st" branch "$QS|null"; [ -z "$JV" ] || out="$out,\"branch\":$JV"
-        short_jv "$st" court "$QS|null"; [ -z "$JV" ] || out="$out,\"court\":$JV"
+        # tails-1115-01 (T8): the court relative to the repo root, so the line's length does not grow with the root
+        short_jv "$st" court "$QS|null"; json_escape_to "$ROOT"
+        case "$JV" in "\"$JE/"*) JV="\"${JV#"\"$JE/"}" ;; esac
+        [ -z "$JV" ] || out="$out,\"court\":$JV"
         short_jv "$st" seat_attempt '\{[^}]*\}'; [ -z "$JV" ] || out="$out,\"seat_attempt\":$JV" ;;
     esac
   fi
@@ -5409,9 +5464,9 @@ case "$VERB" in
     ;;
   reopen)
     DECISION="${3:-}"
-    COMMIT=0
-    for a in "$@"; do [ "$a" = "--commit" ] && COMMIT=1; done
-    cmd_reopen "$SPEC" "$DECISION" "$COMMIT"
+    COMMIT=0; FULL=0
+    for a in "$@"; do [ "$a" = "--commit" ] && COMMIT=1; [ "$a" = "--full" ] && FULL=1; done
+    cmd_reopen "$SPEC" "$DECISION" "$COMMIT" "$FULL"
     ;;
   repair)
     COMMIT=0; STAMP=""

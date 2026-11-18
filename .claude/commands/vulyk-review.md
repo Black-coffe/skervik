@@ -57,6 +57,7 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
      the repair's diff, the blind seat re-judges only the asks to re-judge, the gate re-runs only the steps that
      were red; a full round follows a repair only after a design fault.
    - `escalated`: print `## Needs a human` from plan.md verbatim. The owner chooses: `human-check.sh
-     <spec> ACCEPTED "<his words>" --commit`, `cycle.sh reopen "<decision>"`, or leaving the spec open.
+     <spec> ACCEPTED "<his words>" --commit`, `cycle.sh reopen "<decision>"` (add `--full` only on his word that
+     it is a design fault, never without it), or leaving the spec open.
 
 The council's verdict is what this command produces; there is no stop for the owner inside it.

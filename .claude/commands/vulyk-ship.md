@@ -61,6 +61,11 @@ Ship: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md c
      and the `version` of every tracked `.claude-plugin/plugin.json` with it (tests/mods.test.sh pins them to
      `VERSION`), commit both alone as `release: <version> (local, unpublished)`, then `git tag v<version>` on that
      commit: the next upgrade finds the build a hive came from by that tag. Tag and commit are never pushed.
+   - Before that tag, put the push guard in place: with no `pre-push` hook in this clone, run
+     `cp scripts/git-hooks/pre-push "$(git rev-parse --git-path hooks)/pre-push"` and `chmod +x` it. It runs
+     `scripts/tag-push-check.sh` on every push and refuses a push carrying a `-dev.N` tag or more than one version tag
+     (card public-release-per-change). The same hook already there: nothing to do; a different `pre-push` hook already
+     there is not replaced: name it to the owner.
    - Holds: every ship re-checks each live hold, so a held hive whose reason is gone takes this build now; one
      that still cannot take it gets its hold rewritten with the reason seen today.
    - Upgrade a hive, held or not, only when `bash scripts/hives-behind.sh --busy <hive>` prints `idle` (no build

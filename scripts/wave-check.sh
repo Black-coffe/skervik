@@ -43,7 +43,8 @@
 # Limits, stated rather than hidden: a verification command that names NO path (a whole
 # suite) cannot be judged here, and a path that resolves but is simply the wrong file
 # passes. `missing` is a question about existence, never about correctness. A command
-# token counts as a path only when the tree agrees - it exists, or it is a glob - so a
+# token counts as a path only when the tree or the story agrees - it exists, it is a glob, or
+# a `## Files` entry names it (a test the story creates) - so a
 # package name like `@scope/pkg`, a branch name or a URL is not mistaken for one.
 #
 # Overlap matching mirrors scope-check.sh: exact path, glob, and directory prefix
@@ -205,14 +206,24 @@ PATHS_EOF
       # pnpm/npm monorepo as a verify-gap (found by the S2.6.5a battle test, 2026-08-18).
       # Read line by line, never `for tok in $(...)`: under nullglob/globstar (set above) a glob
       # token that matches nothing vanished there, and with it the verify-gap.
+      # A token a `## Files` entry names (or a glob there matches) is a path too, on disk or not: the test
+      # the story itself creates (tails-1115-05, T1).
       cmd_paths=""
       while IFS= read -r tok; do
         [ -n "$tok" ] || continue
         case "$tok" in
           *[*?[]*) cmd_paths="${cmd_paths}${tok}
 " ;;
-          *) [ -e "$tok" ] && cmd_paths="${cmd_paths}${tok}
-" ;;
+          *) if [ -e "$tok" ]; then cmd_paths="${cmd_paths}${tok}
+"
+             else
+               while IFS= read -r dp; do
+                 [ -n "$dp" ] && overlap "$tok" "$dp" && { cmd_paths="${cmd_paths}${tok}
+"; break; }
+               done <<DECLT_EOF
+$declared
+DECLT_EOF
+             fi ;;
         esac
       done <<TOKS_EOF
 $(verify_path_tokens "$verify" | grep '/')

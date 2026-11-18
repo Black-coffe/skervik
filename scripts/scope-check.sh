@@ -56,6 +56,10 @@ case "$SINCE" in -*) echo "scope-check: --since needs a commit" >&2; exit 0 ;; e
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "scope-check: not a git repo" >&2; exit 0; }
 cd "$ROOT" || exit 0
+# tails-1115-01 (T2): an absolute story path becomes repo-relative before anything reads it, so the story's own
+# file and its wave-mates' story files match the diff's repo-relative names
+STORY_IN="$STORY"
+STORY="$(story_rel "$ROOT" "$STORY_IN")" || { echo "scope-check: story file outside the repo: $STORY_IN" >&2; exit 0; }
 
 # --- what the story declared -------------------------------------------------
 # The `## Files` block: lines starting with "- " until the next "## " heading.

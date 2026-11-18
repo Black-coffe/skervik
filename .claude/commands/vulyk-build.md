@@ -164,7 +164,8 @@ Then go on. A refusal on the redispatch is the existing stop: an absent seat, a 
   <N> s, budget <B> s` line: cut the part that ran long, then reopen), then the output of `bash
   scripts/human-check.sh --show docs/specs/<slug>` as a fenced block in the reply text. The owner chooses: `bash
   scripts/human-check.sh docs/specs/<slug> ACCEPTED "<note>" --commit` (the note is the owner's own words, never yours; `--commit` commits the record, which owner-guard refuses to any other command), `bash scripts/cycle.sh reopen
-  docs/specs/<slug> "<decision>"`, or leaving it open.
+  docs/specs/<slug> "<decision>"` (the next round re-checks the repair; `--full` only when the owner says it is a
+  design fault, never added without his word), or leaving it open.
 - `paused`: stop; `/vulyk-resume <slug>` continues. `shipped`: nothing to build. `briefed`: point at
   `/vulyk-plan`.
 - `manual:<ids>` (or a driver `stop.verb` `manual`): a story waits on a hand step. Do it (or ask the

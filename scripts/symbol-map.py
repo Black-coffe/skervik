@@ -178,6 +178,8 @@ class Repo:
         for p in files:
             self.basenames.setdefault(posixpath.basename(p), []).append(p)
         self._edges = None
+        self._detail = {}  # shell file -> [(line, files it sources or runs)]
+        self._sourced_only = {}  # shell file -> files it sources and never runs
 
     def text(self, p):
         if p not in self._text:
@@ -319,12 +321,105 @@ class Repo:
             prev = w
             i += len(w)
 
+    @staticmethod
+    def subst_bodies(code):
+        """(tails-1115-12) The body of each $( ) and backtick command substitution of a line that is not inside
+        single quotes, nested ones too: a command run there (`out="$(bash scripts/x.sh)"`) is a direct call."""
+        out, i, sq, dq = [], 0, False, False
+        while i < len(code):
+            c = code[i]
+            if sq:
+                if c == "'":
+                    sq = False
+            elif c == '\\':
+                i += 1
+            elif c == "'" and not dq:
+                sq = True
+            elif c == '"':
+                dq = not dq
+            elif c == '`':
+                j = code.find('`', i + 1)
+                if j < 0:
+                    break
+                out.append(code[i + 1:j])
+                out.extend(Repo.subst_bodies(code[i + 1:j]))
+                i = j
+            elif code.startswith('$(', i):
+                j, depth, q = i + 2, 1, None
+                while j < len(code):
+                    d = code[j]
+                    if q:
+                        if d == q:
+                            q = None
+                    elif d in '"\'':
+                        q = d
+                    elif d == '(':
+                        depth += 1
+                    elif d == ')':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                out.append(code[i + 2:j])
+                out.extend(Repo.subst_bodies(code[i + 2:j]))
+                i = j
+            i += 1
+        return out
+
+    def segments(self, line):
+        """The line itself, then each command substitution body in it."""
+        return [line] + (self.subst_bodies(line) if '$(' in line or '`' in line else [])
+
+    FUNC_RE = re.compile(r'^(\s*)(?:function\s+)?([A-Za-z_][\w:-]*)\s*\(\)\s*\{')
+
+    def sh_reach(self, via, p):
+        """(tails-1115-12) (runs p at the top level?, the functions of via that run p, or call one that does):
+        a file that only sources via calls p only through one of these."""
+        top, owner, body, cur, indent = False, [], {}, None, ''
+        detail = self._detail.get(via, [])
+        for ln, targets in detail:
+            if cur is None:
+                m = self.FUNC_RE.match(ln)
+                if m:
+                    name = m.group(2)
+                    body.setdefault(name, [])
+                    if not re.search(r'[;\s]\}(?:\s|;|$)', ln[m.end():]):
+                        cur, indent = name, m.group(1)
+                    body[name].append((ln, targets))
+                    continue
+                if p in targets:
+                    top = True
+            else:
+                body[cur].append((ln, targets))
+                if re.match(re.escape(indent) + r'\}', ln):
+                    cur = None
+        reach = {f for f, lns in body.items() if any(p in tg for _, tg in lns)}
+        grew = True
+        while grew:
+            grew = False
+            for f, lns in body.items():
+                if f not in reach and any(self.call_words(ln) & reach for ln, _ in lns):
+                    reach.add(f)
+                    grew = True
+        return top, reach
+
+    def call_words(self, code):
+        """The unquoted shell words of a line and of its command substitutions."""
+        return {w for seg in self.segments(code) for w, _ in self.sh_words(seg) if '"' not in w and "'" not in w}
+
+    def calls_any(self, q, names):
+        t = self.text(q)
+        if not t or not names:
+            return False
+        return any(self.call_words(ln) & names for ln in t.splitlines() if not ln.lstrip().startswith('#'))
+
     def sh_edges(self, p):
         t = self.text(p)
         out = set()
         if not t:
             return out
         lines = [ln for ln in t.splitlines() if not ln.lstrip().startswith('#')]
+        detail, sourced, ran = [], set(), set()
         # narrow-repair-1115-06: a variable set once to a script path (`SM="$SRC/scripts/symbol-map.sh"`) stands
         # for that path when a runner runs it (`bash "$SM"`, `"$PY" "$EL"`)
         paths = {}
@@ -337,27 +432,36 @@ class Repo:
             v = self.VAR.match(w.replace('"', '').replace("'", ''))
             return paths.get(v.group(1), w) if v else w
         for line in lines:
+            targets = set()
             if 'source' in line or '.' in line:
                 for m in self.SOURCE_RE.finditer(line):
                     r = self.sh_resolve(self.word_at(line, m.end()), p)
                     if r:
-                        out.add(r)
+                        sourced.add(r)
+                        targets.add(r)
             if '.py' in line or '.sh' in line or '.bash' in line or (paths and '$' in line):
                 # a bash-run python file: "$(dirname "$0")/x.py", "$DIR/x.py", or a literal path after a runner;
                 # (narrow-repair-1115-06) a bash-run script: `bash <path>.sh`, `sh <path>`, `exec <path>`, as the
-                # suites run a script they copied (`cp "$SRC"/scripts/x.sh scripts/` then `bash scripts/x.sh`)
-                for w, prev in self.sh_words(line):
-                    w = expand(w)
-                    s = w.replace('"', '').replace("'", '')
-                    pv = prev.replace('"', '').replace("'", '')
-                    if s.endswith('.py'):
-                        if '$' not in s and not self.RUNNER.match(pv):
+                # suites run a script they copied (`cp "$SRC"/scripts/x.sh scripts/` then `bash scripts/x.sh`);
+                # (tails-1115-12) the same inside a command substitution: `out="$(bash scripts/x.sh)"`, backticks
+                for seg in self.segments(line):
+                    for w, prev in self.sh_words(seg):
+                        w = expand(w)
+                        s = w.replace('"', '').replace("'", '')
+                        pv = prev.replace('"', '').replace("'", '')
+                        if s.endswith('.py'):
+                            if '$' not in s and not self.RUNNER.match(pv):
+                                continue
+                        elif not (s.endswith(SHELL_EXT) and self.SH_RUNNER.match(pv)):
                             continue
-                    elif not (s.endswith(SHELL_EXT) and self.SH_RUNNER.match(pv)):
-                        continue
-                    r = self.sh_resolve(w, p)
-                    if r:
-                        out.add(r)
+                        r = self.sh_resolve(w, p)
+                        if r:
+                            ran.add(r)
+                            targets.add(r)
+            detail.append((line, targets))
+            out |= targets
+        self._detail[p] = detail
+        self._sourced_only[p] = sourced - ran
         out.discard(p)
         return out
 
@@ -432,7 +536,7 @@ def line(label, path):
     return '  %-7s  %s' % (label, path)
 
 
-def exact_importers(edges, p, lang):
+def exact_importers(repo, edges, p, lang):
     """path -> '' or ' (via <__init__>)' for every file that imports, sources or runs p (an `exact` hit)."""
     exact_imp = {}
     if lang:
@@ -444,8 +548,16 @@ def exact_importers(edges, p, lang):
             # runs the wrapper imports p, via the wrapper
             vias = [q for q in exact_imp if q.endswith('__init__.py') or not (q.endswith('.py') or is_test(q))]
             for via in vias:
+                reach = None
                 for q, (e, _) in edges.items():
                     if via in e and q not in exact_imp and q != p:
+                        # (tails-1115-12) sourcing a wrapper is a call of p only when the wrapper runs p at its
+                        # top level or q calls a function of it that runs p
+                        if via in repo._sourced_only.get(q, ()):
+                            if reach is None:
+                                reach = repo.sh_reach(via, p)
+                            if not reach[0] and not repo.calls_any(q, reach[1]):
+                                continue
                         exact_imp[q] = ' (via %s)' % via
     return exact_imp
 
@@ -471,7 +583,7 @@ def block(repo, p, scope, exact=False):
     word = re.compile(r'(?<![\w])' + re.escape(stem) + r'(?![\w])') if stem else None
     sections = []
 
-    exact_imp = exact_importers(edges, p, lang)
+    exact_imp = exact_importers(repo, edges, p, lang)
 
     def textual_hits(cands):
         hits = []
@@ -642,7 +754,7 @@ def fill_story(repo, path, cells):
             continue
         lang = 'py' if p.endswith('.py') else ('sh' if repo.is_shell(p) else None)
         edges = repo.edges({'py': ('py', 'sh'), 'sh': ('sh',), None: ()}[lang])
-        for q in sorted(exact_importers(edges, p, lang)):
+        for q in sorted(exact_importers(repo, edges, p, lang)):
             if is_test(q) and not is_fixture(q) and not in_scope(q, scope) and q not in added:
                 added.append(q)
     insert_after(lines, last_item, ['- ' + q for q in added], eol)

@@ -58,16 +58,6 @@
         ]
       }
     ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/context-guard.sh\""
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -117,6 +107,16 @@
           }
         ]
       }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-usage-counter.sh\""
+          }
+        ]
+      }
     ]
   },
   "permissions": {
@@ -129,5 +129,6 @@
       "Bash(bash scripts/cycle.sh close-story:*)",
       "Bash(bash scripts/journal.sh:*)"
     ]
-  }
+  },
+  "switchModelsOnFlag": false
 }

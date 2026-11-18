@@ -26,7 +26,6 @@
 .claude/commands/vulyk-status.md
 .claude/commands/vulyk-update.md
 .claude/hooks/anomaly-scan.sh
-.claude/hooks/context-guard.sh
 .claude/hooks/court-guard.sh
 .claude/hooks/defect-intake.sh
 .claude/hooks/defects-inject.sh
@@ -63,6 +62,7 @@ scripts/defects-check.sh
 scripts/defects-index.sh
 scripts/evolve-ledger.py
 scripts/git-hooks/post-merge
+scripts/git-hooks/pre-push
 scripts/handoff-window-check.py
 scripts/hives-behind.sh
 scripts/human-check.sh
@@ -85,6 +85,7 @@ scripts/state.sh
 scripts/suite-parts-check.sh
 scripts/symbol-map.py
 scripts/symbol-map.sh
+scripts/tag-push-check.sh
 scripts/telemetry.sh
 scripts/token-report.py
 scripts/top-model.sh

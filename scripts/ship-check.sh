@@ -15,7 +15,8 @@
 # `**Shipped:**` line in plan.md and a row in memory/stats/ship.jsonl. The publishing
 # itself is never done here and never by an agent.
 #
-# Exit status is always 0: this reports, it does not block. The refusing is the command's.
+# Exit status is always 0: this reports, it does not block. The refusing is the command's. The one
+# exception: `--record` exits 1, writing nothing, when its note cannot be masked by redact.sh.
 set -u
 
 # pack_fingerprint(), paperwork_only() and marker() now live in scripts/lib.sh, shared with
@@ -37,9 +38,11 @@ if [ "${1:-}" = "--record" ]; then
     echo "ship-check: usage: $0 --record <spec-dir> <version> [note]" >&2; exit 0; }
   RPLAN="$RSPEC/plan.md"
   [ -f "$RPLAN" ] || { echo "ship-check: CANNOT RUN - $RPLAN does not exist." >&2; exit 0; }
-  if [ -f "$ROOT/scripts/redact.sh" ]; then
-    RNOTE="$(printf '%s' "$RNOTE" | bash "$ROOT/scripts/redact.sh")"
-  fi
+  # The note is masked or the record is refused: no redact.sh, or a failing one, writes nothing (exit 1).
+  [ -f "$ROOT/scripts/redact.sh" ] || {
+    echo "ship-check: refused - no scripts/redact.sh, so the note cannot be masked; nothing recorded." >&2; exit 1; }
+  RNOTE="$(printf '%s' "$RNOTE" | bash "$ROOT/scripts/redact.sh" 2>/dev/null)" || {
+    echo "ship-check: refused - redact.sh failed to mask the note; nothing recorded." >&2; exit 1; }
   RNOTE="$(printf '%s' "$RNOTE" | tr -d '\n' | tr -d '\r')"
   RHEAD="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
   RDATE="$(date -u +%Y-%m-%d)"
@@ -226,6 +229,22 @@ ci_check() {
   fail ci "ci: no CI run for $(git rev-parse --short HEAD) (or a commit with only paperwork after it) - push the branch and run its workflow"
 }
 ci_check
+
+# defects - the repo-wide defect gate (tails-1115-09, T100): a red library, or a gate that cannot run (exit 2: no
+# Python, no parser, no library), is NOT READY; a repo with no scripts/defects-check.sh has no gate to run.
+defects_check() {
+  local out rc=0 last
+  [ -f "$ROOT/scripts/defects-check.sh" ] || { ok defects "defects: not checked - no scripts/defects-check.sh in this repo"; return; }
+  # no bytecode: a check that reads the tree leaves nothing in it (stage 03 judges a clean tree)
+  out="$(PYTHONDONTWRITEBYTECODE=1 bash "$ROOT/scripts/defects-check.sh" 2>&1)" || rc=$?
+  last="$(printf '%s\n' "$out" | tr -d '\r' | grep -v '^[[:space:]]*$' | tail -1)"
+  case "$rc" in
+    0) ok defects "defects: the defect gate is green - $last" ;;
+    1) fail defects "defects: the defect gate is RED - $last - run bash scripts/defects-check.sh and fix what it names" ;;
+    *) fail defects "defects: cannot confirm the defect gate - defects-check.sh exit $rc: $last" ;;
+  esac
+}
+defects_check
 
 # suite - the full suite once, green, on what merges (narrow-repair-1115-04, plan M2). A narrow repair round re-runs
 # only its red steps, so before a local merge every step of the round gate must have run green, with no agent, on
