@@ -45,7 +45,8 @@ No driver, no clerk, no court. Loop:
    is built the same way; its `## Findings` are the conditions to meet. Back to 1.
 3. `dispatch:review`: first the round's test gate: `bash scripts/cycle.sh suite docs/specs/<slug> --commit`, one Bash
    call per step with `timeout: 600000`, repeated until the last line says `"done":true` (`ok:false`: print its
-   `error` and stop). Then dispatch `lead-review` with the Agent tool, with `model: <r>` from
+   `error` and stop); in a repo whose default branch holds `.vulyk-solo-gate` = `merge-only` a Tier 1-2 round's gate
+   ends at once with `SUITE: none - Tier 1-2: ...` (no step: the merge run is the one full run). Then dispatch `lead-review` with the Agent tool, with `model: <r>` from
    `r="$(bash scripts/model-profile.sh --role review)"` only when the profile (`bash scripts/model-profile.sh`)
    is not `sonnet-builds`, else no model parameter:
    `Review <slug>, round <round>. Spec: <spec>. Branch <branch> at <head>. Report: .vulyk/reports/<slug>/round-<round>/review.attempt-<k>.md`

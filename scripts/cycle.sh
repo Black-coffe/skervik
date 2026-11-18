@@ -236,6 +236,19 @@ default_branch() { # default_branch -> origin's HEAD branch, else main, else mas
   printf '%s' "$d"
 }
 
+solo_gate_on() { # solo_gate_on -> 0 iff the default branch holds a root `.vulyk-solo-gate` saying exactly `merge-only`
+  # (solo-gate-1118, opt-in): then a Tier 1-2 round's gate runs no step and the merge run is the one full run. Read
+  # from the default branch, so a spec branch cannot switch its own gate off; missing, empty or other text: off.
+  local db v; db="$(default_branch)"; [ -n "$db" ] || return 1
+  v="$(git show "$db:.vulyk-solo-gate" 2>/dev/null | tr -d '\r')" || return 1
+  [ "$v" = merge-only ]
+}
+
+solo_tier() { # solo_tier <spec> <round-dir> -> 0 iff the round's frozen tier is 1 or 2
+  case "$(round_tier "$1" "$2")" in 1|2) return 0 ;; esac
+  return 1
+}
+
 [ -n "$VERB" ] || usage
 
 # --- small parsers shared by status and judge ---------------------------------------------
@@ -4026,6 +4039,18 @@ cmd_suite() { # cmd_suite <spec> <commit:0|1> [<stamp>]
   local NRUN=""
   if [ "$(round_field "$RD" narrow)" = 1 ]; then NRUN="$(round_field "$RD" rerun)"; [ -n "$NRUN" ] || NRUN=none; fi
 
+  # solo-gate-1118: with the opt-in on, a full (not narrow) Tier 1-2 round runs no gate step: the stories' checks ran at
+  # close-story and the merge run is the one full run. The owner's --full round (full=asked, full=design) still runs.
+  if [ -z "$NRUN" ] && [ ! -f "$LOG" ] && solo_tier "$SPEC" "$RD" && solo_gate_on; then
+    case "$(round_field "$RD" full)" in asked|design) ;; *)
+      printf 'head=%s steps=0\nSUITE: none - Tier 1-2: the stories'"'"' checks ran at close-story; the full suite runs once before merge\n' "$RHEAD" > "$LOG"
+      [ "$DOCOMMIT" = "1" ] && commit_paperwork suite "vulyk($SLUG): suite round $N none (Tier 1-2)" "$LOG"
+      echo "cycle: $SLUG - round $N: Tier 1-2 with .vulyk-solo-gate merge-only, SUITE: none, no step run"
+      suite_emit "$SPEC" 0 0 true none 0
+      exit 0 ;;
+    esac
+  fi
+
   # A log keyed to another head (an earlier code state) is discarded, never resumed.
   local lh=""; [ -f "$LOG" ] && lh="$(head -1 "$LOG" | tr -d '\r' | sed -n 's/^head=\([^ ]*\).*/\1/p')"
   [ -f "$LOG" ] && [ "$lh" != "$RHEAD" ] && rm -f "$LOG"
@@ -4822,6 +4847,8 @@ round_rerun() { # round_rerun <spec> <n> -> the gate steps the narrow round afte
   # (`SUITE: none - narrow repair round`, its log `steps=0`) is read through gate_log_round: the last round
   # that ran steps (narrow-repair-1115-06, round 1 finding 1)
   local rd snow sold
+  # solo-gate-1118: with the opt-in on, the narrow round after a Tier 1-2 repair re-runs no step (its round n ran none)
+  solo_tier "$1" "$1/council/round-$2" && solo_gate_on && return 0
   rd="$(gate_log_round "$1" "$2")"
   snow="$(suite_step_count)"
   [ "$snow" = 0 ] && return 0
