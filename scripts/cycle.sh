@@ -622,10 +622,35 @@ red_rounds() { # red_rounds <slug> [<exclude-round>] -> how many distinct rounds
   # ended RED (convergent-judge-07, plan ## Contracts: RED rounds): a council.jsonl row with
   # verdict RED, or ESCALATE with escalate ceiling|no-progress. GREEN, STALE and ESCALATE
   # env|half rows never count - the count every ceiling gate compares against.
+  # af-gates-1119 G2: a gate-only round (row `"gate":true`) counts toward none of the council's limits.
   [ -f memory/stats/council.jsonl ] || { echo 0; return; }
-  grep -F "\"spec\":\"$1\"" memory/stats/council.jsonl \
+  grep -F "\"spec\":\"$1\"" memory/stats/council.jsonl | grep -vF '"gate":true' \
     | grep -E '"verdict":"RED"|"verdict":"ESCALATE".*"escalate":"(ceiling|no-progress)"' \
     | sed -n 's/.*"round":\([0-9][0-9]*\),.*/\1/p' | sort -u | grep -vxF "${2:-x}" | grep -c . || true
+}
+
+GATE_CEILING=2 # af-gates-1119 G2: gate-only RED rounds a spec may have before the next red gate asks the owner
+
+row_is_gate() { case "$1" in *'"gate":true'*) return 0 ;; esac; return 1; } # row_is_gate <council-row> -> 0 iff a gate-only round's row
+
+gate_red_rounds() { # gate_red_rounds <slug> -> the gate-only RED rounds since the spec began, or since its newest
+  # gate-ceiling ESCALATE row (only the owner's reopen gets a spec past one, so a later row follows a reopen)
+  [ -f memory/stats/council.jsonl ] || { echo 0; return; }
+  grep -F "\"spec\":\"$1\"" memory/stats/council.jsonl | grep -F '"gate":true' | awk '
+    /"escalate":"gate-ceiling"/ { for (k in r) delete r[k]; next }
+    /"verdict":"RED"/ { if (match($0, /"round":[0-9]+,/)) r[substr($0, RSTART + 8, RLENGTH - 9)] = 1 }
+    END { n = 0; for (k in r) n++; print n }'
+}
+
+round_gate_red() { # round_gate_red <round-dir> -> 0 iff the round's finished gate log keyed to its head ends SUITE: FAIL
+  # (the narrow form too) and no seat of the round is recorded (a carried report is round n-1's, not this round's)
+  local rd="$1" seat f
+  case "$(suite_log_line "$rd")" in "SUITE: FAIL"*) ;; *) return 1 ;; esac
+  for seat in haiku sonnet opus review review2; do
+    [ -f "$rd/$seat.md" ] && ! seat_is_carried "$rd/$seat.md" && return 1
+    for f in "$rd/$seat".attempt-*.md; do [ -e "$f" ] && return 1; done
+  done
+  return 0
 }
 
 round_row() { # round_row <slug> <round> -> the last council.jsonl line for that round, or empty
@@ -859,6 +884,7 @@ cmd_status() {
   elif [ -n "$MANUAL_IDS" ]; then NEXT="manual:${MANUAL_IDS// /,}"
   elif [ "$OPEN_B" = true ]; then
     if [ "$STALE_B" = true ]; then NEXT="open-round"
+    elif round_gate_red "$RD"; then NEXT="judge" # af-gates-1119 G1: a red gate with no seat goes to judge, no seat sent
     elif [ -n "$MISSING" ]; then NEXT="dispatch:$(printf '%s' "$MISSING" | tr ' ' ',')"
     else NEXT="judge"
     fi
@@ -1036,6 +1062,76 @@ review_anchor_asks() { # review_anchor_asks <file> <A> -> sorted "n n" of every 
 }
 review_has_regression() { review_blocking_lines "$1" | grep -qF '[regression]'; } # <file>
 
+# --- the findings ledger (af-gates-1119 FN1/FN2): docs/specs/<slug>/council/findings, append-only paperwork, one line
+# per event, the newest line per number wins: `F<k> open round <n> <anchor> <text>` when judge mints it, `F<k>
+# <fixed|open|dropped> round <m>[ - <reason>]` per answer. judge numbers, never the reviewer and never record-seat.
+ledger_open() { # ledger_open <spec> -> each number whose newest ledger line says open, ascending, one per line
+  [ -f "$1/council/findings" ] || return 0
+  tr -d '\r' < "$1/council/findings" | awk '$1 ~ /^F[0-9]+$/ { s[substr($1, 2) + 0] = $2 } END { for (k in s) if (s[k] == "open") print k }' | sort -n
+}
+
+past_answers_text() { # past_answers_text <report> -> each non-blank line under a `## Past findings` heading, a list marker and
+  # trailing blanks dropped (a Tier 4 fold holds two such sections)
+  printf '%s\n' "$1" | tr -d '\r' | awk '
+    /^##[[:space:]]/ { h = tolower($0); sub(/^##[[:space:]]+/, "", h); on = (h ~ /^past findings[[:space:]]*$/); next }
+    on && NF { l = $0; sub(/^[[:space:]]*([-*][[:space:]]+)?/, "", l); sub(/[[:space:]]+$/, "", l); print l }'
+}
+
+past_answer_bad() { # past_answer_bad <spec> <report> -> FN2: `F<k>` for the first answer line naming an unknown or repeated
+  # number or giving another word or a bare `dropped`, else for the first open number with no answer; nothing when
+  # every open number is answered once (an empty ledger, or none open, needs no section)
+  local open; open="$(ledger_open "$1" | tr '\n' ' ')"
+  [ -n "$open" ] || return 0
+  past_answers_text "$2" | awk -v open="$open" '
+    BEGIN { n = split(open, o, " "); for (i = 1; i <= n; i++) want[o[i]] = 1 }
+    bad == "" && match($0, /^F[0-9]+:/) {
+      k = substr($0, 2, RLENGTH - 2) + 0; rest = substr($0, RLENGTH + 1); sub(/^[[:space:]]+/, "", rest)
+      if (!(k in want) || (k in got) || !(rest == "fixed" || rest == "open" || rest ~ /^dropped - .*[^[:space:]]/)) bad = "F" k
+      got[k] = 1
+    }
+    END { if (bad != "") { print bad; exit } for (i = 1; i <= n; i++) if (!(o[i] in got)) { print "F" o[i]; exit } }'
+}
+
+past_answers_of() { # past_answers_of <spec> <review-file> -> "k fixed|open|dropped[ - <reason>]" per open number the stored
+  # review answers, in answer order; a number answered in two sections (Tier 4 fold) takes `open` if either says it
+  local open; open="$(ledger_open "$1" | tr '\n' ' ')"
+  [ -n "$open" ] || return 0
+  past_answers_text "$(sed '1d' "$2" 2>/dev/null)" | awk -v open="$open" '
+    BEGIN { n = split(open, o, " "); for (i = 1; i <= n; i++) want[o[i]] = 1 }
+    match($0, /^F[0-9]+:/) {
+      k = substr($0, 2, RLENGTH - 2) + 0; rest = substr($0, RLENGTH + 1); sub(/^[[:space:]]+/, "", rest)
+      if (!(k in want) || !(rest == "fixed" || rest == "open" || rest ~ /^dropped - .*[^[:space:]]/)) next
+      if (!(k in a)) { ord[++m] = k; a[k] = rest } else if (rest == "open") a[k] = rest
+    }
+    END { for (i = 1; i <= m; i++) print ord[i] " " a[ord[i]] }'
+}
+
+ledger_anchor() { # ledger_anchor <spec> <k> -> the anchor F<k> was minted under (`[ask N]` or `[regression]`), or nothing
+  [ -f "$1/council/findings" ] || return 0
+  tr -d '\r' < "$1/council/findings" | sed -n "s/^F$2 open round [0-9][0-9]* \(\[[^]]*\]\).*/\1/p" | head -1
+}
+
+ledger_record() { # ledger_record <spec> <n> <review-file> <mint:0|1> - judge's ledger lines for round n, once per round: the
+  # review's answers, then (mint=1, the review BLOCKs on its anchors) one new number per anchored Critical or Major line
+  local spec="$1" n="$2" rf="$3" f="$1/council/findings" k ans
+  [ -f "$f" ] && tr -d '\r' < "$f" | grep -qE "^F[0-9]+ [a-z]+ round $n( |\$)" && return 0
+  ans="$(past_answers_of "$spec" "$rf")"
+  if [ -n "$ans" ]; then
+    printf '%s\n' "$ans" | awk -v n="$n" '{ k = $1; $1 = ""; sub(/^ /, ""); w = $1; r = ""
+      if (w == "dropped") { r = $0; sub(/^dropped - /, "", r); r = " - " r }
+      print "F" k " " w " round " n r }' >> "$f"
+  fi
+  [ "$4" = 1 ] || return 0
+  k="$( { [ -f "$f" ] && tr -d '\r' < "$f"; } | awk '$1 ~ /^F[0-9]+$/ { v = substr($1, 2) + 0; if (v > m) m = v } END { print m + 0 }')"
+  review_blocking_lines "$rf" | grep -E '\[ask [0-9]+\]|\[regression\]' | grep -vF '[unanchored]' | tr -d '\r' | awk -v k="$k" -v n="$n" '{
+    l = $0; sub(/^[[:space:]]*([-*][[:space:]]+|[0-9]+\.[[:space:]]+)/, "", l)
+    match(l, /\[ask [0-9]+\]|\[regression\]/); a = substr(l, RSTART, RLENGTH)
+    t = substr(l, 1, RSTART - 1) substr(l, RSTART + RLENGTH); gsub(/[[:space:]]+/, " ", t); sub(/^ /, "", t); sub(/ $/, "", t)
+    printf "F%d open round %s %s %s\n", ++k, n, a, substr(t, 1, 160) }' >> "$f"
+  [ -s "$f" ] || rm -f "$f"
+  return 0
+}
+
 council_line_exists() { grep -qE "^\*\*Council:\*\*.*round $2," "$1" 2>/dev/null; } # <plan> <round>
 journal_line_exists() { [ -f "$1/journal.md" ] && grep -qF "round $2 verdict $3" "$1/journal.md"; } # <spec> <round> <verdict>
 
@@ -1120,6 +1216,12 @@ escalate_row_exists() { # escalate_row_exists <slug> <round> - trailing comma an
 }
 escalate_council_line_exists() { grep -qE "^\*\*Council:\*\*.*ESCALATE round $2," "$1" 2>/dev/null; } # <plan> <round>
 
+council_row_append() { # council_row_append <json-line> - one printf, one append (m-10): the ledger path shared
+  # by the ESCALATE writer and judge_gate's gate verdict, so a new row kind adds no new append site
+  mkdir -p memory/stats
+  printf '%s\n' "$1" >> memory/stats/council.jsonl
+}
+
 write_escalate_row_for_round() { # write_escalate_row_for_round <spec> <slug> <rd> <n> <reason> <note>
   # Records an ESCALATE row (council.jsonl), a plan.md **Council:** line, a `## Needs a human`
   # block (C7) and a journal line for round <n> - shared by the standalone `escalate` verb
@@ -1188,11 +1290,11 @@ ASKS
   if ! escalate_row_exists "$slug" "$n"; then
     mkdir -p memory/stats
     json_escape_to "$note" # P9-01: the note is free text - a quote in it must not forge a key
-    printf '{"ts":"%s","spec":"%s","round":%s,"verdict":"ESCALATE","head":"%s","pack":"%s","asks":%s,"red":[%s],"red_unevidenced":[%s],"review_asks":[%s],"na":0,"review":"%s","haiku":"%s","haiku_model":"%s","sonnet":"%s","sonnet_model":"%s","opus":"%s","opus_model":"%s","attempts":%s,"escalate":"%s","note":"%s"}\n' \
+    council_row_append "$(printf '{"ts":"%s","spec":"%s","round":%s,"verdict":"ESCALATE","head":"%s","pack":"%s","asks":%s,"red":[%s],"red_unevidenced":[%s],"review_asks":[%s],"na":0,"review":"%s","haiku":"%s","haiku_model":"%s","sonnet":"%s","sonnet_model":"%s","opus":"%s","opus_model":"%s","attempts":%s,"escalate":"%s","note":"%s"}' \
       "$(now_ts)" "$slug" "$n" "$rhead" "$rpack" "$a" \
       "$(json_num_csv "$red_e")" "$(json_num_csv "$red_u")" "$(json_num_csv "$review_asks")" \
       "$review_v" "$haiku_v" "$haiku_model" "$sonnet_v" "$sonnet_model" "$opus_v" "$opus_model" \
-      "$attempts" "$reason" "$JE" >> memory/stats/council.jsonl
+      "$attempts" "$reason" "$JE")"
   fi
 
   if [ -f "$plan" ] && ! escalate_council_line_exists "$plan" "$n"; then
@@ -1224,6 +1326,59 @@ write_ceiling_escalate() { # write_ceiling_escalate <spec> <slug> <n> <rd-or-emp
   write_escalate_row_for_round "$spec" "$slug" "$rd" "$n" "ceiling" "open-round ceiling"
 }
 
+judge_gate() { # judge_gate <spec> <commit:0|1> <verb-label> <round-dir> <n> - af-gates-1119 G1/G2: the verdict of a round
+  # whose gate ended SUITE: FAIL before any seat: no seat needed or dispatched. RED with `"gate":true` and a
+  # `**Council:** ... - gate: <red parts>` line, then repair; once the spec holds GATE_CEILING gate-only RED rounds
+  # (since it began or since the owner's reopen of the last gate-ceiling ESCALATE), ESCALATE gate-ceiling (exit 6)
+  # with a ## Needs a human block. The court is removed either way. Idempotent per round, like cmd_judge.
+  # Always terminates the process.
+  local SPEC="$1" DOCOMMIT="$2" VERBLABEL="$3" RD="$4" N="$5" SLUG PLAN
+  SLUG="$(slug_of "$SPEC")"; PLAN="$SPEC/plan.md"
+  local RHEAD RPACK names A prow overall next_val reason="" escjson="null"
+  RHEAD="$(round_field "$RD" head)"; RPACK="$(round_field "$RD" pack)"
+  names="$(gate_red_names "$RD/suite.log")"; A="$(asks_count "$SPEC")"
+  prow="$(round_row "$SLUG" "$N")"
+  if [ -n "$prow" ] && row_is_gate "$prow"; then
+    overall="$(json_field "$prow" verdict)"; reason="$(json_field "$prow" escalate)"
+  elif [ "$(gate_red_rounds "$SLUG")" -ge "$GATE_CEILING" ]; then
+    overall=ESCALATE; reason=gate-ceiling
+  else
+    overall=RED
+  fi
+  if [ "$overall" = ESCALATE ]; then next_val=escalated; escjson="\"$reason\""; else next_val=repair; fi
+  local head7="${RHEAD:-unknown}" dateonly; dateonly="$(date -u +%Y-%m-%d)"
+  if [ -z "$prow" ]; then
+    json_escape_to "gate: $names"
+    council_row_append "$(printf '{"ts":"%s","spec":"%s","round":%s,"verdict":"%s","head":"%s","pack":"%s","asks":%s,"red":[],"red_unevidenced":[],"review_asks":[],"na":0,"review":"","haiku":"","haiku_model":"unknown","sonnet":"","sonnet_model":"unknown","opus":"","opus_model":"unknown","attempts":0,"escalate":%s,"gate":true,"note":"%s"}' \
+      "$(now_ts)" "$SLUG" "$N" "$overall" "$head7" "$RPACK" "$A" "$escjson" "$JE")"
+  fi
+  if [ -f "$PLAN" ] && ! council_line_exists "$PLAN" "$N"; then
+    council_append_line "$PLAN" "$(printf '**Council:** %s round %s, %s, at %s, pack %s - gate: %s' "$overall" "$N" "$dateonly" "$head7" "$RPACK" "$names")"
+  fi
+  if [ "$overall" = ESCALATE ] && [ -f "$PLAN" ] && ! grep -qF "reason: $reason · round $N ·" "$PLAN" 2>/dev/null; then
+    {
+      grep -q '^## Needs a human' "$PLAN" 2>/dev/null || printf '\n## Needs a human\n'
+      printf -- '- reason: %s · round %s · %s\n' "$reason" "$N" "$dateonly"
+      printf -- '- note: the round gate is red again after %s gate repairs (since the spec began or the last gate-ceiling reopen); red: %s\n' "$GATE_CEILING" "$names"
+      printf -- '- gate: %s/suite.log\n' "$RD"
+      printf -- '- seats: none dispatched (gate-only round)\n'
+    } >> "$PLAN"
+  fi
+  journal_line_exists "$SPEC" "$N" "$overall" || \
+    bash "$HERE/journal.sh" "$SPEC" "04-council:$overall" "round $N verdict $overall at $head7 pack $RPACK (gate: $names${reason:+; $reason})" "$next_val" >/dev/null
+  local court_path; court_path="$(round_field "$RD" court)"
+  if [ -n "$court_path" ]; then
+    remove_worktree_path "$court_path"
+    git worktree prune >/dev/null 2>&1 || true
+  fi
+  local -a SPATHS=(); named_spec_paths "$SPEC" plan journal council
+  [ "$DOCOMMIT" = "1" ] && commit_paperwork "$VERBLABEL" "vulyk($SLUG): $VERBLABEL round $N -> $overall (gate)" ${SPATHS[@]+"${SPATHS[@]}"} memory/stats/council.jsonl
+  echo "cycle: $SLUG - round $N judged on its gate alone: $overall (red: $names)"
+  if [ "$overall" = ESCALATE ]; then emit true "$VERBLABEL" 6 escalated; exit 6; fi
+  if [ "$VERBLABEL" = judge ]; then emit_status judge "$SPEC" "$next_val"; else emit true "$VERBLABEL" 0 "$next_val"; fi
+  exit 0
+}
+
 cmd_judge() { # cmd_judge <spec> <commit:0|1> [<verb-label>] [<stamp>]
   local SPEC="$1" DOCOMMIT="$2" VERBLABEL="${3:-judge}" STAMP="${4:-}"
   [ -n "$SPEC" ] && [ -d "$SPEC" ] || {
@@ -1252,6 +1407,9 @@ cmd_judge() { # cmd_judge <spec> <commit:0|1> [<verb-label>] [<stamp>]
   RCEILING="$(round_field "$RD" ceiling)"; [ -n "$RCEILING" ] || RCEILING="$(tier_ceiling "$(round_tier "$SPEC" "$RD")")"
   # ab-run-fixes C2: REQUIRED is the frozen roster plus review2 when the round calls for it
   local REQUIRED; REQUIRED="$(round_needed_seats "$SPEC" "$RD")"
+
+  # af-gates-1119 G1/G2: a red gate with no seat recorded is judged on the gate alone
+  round_gate_red "$RD" && judge_gate "$SPEC" "$DOCOMMIT" "$VERBLABEL" "$RD" "$N"
 
   # --- presence pass: every REQUIRED seat must be present or ABSENT, in order (C15: a seat
   # this round's tier does not call for simply may never have been dispatched) --------------
@@ -1336,7 +1494,20 @@ ASKS
         review_v="PASS"; review_note="review BLOCK unanchored"
       fi
     fi
+    local fmint=0; [ "$review_v" = BLOCK ] && fmint=1 # FN1: an anchored BLOCK gets its lines numbered below
     [ -n "$review_v" ] || review_v="BLOCK" # an unreadable stored report stays a block
+    # af-gates-1119 FN2: an `F<k>: open` answer is a blocking finding of this round under F<k>'s first anchor, whatever
+    # the VERDICT line says; then judge appends the answers and mints the new numbers (FN1), once per round
+    local fk fa
+    for fk in $(past_answers_of "$SPEC" "$rf" | awk '$2 == "open" { print $1 }'); do
+      fa="$(ledger_anchor "$SPEC" "$fk")"; [ -n "$fa" ] || continue
+      review_v="BLOCK"; [ "$review_note" = "review BLOCK unanchored" ] && review_note=""
+      case "$fa" in "[ask "*)
+        fa="${fa#\[ask }"; fa="${fa%\]}"
+        [ "$fa" -ge 1 ] && [ "$fa" -le "$A" ] && case " $review_asks " in *" $fa "*) ;; *) review_asks="$(sort_num_list "$review_asks $fa")" ;; esac ;;
+      esac
+    done
+    ledger_record "$SPEC" "$N" "$rf" "$fmint"
     # fast-verification-07: a failed full suite is never green, whatever the VERDICT line says:
     # `SUITE: FAIL` is the reviewer's BLOCK (a [regression]), anchored or not. A legacy
     # `SUITE: TIMEOUT` line (a reviewer from before the gate split) is the same FAIL: repair, never
@@ -1394,8 +1565,9 @@ ASKS
   # --- no progress (convergent-judge-04): an ask RED this round (evidenced or review-anchored)
   # that round N-1's RED row also held RED. Ask numbers only; a STALE/ESCALATE/missing N-1
   # row never triggers.
-  local repeated="" prow="" prev="" x
-  [ "$N" -gt 1 ] && prow="$(round_row "$SLUG" "$((N-1))")"
+  # af-gates-1119 G2: a gate-only round between is skipped - the council's round before is the one compared.
+  local repeated="" prow="" prev="" x PK=$((N-1))
+  while [ "$PK" -gt 0 ]; do prow="$(round_row "$SLUG" "$PK")"; row_is_gate "$prow" || break; prow=""; PK=$((PK-1)); done
   if [ -n "$prow" ] && [ "$(json_field "$prow" verdict)" = "RED" ]; then
     prev=" $(json_num_array "$prow" red) $(json_num_array "$prow" review_asks) "
     for x in $red_e $review_asks; do
@@ -1470,7 +1642,7 @@ ASKS
         printf -- '- ask %s: BLOCK by the reviewer - see %s/review.md\n' "$u" "$RD"
       done
       if [ "$escalate_reason" = "no-progress" ]; then
-        printf -- '- no progress: ask %s RED in rounds %s and %s\n' "$(json_num_csv "$repeated" | sed 's/,/, /g')" "$((N-1))" "$N"
+        printf -- '- no progress: ask %s RED in rounds %s and %s\n' "$(json_num_csv "$repeated" | sed 's/,/, /g')" "$PK" "$N"
       fi
       if [ "$escalate_reason" = "env" ]; then
         local aseat att
@@ -1918,10 +2090,23 @@ cmd_record_seat_review() { # cmd_record_seat_review <spec> <rd> <n> <attempt> <r
     exit 4
   fi
 
+  # af-gates-1119 FN2: with open numbers in the spec's findings ledger the review answers each one once under
+  # ## Past findings; anything else is MALFORMED (kept, exit 4, asked once more, then ABSENT).
+  local pbad; pbad="$(past_answer_bad "$SPEC" "$REPORT")"
+  if [ -n "$pbad" ]; then
+    local why="past finding $pbad not answered - answer each open number of council/findings once under ## Past findings: F<k>: fixed, F<k>: open or F<k>: dropped - <reason>"
+    write_seat_file "$RD/$SEAT.attempt-$ATTEMPT.md" "$SEAT" "$model" "$N" "$HEAD" "$RPACK" "$ATTEMPT" "" "$REPORT"
+    echo "cycle: record-seat - $SEAT round $N attempt $ATTEMPT: MALFORMED: $why" >&2
+    emit false record-seat 4 error "MALFORMED: $why"
+    exit 4
+  fi
+
   # convergent-judge-07: a BLOCK must carry at least one finding line (plan ## Contracts) with
   # an anchor tag; otherwise it is MALFORMED like any seat - kept, exit 4, re-asked once. The tag
-  # is not validated further here (ask range, regression claim: judge's business).
-  if [ "$verdict" = BLOCK ] && ! review_blocking_lines_text "$REPORT" | grep -qE '\[ask [0-9]+\]|\[regression\]|\[unanchored\]'; then
+  # is not validated further here (ask range, regression claim: judge's business). FN2: an `F<k>: open`
+  # answer is such a finding (it blocks under the number's anchor).
+  if [ "$verdict" = BLOCK ] && ! review_blocking_lines_text "$REPORT" | grep -qE '\[ask [0-9]+\]|\[regression\]|\[unanchored\]' \
+    && ! past_answers_text "$REPORT" | grep -qE '^F[0-9]+:[[:space:]]*open$'; then
     local why="$SEAT: BLOCK has no tagged finding - no list line under ## Critical / ## Major carries [ask N], [regression] or [unanchored]"
     write_seat_file "$RD/$SEAT.attempt-$ATTEMPT.md" "$SEAT" "$model" "$N" "$HEAD" "$RPACK" "$ATTEMPT" "" "$REPORT"
     echo "cycle: record-seat - $SEAT round $N attempt $ATTEMPT: MALFORMED: $why" >&2
@@ -2724,6 +2909,7 @@ finding_paths() { # finding_paths <findings> -> the path each finding starts wit
   # at a `:`, kept only if it holds a `/` or a `.`. `2.0/x.md` stays whole: no space follows its dot.
   local line tok n
   while IFS= read -r line; do
+    n="${line%% *}"; case "$n" in F[0-9]*) case "${n#F}" in *[!0-9]*) ;; *) line="${line#"$n" }"; line="${line#- }" ;; esac ;; esac # FN1: a leading F<k> number
     line="${line#- }"
     n="${line%%. *}"
     case "$n" in ''|*[!0-9]*) ;; *) line="${line#"$n". }" ;; esac
@@ -3619,7 +3805,7 @@ build_round() { # build_round <spec> <slug> <n> <head> <pack> <ceiling> <commit:
   # C15/ADR-013 D3: the tier and the roster are derived once, here, and frozen into the round
   # (tier=, seats=) - a plan.md or Profile edit mid-round (or a stale re-stamp) never changes
   # what this round already requires.
-  local tier required narrow="" second="" repair_id="" full="" asks="" rerun="" prd="" rs scope
+  local tier required narrow="" second="" repair_id="" full="" asks="" rerun="" prd="" rs scope gate_prev=""
   tier="$(tier_of "$spec")"
   required="$(required_seats_for_tier "$tier")"
   local since="" carried=""
@@ -3637,9 +3823,31 @@ build_round() { # build_round <spec> <slug> <n> <head> <pack> <ceiling> <commit:
     [ -n "$prd" ] && rs="$(repair_story_of_round "$spec" "$((n-1))")" && [ -n "$rs" ] && repair_id="$(story_id_of "$rs")"
   elif [ -n "$prd" ] && [ -n "$(round_field "$prd" repair)" ] && [ "$(json_field "$(round_row "$slug" "$((n-1))")" verdict)" = STALE ]; then
     repair_id="$(round_field "$prd" repair)"; full="$(round_field "$prd" full)"
+    [ "$full" = gate ] && rerun="$(round_field "$prd" rerun)"
     if [ "$(round_field "$prd" narrow)" = 1 ]; then
       narrow=1; asks="$(round_field "$prd" asks)"; rerun="$(round_field "$prd" rerun)"; second=none
       required="$(round_field "$prd" seats)"; [ -n "$required" ] || required=review
+    fi
+  elif [ -n "$prd" ] && row_is_gate "$(round_row "$slug" "$((n-1))")"; then
+    # af-gates-1119 G3: the council never saw a gate-only round, so the round after it has that round's scope:
+    # narrow, asks=, seats=, second=, full= and since= frozen; rerun= by round_rerun (its red steps), for a full round
+    # too (af-gates-1119-06: full=gate). Round 1 has no since=: its successor names the branch base, the range round 1 had.
+    gate_prev=1
+    rs="$(repair_story_of_round "$spec" "$((n-1))")"; [ -n "$rs" ] && repair_id="$(story_id_of "$rs")"
+    full="$(round_field "$prd" full)"; second="$(round_field "$prd" second)"
+    since="$(round_field "$prd" since)"
+    if [ -z "$since" ]; then
+      local gdb; gdb="$(default_branch)"
+      [ -n "$gdb" ] && since="$(git merge-base "$gdb" "$head" 2>/dev/null)" && since="$(git rev-parse --short "$since" 2>/dev/null)"
+    fi
+    local pseats; pseats="$(round_field "$prd" seats)"; [ -n "$pseats" ] && required="$pseats"
+    if [ "$(round_field "$prd" narrow)" = 1 ]; then
+      narrow=1; asks="$(round_field "$prd" asks)"; rerun="$(round_rerun "$spec" "$((n-1))")"; second=none
+    else
+      # af-gates-1119-06 (G3 amended): after a gate-only full round the seats judge everything (no narrow=, no
+      # asks=) but the gate re-runs only round n-1's red steps: full=gate, rerun= by round_rerun (`all` only where
+      # it says so). The owner's full=asked|design|norecord keeps every step.
+      case "$full" in ''|gate) full=gate; rerun="$(round_rerun "$spec" "$((n-1))")" ;; esac
     fi
   elif [ -n "$prd" ]; then
     rs="$(repair_story_of_round "$spec" "$((n-1))")"
@@ -3672,7 +3880,7 @@ build_round() { # build_round <spec> <slug> <n> <head> <pack> <ceiling> <commit:
   # A narrow round carries nothing: its blind seat re-judges the listed asks afresh.
   [ -n "$prd" ] && [ -z "$narrow" ] && [ -z "$OPEN_FULL" ] && carried="$(carry_seats "$rd" "$prd" "$((n-1))" "$spec")"
   # ab-run-fixes C2/C3: a Tier 4 round freezes whether its reviewed range touches the risk set
-  if [ "$tier" = 4 ]; then
+  if [ "$tier" = 4 ] && [ -z "$gate_prev" ]; then
     if [ -n "$narrow" ]; then second=none; else second="$(round_second "$spec" "$n" "$head" "$since")"; fi
   fi
 
@@ -3689,6 +3897,7 @@ build_round() { # build_round <spec> <slug> <n> <head> <pack> <ceiling> <commit:
     [ -n "$repair_id" ] && printf 'repair=%s\n' "$repair_id"
     [ -n "$narrow" ] && printf 'narrow=1\nasks=%s\nrerun=%s\n' "$asks" "$rerun"
     [ -n "$full" ] && printf 'full=%s\n' "$full"
+    [ "$full" = gate ] && printf 'rerun=%s\n' "$rerun"
   } > "$rd/ROUND"
 
   local missing dispatch_val
@@ -3701,7 +3910,9 @@ build_round() { # build_round <spec> <slug> <n> <head> <pack> <ceiling> <commit:
     else note="$note, narrow repair round (review only; steps ${rerun:-none})"; fi
   fi
   if [ "$full" = asked ]; then note="$note, the full check on the owner's word (full=asked, since the branch base $since)"
+  elif [ "$full" = gate ]; then note="$note, every seat after a gate-only round, gate steps ${rerun:-none} (full=gate)"
   elif [ -n "$full" ]; then note="$note, full round after a repair ($full)"; fi
+  [ -n "$gate_prev" ] && note="$note, the scope of gate-only round $((n-1))"
   [ "$second" = risk ] && note="$note, second reviewer: a risk path in the range"
   [ -n "$carried" ] && note="$note, carried from round $((n-1)): $(printf '%s' "$carried" | sed 's/ /, /g')"
   bash "$HERE/journal.sh" "$spec" "04-council:open" "$note" "$dispatch_val" >/dev/null
@@ -3902,7 +4113,7 @@ cmd_open_round() { # cmd_open_round <spec> <commit:0|1> [<stamp>]
       local missing required next_val
       required="$(round_needed_seats "$SPEC" "$RD")"
       missing="$(missing_required_seats "$RD" "$required")"
-      next_val="judge"; [ -n "$missing" ] && next_val="dispatch:$(printf '%s' "$missing" | tr ' ' ',')"
+      next_val="judge"; [ -n "$missing" ] && ! round_gate_red "$RD" && next_val="dispatch:$(printf '%s' "$missing" | tr ' ' ',')"
       echo "cycle: $SLUG - round $N already open at current HEAD, no-op"
       emit_status open-round "$SPEC" "$next_val"
       exit 0
@@ -3969,21 +4180,92 @@ suite_log_line() { # suite_log_line <round-dir> -> the SUITE: line of a finished
   case "$last" in "SUITE: "*) printf '%s' "$last" ;; esac
 }
 
-suite_cut_names() { # suite_cut_names <log> -> each part name suite-parts-check.sh says to cut, one per line
+suite_settled() { # suite_settled <log> -> the log as the gate reads it (af-gates-1119 FL1), CR dropped: a step with a
+  # `RERUN K/S:` line reads as its re-run (its STEP line takes the re-run's result and seconds, its first-run PART and
+  # LOAD lines give way to the re-run's PART lines) and `FLAKY:` lines are dropped. A log with no RERUN line is unchanged.
+  tr -d '\r' < "$1" | awk '
+    $1 == "STEP" || $1 == "SUITE:" { printf "%s", b; b = "" }
+    $1 == "RERUN" { sub(/^RERUN/, "STEP"); b = $0 "\n"; next }
+    $1 == "FLAKY:" { next }
+    { b = b $0 "\n" }
+    END { printf "%s", b }'
+}
+
+suite_step_names() { # suite_step_names <log> <K> -> FL1's names of step K's first run: each PART name FAIL or CAP in its block,
+  # space-separated, `step-K` when it named none
+  tr -d '\r' < "$1" | awk -v k="$2" '
+    $1 == "STEP" { s = $2; sub(/\/.*/, "", s); on = (s == k) && !seen++; next }
+    $1 == "RERUN" || $1 == "SUITE:" { on = 0; next }
+    on && $1 == "PART" && ($3 == "FAIL" || $3 == "CAP") && !d[$2]++ { printf "%s%s", sep, $2; sep = " " }
+    END { if (sep == "") printf "step-%s", k }'
+}
+
+suite_flaky_hit() { # suite_flaky_hit <spec> <names> -> the names already in the spec's council/flaky (FL1: flaky twice), space-separated
+  local f="$1/council/flaky"
+  [ -f "$f" ] || return 0
+  tr -d '\r' < "$f" | awk -v want="$2" '
+    { for (i = 4; i <= NF; i++) had[$i] = 1 }
+    END { n = split(want, w, " "); for (i = 1; i <= n; i++) if (w[i] in had) { printf "%s%s", sep, w[i]; sep = " " } }'
+}
+
+suite_pending_rerun() { # suite_pending_rerun <spec> <log> -> K when the log's last step ended FAIL, has no RERUN line yet and
+  # none of its names is in council/flaky: the next suite call re-runs it (FL1); else nothing
+  local k
+  k="$(tr -d '\r' < "$2" | awk '$1 == "STEP" { s = $0; r = 0 } $1 == "RERUN" { r = 1 } END { if (s != "" && !r) print s }' \
+    | awk '$3 == "FAIL" { k = $2; sub(/\/.*/, "", k); print k }')"
+  [ -n "$k" ] || return 0
+  [ -z "$(suite_flaky_hit "$1" "$(suite_step_names "$2" "$k")")" ] && printf '%s' "$k"
+  return 0
+}
+
+suite_flaky_twice() { # suite_flaky_twice <spec> <log> -> the names of each FAIL step with no RERUN line that council/flaky
+  # already held (FL1: FAIL with no re-run), space-separated
+  local k out="" hit
+  for k in $(tr -d '\r' < "$2" | awk '
+      $1 == "STEP" { if (f && !r) print k; k = $2; sub(/\/.*/, "", k); f = ($3 == "FAIL"); r = 0 }
+      $1 == "RERUN" { r = 1 }
+      END { if (f && !r) print k }'); do
+    hit="$(suite_flaky_hit "$1" "$(suite_step_names "$2" "$k")")"
+    [ -n "$hit" ] && out="${out:+$out }$hit"
+  done
+  printf '%s' "$out"
+}
+
+suite_cut_names() { # suite_cut_names <log> -> each part name suite-parts-check.sh says to cut, one per line, read in
+  # the settled log (FL1: a re-run step's first-run PART lines are not read)
+  local t
+  if tr -d '\r' < "$1" | grep -q '^RERUN '; then
+    t="$(mktemp)"; suite_settled "$1" > "$t"
+    bash "$HERE/suite-parts-check.sh" "$t" 2>/dev/null | sed -n 's/^suite-parts-check: cut part \(.*\): [0-9]*s of cap .*/\1/p'
+    rm -f "$t"; return 0
+  fi
   bash "$HERE/suite-parts-check.sh" "$1" 2>/dev/null | sed -n 's/^suite-parts-check: cut part \(.*\): [0-9]*s of cap .*/\1/p'
 }
 
-suite_red_parts() { # suite_red_parts <log> -> its red PART lines: FAIL, CAP, or named by suite-parts-check.sh
+suite_red_items() { # suite_red_items <log> -> the gate's red items in log order: each red PART line (FAIL, CAP, or
+  # named by suite-parts-check.sh), the STEP line of a FAIL step with no red PART line (af-gates-1119 G1), and for a FAIL log with neither
+  # (a runner that gave no step count) its SUITE: line
   [ -f "$1" ] || return 0
-  tr -d '\r' < "$1" | awk -v cut="$(suite_cut_names "$1")" '
+  suite_settled "$1" | awk -v cut="$(suite_cut_names "$1")" '
     BEGIN { n = split(cut, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") c[a[i]] = 1 }
-    $1 == "PART" && ($3 == "FAIL" || $3 == "CAP" || ($2 in c)) { print }'
+    function flush() { if (sf && !sp) { print sl; any = 1 } sf = 0; sp = 0 }
+    $1 == "STEP" { flush(); sl = $0; sf = ($3 == "FAIL"); next }
+    $1 == "PART" && ($3 == "FAIL" || $3 == "CAP" || ($2 in c)) { print; sp = 1; any = 1; next }
+    $1 == "SUITE:" { flush(); if (!any && $2 == "FAIL") print; next }
+    END { flush() }'
+}
+
+gate_red_names() { # gate_red_names <log> -> the red gate's names, comma-separated: each red part, `step-K` for a red
+  # step that named no part, `suite` for a FAIL log with neither
+  suite_red_items "$1" | awk '
+    $1 == "PART" { n = $2 } $1 == "STEP" { n = $2; sub(/\/.*/, "", n); n = "step-" n } $1 == "SUITE:" { n = "suite" }
+    n != "" && !seen[n]++ { printf "%s%s", sep, n; sep = ", " }'
 }
 
 suite_verdict() { # suite_verdict <log> -> the closing `SUITE: ok <N>s` or `SUITE: FAIL <N>s - <why>` line
   local log="$1" secs why
-  secs="$(tr -d '\r' < "$log" | awk '$1 == "STEP" { v = $4; sub(/s$/, "", v); t += v } END { print t + 0 }')"
-  why="$(tr -d '\r' < "$log" | awk -v cut="$(suite_cut_names "$log")" '
+  secs="$(suite_settled "$log" | awk '$1 == "STEP" { v = $4; sub(/s$/, "", v); t += v } END { print t + 0 }')"
+  why="$(suite_settled "$log" | awk -v cut="$(suite_cut_names "$log")" '
     BEGIN { n = split(cut, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "" && !(a[i] in c)) { c[a[i]] = 1; out = out sep "cut part " a[i]; sep = ", " } }
     $1 == "PART" && $3 == "FAIL" && !($2 in c) && !($2 in f) { f[$2] = 1; out = out sep "part " $2 " failed"; sep = ", " }
     $1 == "STEP" && $3 == "FAIL" { k = $2; sub(/:$/, "", k); h = index($0, "no end from: ")
@@ -4106,7 +4388,11 @@ cmd_suite() { # cmd_suite <spec> <commit:0|1> [<stamp>]
   # narrow-repair-1115-03 (plan R3): a narrow repair round runs only the steps its ROUND lists in rerun=
   # (`all`: every step); an empty rerun=, or an old narrow ROUND with no rerun= line, runs none.
   local NRUN=""
-  if [ "$(round_field "$RD" narrow)" = 1 ]; then NRUN="$(round_field "$RD" rerun)"; [ -n "$NRUN" ] || NRUN=none; fi
+  # af-gates-1119-06: a full=gate round (every seat after a gate-only round) runs its rerun= steps the same way; its
+  # log ends in the narrow SUITE: form, so ship-check's suite: stage still asks for the merge run.
+  if [ "$(round_field "$RD" narrow)" = 1 ] || [ "$(round_field "$RD" full)" = gate ]; then
+    NRUN="$(round_field "$RD" rerun)"; [ -n "$NRUN" ] || NRUN=none
+  fi
 
   # solo-gate-1118: with the opt-in on, a full (not narrow) Tier 1-2 round runs no gate step: the stories' checks ran at
   # close-story and the merge run is the one full run. The owner's --full round (full=asked, full=design) still runs.
@@ -4220,9 +4506,13 @@ suite_run() { # suite_run <spec> <log> <head> <commit:0|1> <label> <narrow-rerun
   S="$(head -1 "$LOG" | tr -d '\r' | sed -n 's/.* steps=\([0-9][0-9]*\).*/\1/p')"; S="${S:-1}"
   K=$(( $(tr -d '\r' < "$LOG" | grep -c '^STEP ') + 1 ))
   # A narrow round's call I runs the I-th step of rerun=; it finishes on the last one (LASTI).
-  local I="$K" LASTI="$S"
-  if [ -n "$RUNS" ]; then
-    LASTI="$(printf '%s\n' $RUNS | grep -c .)"
+  # af-gates-1119 FL1: a last step that ended FAIL (no RERUN line yet, no name flaky before) is re-run alone by this call.
+  local I="$K" LASTI="$S" RERUN_K
+  RERUN_K="$(suite_pending_rerun "$SPEC" "$LOG")"
+  [ -n "$RUNS" ] && LASTI="$(printf '%s\n' $RUNS | grep -c .)"
+  if [ -n "$RERUN_K" ]; then
+    I=$((K - 1)); K="$RERUN_K"
+  elif [ -n "$RUNS" ]; then
     K="$(printf '%s\n' $RUNS | sed -n "${I}p")"; K="${K:-$S}"
   fi
   # Step K runs row K; a K past the rows (the log's steps= outgrew the table) has no row to run, and
@@ -4241,8 +4531,8 @@ suite_run() { # suite_run <spec> <log> <head> <commit:0|1> <label> <narrow-rerun
   # post-046-tails: the box's load is sampled at the step's start and, for a FAIL step only, at its end; only
   # a FAIL step writes the two lines. X-08: the start sample runs in the foreground before t0 (cap 5 s), so
   # it reads the box before the step and never overlaps it; the stepped call cap pays for it below.
-  local loadstart loads=""
-  loadstart="$(suite_load start 5)"
+  local loadstart="" loads=""
+  loadstart="$(suite_load start 5)" # FL1: a re-run samples too, so its call cap is cut as the first run's was; it writes no LOAD line
   local t0="$SECONDS" out rc parts secs sres=ok note="" tmp
   if [ "$stepped" = 1 ]; then
     # The call cap: 590 s (one Bash call), cut by the seconds this call already spent (the --steps call,
@@ -4288,7 +4578,7 @@ suite_run() { # suite_run <spec> <log> <head> <commit:0|1> <label> <narrow-rerun
   printf '%s\n' "$parts" > "$tmp"
   { [ "$rc" -ne 0 ] || ! bash "$HERE/suite-parts-check.sh" "$tmp" >/dev/null 2>&1; } && sres=FAIL
   rm -f "$tmp"
-  if [ "$sres" = FAIL ]; then
+  if [ "$sres" = FAIL ] && [ -z "$RERUN_K" ]; then
     # The end sample fits inside the one Bash call (600 s) this verb runs in: at most 10 s, none when
     # under 2 s are left (a stepped step killed at its 590 s cap).
     local left=$((580 - SECONDS)); [ "$left" -gt 10 ] && left=10
@@ -4296,22 +4586,37 @@ suite_run() { # suite_run <spec> <log> <head> <commit:0|1> <label> <narrow-rerun
     if [ "$left" -ge 2 ]; then loads="$loads"$'\n'"$(suite_load end "$left")"
     else loads="$loads"$'\n'"LOAD: unavailable - end: no time left in this call"; fi
   fi
-  {
-    printf 'STEP %s/%s: %s %ss%s\n' "$K" "$S" "$sres" "$secs" "$note"
-    [ -n "$parts" ] && printf '%s\n' "$parts"
-    [ -n "$loads" ] && printf '%s\n' "$loads"
-  } >> "$LOG"
-  local sv=pending is_done=false
-  if [ "$I" -ge "$LASTI" ]; then
-    local verdict; verdict="$(suite_verdict "$LOG")"
+  if [ -n "$RERUN_K" ]; then
+    # FL1: the re-run's lines follow the first run's; a pass names the first run's red parts flaky, in the log and
+    # in the spec's council/flaky (one line per flaky step, read by every later gate of the spec)
+    local fnames; fnames="$(suite_step_names "$LOG" "$K")"
+    {
+      printf 'RERUN %s/%s: %s %ss%s\n' "$K" "$S" "$sres" "$secs" "$note"
+      [ -n "$parts" ] && printf '%s\n' "$parts"
+      [ "$sres" = ok ] && printf 'FLAKY: %s\n' "$fnames"
+    } >> "$LOG"
+    [ "$sres" = ok ] && printf '%s %s %.7s %s\n' "$(date -u +%Y-%m-%d)" "${LABEL// /-}" "$RHEAD" "$fnames" >> "$SPEC/council/flaky"
+  else
+    {
+      printf 'STEP %s/%s: %s %ss%s\n' "$K" "$S" "$sres" "$secs" "$note"
+      [ -n "$parts" ] && printf '%s\n' "$parts"
+      [ -n "$loads" ] && printf '%s\n' "$loads"
+    } >> "$LOG"
+  fi
+  local sv=pending is_done=false pend=""
+  [ -z "$RERUN_K" ] && [ "$sres" = FAIL ] && pend="$(suite_pending_rerun "$SPEC" "$LOG")" # FL1: not final until its re-run
+  if [ -z "$pend" ] && [ "$I" -ge "$LASTI" ]; then
+    local verdict ftw; verdict="$(suite_verdict "$LOG")"
     [ -n "$NRUN" ] && verdict="$(suite_narrow_verdict "$verdict" "$NRUN" "$S" "$RD")"
+    ftw="$(suite_flaky_twice "$SPEC" "$LOG")"; [ -n "$ftw" ] && verdict="$verdict - flaky twice: $ftw"
     printf '%s\n' "$verdict" >> "$LOG"
     sv="$(printf '%s' "$verdict" | awk '{ print $2 }')"; is_done=true
   fi
   # ab-run-fixes C8: one commit per suite, on the call that finishes it; a middle step leaves the log
   # written and uncommitted (paperwork: the round stays fresh, the next call resumes from it).
-  [ "$DOCOMMIT" = "1" ] && [ "$is_done" = true ] && commit_paperwork suite "vulyk($SLUG): suite $LABEL $sv" "$LOG"
-  echo "cycle: $SLUG - $LABEL suite step $K/$S: $sres ${secs}s"
+  local -a cpaths=("$LOG"); [ -f "$SPEC/council/flaky" ] && cpaths+=("$SPEC/council/flaky")
+  [ "$DOCOMMIT" = "1" ] && [ "$is_done" = true ] && commit_paperwork suite "vulyk($SLUG): suite $LABEL $sv" ${cpaths[@]+"${cpaths[@]}"}
+  echo "cycle: $SLUG - $LABEL suite step $K/$S${RERUN_K:+ (re-run)}: $sres ${secs}s"
   suite_emit "$SPEC" "$K" "$S" "$is_done" "$sv" "$MERGE"
   exit 0
 }
@@ -4384,13 +4689,20 @@ cmd_reopen() { # cmd_reopen <spec> <decision> <commit:0|1> [<full:0|1>]
     REOPEN_NEXT="open-round"
   fi
 
+  # af-gates-1119 G2: a gate-ceiling ESCALATE is not the council's ceiling - its reopen leaves CEILING as it is and
+  # restarts the gate count (gate_red_rounds counts from the newest gate-ceiling row)
+  local GATEC=0; [ "$(json_field "$NEWEST" escalate)" = gate-ceiling ] && GATEC=1
   if [ "$already" -eq 0 ]; then
     # P9-07: the owner's decision is free text bound for the committed brief.md - masked first
     append_after_answers "$BRIEF" "$(printf '\n%s\n> %s\n' "$marker_text" "$(redact_note "$DECISION")")"
-    NEWCEIL=$((OLDCEIL+STEP))
     mkdir -p "$SPEC/council"
-    printf '%s\n' "$NEWCEIL" > "$SPEC/council/CEILING"
-    bash "$HERE/journal.sh" "$SPEC" "04-council:ESCALATE" "reopened after round $N, ceiling now $NEWCEIL" "$REOPEN_NEXT" >/dev/null
+    if [ "$GATEC" = 1 ]; then
+      bash "$HERE/journal.sh" "$SPEC" "04-council:ESCALATE" "reopened after round $N (gate-ceiling), the gate count restarts, ceiling still $NEWCEIL" "$REOPEN_NEXT" >/dev/null
+    else
+      NEWCEIL=$((OLDCEIL+STEP))
+      printf '%s\n' "$NEWCEIL" > "$SPEC/council/CEILING"
+      bash "$HERE/journal.sh" "$SPEC" "04-council:ESCALATE" "reopened after round $N, ceiling now $NEWCEIL" "$REOPEN_NEXT" >/dev/null
+    fi
   fi
 
   # R7/M-4/C4: council/REOPEN names every round `reopen` has cleared, so `status` can tell an
@@ -4789,11 +5101,18 @@ repair_findings() { # repair_findings <spec> <round-dir> -> the round's findings
   for seat in haiku sonnet opus; do
     [ -f "$rd/$seat.md" ] && grep -E '^ASK [0-9]+:[[:space:]]*RED' "$rd/$seat.md"
   done
+  # af-gates-1119 FN1: each copied review line takes the number judge minted for it (the round's mint lines, in the
+  # same order), and each number the review answered `open` is copied from its mint line, `F<k> - <anchor> <text>`
+  local led="$spec/council/findings" rn="${rd##*/round-}"
   for seat in review review2; do
     [ -f "$rd/$seat.md" ] && review_blocking_lines "$rd/$seat.md" \
       | grep -E '\[ask [0-9]+\]|\[regression\]' | grep -vF '[unanchored]'
-  done
-  [ -n "$(suite_log_line "$rd")" ] && suite_red_parts "$rd/suite.log" | sed 's/^/- [regression] /'
+  done | awk -v nums="$( [ -f "$led" ] && tr -d '\r' < "$led" | sed -n "s/^\(F[0-9][0-9]*\) open round $rn \[.*/\1/p" | tr '\n' ' ')" '
+    BEGIN { n = split(nums, k, " ") } { i++; print (i <= n ? k[i] " " : "") $0 }'
+  [ -f "$led" ] && tr -d '\r' < "$led" | awk -v rn="$rn" '
+    $1 ~ /^F[0-9]+$/ && $2 == "open" && $3 == "round" && NF > 4 && !($1 in mint) { t = $0; sub(/^F[0-9]+ open round [0-9]+ /, "", t); mint[$1] = t }
+    $1 ~ /^F[0-9]+$/ && $2 == "open" && $3 == "round" && $4 == rn && NF == 4 && ($1 in mint) { print $1 " - " mint[$1] }'
+  [ -n "$(suite_log_line "$rd")" ] && suite_red_items "$rd/suite.log" | sed 's/^/- [regression] /'
   ropened="$(round_field "$rd" opened)"
   hlast="$(grep -F "\"spec\":\"$slug\"" memory/stats/human.jsonl 2>/dev/null | tail -1)"
   if [ -n "$hlast" ] && [ "$(json_field "$hlast" verdict)" = REJECTED ]; then
@@ -4816,6 +5135,11 @@ round_scope() { # round_scope <spec> <n> -> the scope of the round after round n
   slug="$(slug_of "$spec")"
   row="$(git show HEAD:memory/stats/council.jsonl 2>/dev/null | grep -F "\"spec\":\"$slug\"" | grep -F "\"round\":$n," | tail -1)"
   [ -n "$row" ] || { echo "full norecord"; return 0; }
+  # af-gates-1119 G3: after a gate-only round the next round keeps that round's own scope (build_round freezes it)
+  if row_is_gate "$row"; then
+    if [ "$(round_field "$spec/council/round-$n" narrow)" = 1 ]; then echo narrow; else echo "full gate"; fi
+    return 0
+  fi
   if [ "$(json_field "$row" verdict)" = ESCALATE ]; then
     rel="${spec#./}"; rel="${rel#"$ROOT"/}"
     line="$(git show "HEAD:$rel/council/REOPEN" 2>/dev/null | grep -E "^round=${n}[[:space:]]" | tail -1)"
@@ -4936,7 +5260,7 @@ round_rerun() { # round_rerun <spec> <n> -> the gate steps the narrow round afte
   if [ -z "$snow" ] || [ -z "$(suite_log_line "$rd")" ]; then printf 'all'; return 0; fi
   sold="$(head -1 "$rd/suite.log" | tr -d '\r' | sed -n 's/.* steps=\([0-9][0-9]*\).*/\1/p')"
   [ "$sold" = "$snow" ] || { printf 'all'; return 0; }
-  tr -d '\r' < "$rd/suite.log" | awk '$1 == "STEP" && $3 == "FAIL" { k = $2; sub(/\/.*/, "", k); print k + 0 }' | sort -n | uniq | paste -sd, -
+  suite_settled "$rd/suite.log" | awk '$1 == "STEP" && $3 == "FAIL" { k = $2; sub(/\/.*/, "", k); print k + 0 }' | sort -n | uniq | paste -sd, -
 }
 
 repair_ask_stories() { # repair_ask_stories <spec> <asks> <findings> -> the done stories serving each RED ask

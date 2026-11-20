@@ -44,6 +44,11 @@ chasing them costs rounds and buys nothing.
   seat files. Answer two questions: are the previous round's blocking findings fixed, and does this
   diff introduce a regression? Code the diff does not touch is out of scope; a finding you could have
   raised on it in round 1 waits for the next circle.
+- Round 2 and later, also: `docs/specs/<slug>/council/findings`, the spec's ledger of blocking findings. The
+  numbers come from `cycle.sh` (`judge` mints one per anchored blocking line); you never number a finding.
+  A number whose newest ledger line says `open` is open: answer every open number under `## Past findings`
+  (see Report), with no number left out, none repeated and none invented. A report without those answers is
+  refused and you are asked once more.
 - When the diff changes a signature, a return value or a behaviour, in any round, read the callers of
   what it changed. A caller the diff leaves broken is a `[regression]` like any other.
 - In every round, list the changed paths (`git diff --name-only <range>`), then read the diff in one
@@ -103,6 +108,22 @@ None.
 ```
 
 Minors are optional: at most five, one line each.
+
+From round 2, when the ledger holds an open number, a `## Past findings` section follows `## Minor`, with exactly
+one line per open number, in one of three forms:
+
+```
+## Past findings
+F1: fixed
+F2: open
+F3: dropped - the ask was descoped in plan.md
+```
+
+`fixed`: the diff meets the finding's condition. `open`: it does not; the finding stays a blocking finding of this
+round under its first anchor and number (the verdict is `BLOCK`), and it needs no new line under `## Critical` or
+`## Major`. `dropped - <reason>`:
+the finding no longer applies, and the reason, never empty, says why; dropped findings are listed to the owner at
+ship. An empty ledger needs no section.
 
 - Line 1 is exactly `VERDICT: PASS` or `VERDICT: BLOCK`; line 3 is the log's `SUITE:` line, copied.
 - `## Critical`, `## Major`, `## Minor` in that order; an empty one holds `None.`.

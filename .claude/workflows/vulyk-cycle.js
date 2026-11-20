@@ -307,7 +307,7 @@ const gate = async (st) => {
     } finally { worked = true }
     if (r.exit === 3) throw new Paused()
     if (r.ok === false) fail(st, { verb: r.verb || 'suite', failed: r.failed, exit: r.exit, next: r.next, error: r.error })
-    if (r.done === true) return
+    if (r.done === true) return r
   }
   fail(st, { verb: 'suite', error: `suite not done after ${SUITE_CALLS} calls` + (bad === null ? '' : `; last unreadable clerk line: ${bad}`) })
 }
@@ -322,7 +322,10 @@ const council = async (st) => {
       fail(st, { verb: 'dispatch', seat, round: st.round, error: `seat ${seat} still missing after two dispatches in round ${st.round}` })
     }
   }
-  await gate(st)
+  const g = await gate(st)
+  // af-gates-1119 G4: a gate that ends with a `next` other than dispatch: (a red gate: judge) sends no seat; advance
+  // runs judge and repair, never with --ingest (it would record empty seats), and the run goes on as after a repair
+  if (typeof g.next === 'string' && !g.next.startsWith('dispatch:')) return advance('')
   boundary(st)
   const jobs = []
   for (const seat of seats) {

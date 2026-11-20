@@ -25,7 +25,9 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
 2. First the round's test gate: `bash scripts/cycle.sh suite docs/specs/<slug> --commit --stamp $stamp`, one Bash
    call per step with `timeout: 600000`, repeated until the last line says `"done":true` (`ok:false`: print its
    `error`, release and stop; with `.vulyk-solo-gate` = `merge-only` on the default branch a Tier 1-2 round runs no step).
-   Then dispatch exactly the seats `next` names, in one message, as `/vulyk-build` describes: each writes to
+   Then follow the last line's `next`: `judge` (a red gate: the suite ended `SUITE: FAIL`) dispatches no seat; run
+   `bash scripts/cycle.sh advance docs/specs/<slug> --stamp $stamp` with no `--ingest` and go to step 4. Only
+   `dispatch:<seats>` goes on here. Then dispatch exactly the seats `next` names, in one message, as `/vulyk-build` describes: each writes to
    `.vulyk/reports/<slug>/round-<round>/<seat>.attempt-<k>.md` with k from `status.seat_attempt`;
    blind seats get slug, round, `court` and the report path only, never `round_dir`; `lead-review` gets
    the spec, branch, head, report path, and from round 2 `since` and the previous round's directory,
@@ -51,13 +53,16 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
      run (`suite: no full run at <sha>`), run `bash scripts/cycle.sh suite docs/specs/<slug> --merge --commit` step by step until `"done":true`, before «Выпускаем?»
      (one Bash call per step, `timeout: 600000`, no agent). A `suite: FAIL` line is a repair: fix the parts it
      names, commit, run the merge run again. Then ask the owner once with `AskUserQuestion`, in the owner's language: «<slug>: council
-     GREEN, round <n>. Выпускаем?», yes first and recommended. Yes: run `vulyk-ship` with the Skill
+     GREEN, round <n>. Выпускаем?», yes first and recommended. The question quotes every `unchecked:`, `flaky:` and
+     `dropped:` line of that `ship-check.sh` run verbatim, under the question line; with none it is the question as
+     above. Yes: run `vulyk-ship` with the Skill
      tool (args `<slug>`). No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line.
    - `build:<W>`: the round was RED and the repair story is written; it is built through `/vulyk-build`,
      never by hand in this command. A RED round is followed by a repair and a narrow round: one reviewer reads
      the repair's diff, the blind seat re-judges only the asks to re-judge, the gate re-runs only the steps that
      were red; a full round follows a repair only after a design fault.
-   - `escalated`: print `## Needs a human` from plan.md verbatim. The owner chooses: `human-check.sh
+   - `escalated`: print `## Needs a human` from plan.md verbatim (a `gate-ceiling` reason, the third red gate, names
+     the red parts and is asked like any ESCALATE: the owner's `reopen` restarts the gate count). The owner chooses: `human-check.sh
      <spec> ACCEPTED "<his words>" --commit`, `cycle.sh reopen "<decision>"` (add `--full` only on his word that
      it is a design fault, never without it), or leaving the spec open.
 

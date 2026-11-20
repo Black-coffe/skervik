@@ -46,7 +46,10 @@ No driver, no clerk, no court. Loop:
 3. `dispatch:review`: first the round's test gate: `bash scripts/cycle.sh suite docs/specs/<slug> --commit`, one Bash
    call per step with `timeout: 600000`, repeated until the last line says `"done":true` (`ok:false`: print its
    `error` and stop); in a repo whose default branch holds `.vulyk-solo-gate` = `merge-only` a Tier 1-2 round's gate
-   ends at once with `SUITE: none - Tier 1-2: ...` (no step: the merge run is the one full run). Then dispatch `lead-review` with the Agent tool, with `model: <r>` from
+   ends at once with `SUITE: none - Tier 1-2: ...` (no step: the merge run is the one full run). Then follow the
+   last line's `next`: `judge` (a red gate: the suite ended `SUITE: FAIL`) dispatches no seat; run `bash
+   scripts/cycle.sh advance docs/specs/<slug>` with no `--ingest` and act on its `next` (a repair, `build:<W>`). Only
+   `dispatch:review` goes on here. Then dispatch `lead-review` with the Agent tool, with `model: <r>` from
    `r="$(bash scripts/model-profile.sh --role review)"` only when the profile (`bash scripts/model-profile.sh`)
    is not `sonnet-builds`, else no model parameter:
    `Review <slug>, round <round>. Spec: <spec>. Branch <branch> at <head>. Report: .vulyk/reports/<slug>/round-<round>/review.attempt-<k>.md`
@@ -124,7 +127,9 @@ Without the Workflow tool, run the solo loop from this session with the stamp, b
   listed is a miss; a second miss is handled as a `stop` with a `file`.
 - `dispatch:<seats>`: first the round's test gate: `bash scripts/cycle.sh suite docs/specs/<slug> --commit --stamp <S>`,
   one Bash call per step with `timeout: 600000`, repeated until the last line says `"done":true` (`ok:false`: stop
-  as for any refused verb). Then one message, every seat, each told to write its report to
+  as for any refused verb). Then follow the last line's `next`: `judge` (a red gate) dispatches no seat; send
+  `advance --stamp <S>`, never with `--ingest` (it would record empty seats), and go on as after any repair. Only
+  `dispatch:<seats>` goes on here. Then one message, every seat, each told to write its report to
   `.vulyk/reports/<slug>/round-<round>/<seat>.attempt-<k>.md`, k from `status.seat_attempt`. `opus` or
   `haiku`: `council-<seat>` with `Council round <round> for <slug>, seat <seat>. COURT: <court>.
   Report: <path>.` and nothing more (never `round_dir`), with `model: <seat_model>` only when the profile is not
@@ -164,11 +169,13 @@ Then go on. A refusal on the redispatch is the existing stop: an absent seat, a 
   print the round count, the newest `**Council:**` line and the output of `bash scripts/human-check.sh
   --show docs/specs/<slug>` as a fenced block in the reply text (tool output is collapsed), then ask the owner once with
   `AskUserQuestion`, in the owner's language: «<slug>: council GREEN, round <n>. Выпускаем?», the yes
-  option first and marked recommended. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
+  option first and marked recommended. The question quotes every `unchecked:`, `flaky:` and `dropped:` line of that
+  `ship-check.sh` run verbatim, under the question line; with none it is the question as above. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
   this session. No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line. Ship
   pushes the spec branch for its CI run, then prints the tag and publish steps; it never runs those.
 - `escalated`: print plan.md's `## Needs a human` verbatim (a `suite-timeout` reason carries its `- suite:
-  <N> s, budget <B> s` line: cut the part that ran long, then reopen), then the output of `bash
+  <N> s, budget <B> s` line: cut the part that ran long, then reopen; a `gate-ceiling` reason, the third red gate,
+  names the red parts and is asked like any ESCALATE: the owner's `reopen` restarts the gate count), then the output of `bash
   scripts/human-check.sh --show docs/specs/<slug>` as a fenced block in the reply text. The owner chooses: `bash
   scripts/human-check.sh docs/specs/<slug> ACCEPTED "<note>" --commit` (the note is the owner's own words, never yours; `--commit` commits the record, which owner-guard refuses to any other command), `bash scripts/cycle.sh reopen
   docs/specs/<slug> "<decision>"` (the next round re-checks the repair; `--full` only when the owner says it is a

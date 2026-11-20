@@ -414,6 +414,72 @@ if [ -f "$PLAN" ] && [ -n "$(marker "$PLAN" Shipped)" ]; then
   say 06 "done" "ship: already recorded - $(marker "$PLAN" Shipped)"
 fi
 
+# The lists (af-gates-1119, plan U1): information printed before the verdict line, never a change to it. Each list is
+# its own function, so a cut of one ask is a revert by hunk. They read the records cycle.sh wrote; none re-judges.
+unchecked_asks() { # ask 3: per brief `## Asks` item (one struck through with ~~ is descoped), the newest round where a
+  # blind seat (haiku, sonnet, opus; not an attempt file, not a carried copy) gave it a real answer - a narrow round's
+  # `why: not re-judged this round` is none - listed when every such seat of that round answered N/A
+  local rounds t n i=0 r seat f line real na why whys
+  rounds="$(for d in "$SPEC"/council/round-*/; do d="${d%/}"; printf '%s\n' "${d##*/round-}"; done | grep -x '[0-9][0-9]*' | sort -rn)"
+  [ -n "$rounds" ] || return 0
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    i=$((i+1)); n="$i"
+    case "$t" in [0-9]*.*) n="${t%%.*}"; t="${t#*. }" ;; esac
+    case "$t" in "~~"*) continue ;; esac
+    for r in $rounds; do
+      real=0; na=0; whys=""
+      for seat in haiku sonnet opus; do
+        f="$SPEC/council/round-$r/$seat.md"
+        [ -f "$f" ] || continue
+        head -1 "$f" | grep -q 'carried: round' && continue
+        line="$(tr -d '\r' < "$f" | grep -m1 "^ASK $n:")"
+        [ -n "$line" ] || continue
+        case "$line" in *"why: not re-judged this round"*) continue ;; esac
+        real=$((real+1))
+        case "$line" in
+          "ASK $n: N/A"*)
+            na=$((na+1)); why="${line#*why: }"; [ "$why" = "$line" ] && why="no why given"
+            case "; $whys; " in *"; $why; "*) ;; *) whys="$whys${whys:+; }$why" ;; esac ;;
+        esac
+      done
+      [ "$real" -gt 0 ] || continue
+      [ "$na" -eq "$real" ] && echo "  unchecked: ask $n - every blind seat N/A (round $r): $whys"
+      break
+    done
+  done < <(brief_asks "$SPEC/brief.md")
+}
+unchecked_asks
+unchecked_suite() { # ask 3: the suite line is none because the constitution has no round-only full-suite row (a row
+  # whose cell is still `<fill in` counts as none); a declared `none` cell, a narrow round and the solo gate print nothing
+  commands_rows "$(constitution_file "$ROOT")" | awk -F '\t' '
+    { p = tolower($1); if (p ~ /full suite/ && p ~ /(^|[^[:alnum:]_-])round-only($|[^[:alnum:]_-])/ \
+        && ($2 == "several" || tolower($4) !~ /^<fill in/)) f = 1 }
+    END { exit f }' && echo "  unchecked: suite - the constitution has no round-only row"
+}
+unchecked_suite
+read_record() { # read_record <file> -> REC, its text without CRs; a missing file: 1, nothing printed; a file that
+  # exists but cannot be read: 1 and the `cannot read` line, never silence
+  REC=""
+  [ -e "$1" ] || return 1
+  REC="$(cat "$1" 2>/dev/null)" || { echo "  unchecked: cannot read $1"; return 1; }
+  REC="$(printf '%s' "$REC" | tr -d '\r')"
+}
+flaky_lines() { # ask 2: one line per council/flaky line `<date> <round-N|merge> <sha7> <names>`
+  read_record "$SPEC/council/flaky" || return 0
+  printf '%s\n' "$REC" | awk 'NF >= 4 { n = $4; for (i = 5; i <= NF; i++) n = n " " $i; printf "  flaky: %s (%s at %s)\n", n, $2, $3 }'
+}
+flaky_lines
+dropped_lines() { # ask 4: per F<k> whose newest council/findings line is `dropped`, its reason and round
+  read_record "$SPEC/council/findings" || return 0
+  printf '%s\n' "$REC" | awk '$1 ~ /^F[0-9]+$/ && $3 == "round" {
+      k = substr($1, 2) + 0; st[k] = $2; rd[k] = $4; r = $0
+      if (!sub(/^F[0-9]+ dropped round [0-9]+ - /, "", r)) r = ""
+      rs[k] = r; if (k > mx) mx = k }
+    END { for (k = 1; k <= mx; k++) if (st[k] == "dropped") printf "  dropped: F%d - %s (round %s)\n", k, rs[k], rd[k] }'
+}
+dropped_lines
+
 echo ""
 if [ "$MISSING" -eq 0 ]; then
   echo "  READY. Every confirmation exists and is about this pack at this commit. /vulyk-ship may proceed."
