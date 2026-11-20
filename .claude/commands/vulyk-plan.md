@@ -95,7 +95,7 @@ Plan: "$ARGUMENTS"
    One such test, not coverage, and a trivial change names none.
 7. Check. First `bash scripts/symbol-map.sh --fill-tests docs/specs/<slug>`: every todo story gets the
    tests that mention its files (`exact` hits: a test that sources, imports or runs one, a copied script
-   run by `bash` included) and a row for each. Settle each `pick` line with a row naming the part, and split or sequence each new same-wave overlap it makes. Then
+   run by `bash` included) and a row for each. A suite run by `--part` gets a row per part that calls the file; settle each `pick` line left (parts it cannot read) with a row naming the part, and split or sequence each new same-wave overlap it makes. Then
    `bash scripts/wave-check.sh docs/specs/<slug>` and `bash scripts/trace-check.sh
    docs/specs/<slug>`. Fix what they report in the story files now, including any `## Verification`
    segment that is not a `## Commands` cell.

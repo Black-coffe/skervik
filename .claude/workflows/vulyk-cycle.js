@@ -162,32 +162,30 @@ const refusedClaim = (r) => r.ok === false && (r.verb === 'claim' || r.failed ==
 // already have acted - and a second unreadable line ends the run with that raw line.
 // Not after `--claim`, unless the line said ok:true (advance stops on a refused claim): status
 // does not name the DRIVER holder, so it cannot prove the claim, and a run on another driver's
-// claim would dispatch beside it. A short re-claim by the same stamp proves it instead (ask 17): claim is
-// idempotent for the stamp that holds the spec, so ok:true proves the claim and status is read; a
-// refusal stops before any dispatch; an unreadable re-claim stops unproven. Both stops still release
+// claim would dispatch beside it. The same `advance --claim` with the same stamp is asked again
+// instead (tails-1119-06, D1; git-guard denies `claim` itself to a subagent): claim is idempotent for
+// the stamp that holds the spec, so a readable line proves it and keeps its leftover list; a refusal
+// stops before any dispatch; CLAIM_ASKS unreadable answers stop unproven. Both stops still release
 // (a stamp the run does not hold is refused); a relaunch claims afresh.
+const CLAIM_ASKS = 3
 const advance = async (flags) => {
   const cmd = `advance ${spec} --stamp ${stamp}${flags}`
   let res = null
   let bad = null
-  try { res = await ask(cmd) } catch (e) { if (!(e instanceof BadLine)) throw e; bad = e.line }
-  if (res !== null && refusedClaim(res)) claimed = false
-  if (res !== null && res.exit === 3) throw new Paused()
-  if (res !== null && (res.ok === false || carries(res))) return res
-  if (flags.includes('--claim') && !(res !== null && res.ok === true)) {
-    const line = bad === null ? JSON.stringify(res) : bad
-    let re = null
-    try { re = await ask(`claim ${spec} ${stamp}`) } catch (e) { if (!(e instanceof BadLine)) throw e }
-    if (re !== null && re.exit === 3) throw new Paused()
-    if (re !== null && re.ok === false) {
-      return { ok: false, verb: 'claim', failed: 'claim', exit: re.exit, next: re.next, steps: [],
-        error: `re-claim after an unreadable "${cmd}" refused: ${re.error}` }
-    }
-    if (re === null || re.ok !== true) {
+  for (let k = 1; ; k++) {
+    res = null
+    bad = null
+    try { res = await ask(cmd) } catch (e) { if (!(e instanceof BadLine)) throw e; bad = e.line }
+    if (res !== null && refusedClaim(res)) claimed = false
+    if (res !== null && res.exit === 3) throw new Paused()
+    if (res !== null && (res.ok === false || carries(res))) return res
+    if (!flags.includes('--claim') || (res !== null && res.ok === true)) break
+    if (k >= CLAIM_ASKS) {
+      const line = bad === null ? JSON.stringify(res) : bad
       return { ok: false, verb: 'advance', failed: 'claim', exit: 2, next: 'error', steps: [],
-        error: `unreadable result from "${cmd}": the claim is unproven, launch again; clerk line: ${line}` }
+        error: `unreadable result from "${cmd}" ${CLAIM_ASKS} times: the claim is unproven, launch again; last clerk line: ${line}` }
     }
-    // proven; the re-claim by the holder carries no leftover list, so this run dispatches without leftover notes
+    log(`cycle-clerk: unreadable result from "${cmd}", asking it again (${k} of ${CLAIM_ASKS})`)
   }
   log(`cycle-clerk: unreadable result from "${cmd}", reading status instead`)
   const st = await ask(`status ${spec}`)
@@ -220,22 +218,32 @@ const dispatch = async (prompt, opts, where) => {
 const misses = new Map() // story id -> misses this run
 let leftover = new Set() // story ids claim found leftover edits in (ab-run-fixes C9)
 const LEFTOVER_NOTE = ' Note: a previous attempt left uncommitted edits in your ## Files: read `git diff` first, finish the story and close it.'
+// tails-1119-06 (D2): advance names in `answered` a NEEDS_CONTEXT story whose ## Findings ends with the Queen's entry
+const ANSWERED_NOTE = " Note: you returned NEEDS_CONTEXT and the Queen answered it: the Queen's last ## Findings entry is binding; do not return NEEDS_CONTEXT on the same point again."
 const dispatched = new Map() // `${round}:${seat}` -> dispatches this run
 let rejected = [] // the last advance's `rejected`, for the one re-ask
 
 const build = async (st) => {
   phase('Build')
   const stories = waveOf(st)
+  const answered = new Set((Array.isArray(st.answered) ? st.answered : []).map(idOf))
   const returns = await parallel(stories.map((story) => () => {
     const retry = (misses.get(story.story) || 0) >= 1
     // the short line names a story by its id; the worker finds the file by its frontmatter
     const prompt = `Your story: ${story.story} - the story file in ${spec}/ whose frontmatter says \`story: ${story.story}\`. Stamp: ${stamp}. Implement it per your protocol; your last step is \`bash scripts/cycle.sh close-story <that file> --commit --stamp ${stamp}\`.`
       + (leftover.has(story.story) ? LEFTOVER_NOTE : retry ? ' Note: a previous attempt may have left uncommitted edits in your files; `git diff` them first.' : '')
+      + (answered.has(story.story) ? ANSWERED_NOTE : '')
     return dispatch(prompt, { agentType: story.worker, model: retry ? retryModel(st.tier) : (story.model || WORKER), phase: 'Build', label: story.story }, story.story)
   }))
   worked = true
   const res = await advance('')
-  if (res.ok === false) return res
+  if (res.ok === false) {
+    // D2: advance refuses a story that returned NEEDS_CONTEXT until the Queen answers it; the ones this wave
+    // returned go to her as needs_context, as when advance still lists them
+    const asked = stories.map((story, i) => ({ story: story.story, report: returns[i] })).filter((x) => statusOf(x.report) === 'NEEDS_CONTEXT')
+    if (res.failed === 'needs_context' && asked.length) throw new Stop({ status: 'needs_context', stories: asked, next: st.next })
+    return res
+  }
   // a dispatched story still listed is still todo: close-story never closed it
   const left = new Set(waveOf(res).map((s) => s.story))
   // a still-listed story whose worker returned NEEDS_CONTEXT is no miss: the run ends with it for the Queen (N1),

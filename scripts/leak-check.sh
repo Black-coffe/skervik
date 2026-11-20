@@ -30,7 +30,12 @@
 # `~/...`; a `<placeholder>` or elided (`...`) first segment (<drive>:/<hive>/docs, /home/<user>/..., C:/...); system locations
 # (<drive>:/Program Files/, <drive>:/Program Files (x86)/, <drive>:/ProgramData/, <drive>:/Windows/, and every
 # Unix path that is not a home, a drive or a temp folder: /usr/bin/env, /dev/null, /etc/...); a URL (`://`);
-# a stand-in built from a variable ($T/acme-hive/...).
+# a stand-in built from a variable ($T/acme-hive/...); a drive, Git Bash, home or temp-folder path whose every segment
+# is on the closed STANDIN list below (contract LK1 of docs/specs/tails-1119/plan.md): the made-up examples of hook
+# docstrings and tests, like /e/x or /home/user/project. A segment is compared without sentence punctuation, a
+# trailing :<line>, a leading dot and one extension; a temp path is judged by the segments after its claude...
+# folder. One segment off the list and the path is flagged; a hive root and a private term are flagged whatever the
+# segments.
 #
 # Exit 1 naming each hit; exit 0 for a clean file or a missing one. Exit 2 when no python is on PATH.
 set -u
@@ -80,7 +85,25 @@ SYSTEM = r"(?:Program Files(?: \(x86\))?|ProgramData|Windows)(?![\w.-])"
 DRIVE = re.compile(r"(?<![A-Za-z0-9_$%{}<>~.-])[A-Za-z]:" + SEP + r"(?!" + SYSTEM + r")" + SEG + r"(?:" + SEP + SEG + r")*" + r"[\\/]?", re.I)
 GITBASH = re.compile(r"(?<![\w.~/$:%{}<>-])/(?:mnt/)?[A-Za-z]/" + SEG + r"(?:/" + SEG + r")*/?")
 HOME = re.compile(r"(?<![\w.~/$:%{}<>-])/(?:home|Users)/" + SEG + r"(?:/" + SEG + r")*/?")
-TEMP = re.compile(r"(?:AppData" + SEP + r"Local" + SEP + r"Temp|(?<![\w.~/$:%{}<>-])/tmp)" + SEP + r"claude[^\\/" + STOP + r"]*", re.I)
+TEMP = re.compile(r"(?:AppData" + SEP + r"Local" + SEP + r"Temp|(?<![\w.~/$:%{}<>-])/tmp)" + SEP + r"claude[^\\/" + STOP + r"]*"
+                  + r"(?:" + SEP + SEG + r")*", re.I)
+# The closed stand-in list (LK1): the made-up segments of examples. Never a hive's or a client's name.
+STANDIN = {"x", "y", "p", "n", "a", "tmp", "dir", "user", "someone", "project", "projects", "proj", "app2", "src",
+           "mainfile", "acme", "acme_co", "hives", "claude", "my", "build", "web", "server", "work", "docs", "specs",
+           "alpha", "brief", "plan-copy", "users", "appdata", "local", "temp"}
+
+
+def standin(segs):
+    # True when every segment is a stand-in or an elision (`...`); a segment is read without sentence punctuation,
+    # a trailing :<line>[:<col>], a leading dot and one extension.
+    for s in segs:
+        s = re.sub(r"(?::\d+)+$", "", s.rstrip(".,:;!"))
+        if re.fullmatch(r"[.…]*", s):
+            continue
+        s = re.sub(r"(?<=.)\.[A-Za-z0-9]+$", "", s.lstrip(".")).lower()
+        if s not in STANDIN:
+            return False
+    return bool(segs)
 # A share on another machine, either spelling: \\<host>\<share> or //<host>/<share> - never after a `:` (a URL),
 # a word character or another slash; the host opens with a letter or a digit (a <placeholder> or $VAR passes).
 UNC = re.compile(r"(?<![\w\\/:.$%{}<>~-])(?:\\\\[A-Za-z0-9][A-Za-z0-9._-]*\\|//[A-Za-z0-9][A-Za-z0-9._-]*/)" + SEG
@@ -131,10 +154,15 @@ for n, line in enumerate(text.splitlines(), 1):
             first = re.split(r"[\\/]+", re.sub(r"^(?:[A-Za-z]:|/mnt/[A-Za-z]|/[A-Za-z]|/home|/Users)[\\/]+", "", m.group(0)))[0]
             if re.fullmatch(r"[.…]+", first) or under_root(m.group(0)):
                 continue
+            rest = re.sub(r"^(?:[A-Za-z]:|/mnt/[A-Za-z]|/[A-Za-z]|/home|/Users)[\\/]+", "", m.group(0))
+            if standin([s for s in re.split(r"[\\/]+", rest) if s]):
+                continue
             hits.append((n, why, m.group(0)))
     for m in UNC.finditer(line):
         hits.append((n, "a share path on another machine", m.group(0)))
     for m in TEMP.finditer(line):
+        if standin([s for s in re.split(r"[\\/]+", re.sub(r"^.*?claude[^\\/]*", "", m.group(0), flags=re.I)) if s]):
+            continue
         hits.append((n, "a Claude temp-folder path", m.group(0)))
     for m in SLUG.finditer(line):
         hits.append((n, "a transcript slug inside another project", m.group(0)))

@@ -239,8 +239,16 @@ default_branch() { # default_branch -> origin's HEAD branch, else main, else mas
 solo_gate_on() { # solo_gate_on -> 0 iff the default branch holds a root `.vulyk-solo-gate` saying exactly `merge-only`
   # (solo-gate-1118, opt-in): then a Tier 1-2 round's gate runs no step and the merge run is the one full run. Read
   # from the default branch, so a spec branch cannot switch its own gate off; missing, empty or other text: off.
-  local db v; db="$(default_branch)"; [ -n "$db" ] || return 1
-  v="$(git show "$db:.vulyk-solo-gate" 2>/dev/null | tr -d '\r')" || return 1
+  # tails-1119-05: the branch as a full ref (local, else origin's, so a clone without the local branch still reads
+  # it) and the file through ls-tree + cat-file, never one `<branch>:<path>` argument: Git Bash rewrites
+  # `team/main:.vulyk-solo-gate` into `team\main;.vulyk-solo-gate` and the switch read as off.
+  local db ref blob v; db="$(default_branch)"; [ -n "$db" ] || return 1
+  if git show-ref --verify --quiet "refs/heads/$db"; then ref="refs/heads/$db"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$db"; then ref="refs/remotes/origin/$db"
+  else return 1; fi
+  blob="$(git ls-tree "$ref" -- .vulyk-solo-gate 2>/dev/null | awk '$2 == "blob" { print $3; exit }')"
+  [ -n "$blob" ] || return 1
+  v="$(git cat-file blob "$blob" 2>/dev/null | tr -d '\r')" || return 1
   [ "$v" = merge-only ]
 }
 
@@ -2674,6 +2682,43 @@ path_overlap() { # path_overlap <path-or-glob> <path-or-glob> - 0 if the two can
   return 1
 }
 
+inert_path() { # inert_path <story-file> <wave> <path> - 0 iff <path>, committed since the wave's claim head, is inert
+  # (tails-1119-06, plan A3): no `## Files` line of a story of <wave> in the story's spec overlaps it (path_overlap); it
+  # is not the constitution and no such story's `## Verification` names it; symbol-map.sh --exact answers for it
+  # (exit 0, its own block, no `!` line but `imports not parsed` with no `tests:` section) and lists no exact importer
+  # and no exact test a wave row names. Positive proof only: a missing symbol map, no Python, a non-zero exit or an
+  # unparsed language that any test names is 1.
+  local story="$1" w="$2" p="$3" sf fw e t rows="" out
+  case "$p" in CLAUDE.md|CLAUDE.vulyk.md) return 1 ;; esac
+  for sf in "$(dirname "$story")"/*.md; do
+    [ -f "$sf" ] && is_story_file "$sf" || continue
+    fw="$(fm_field "$sf" wave)"; case "$fw" in ''|*[!0-9]*) fw=1 ;; esac
+    [ "$((10#$fw))" = "$w" ] || continue
+    while IFS= read -r e; do
+      [ -n "$e" ] && path_overlap "$e" "$p" && return 1
+    done <<< "$(files_of "$sf")"
+    rows="$rows$(verify_of "$sf")
+"
+  done
+  printf '%s' "$rows" | grep -qF -- "$p" && return 1
+  [ -f "$HERE/symbol-map.sh" ] || return 1
+  out="$(bash "$HERE/symbol-map.sh" --exact "$p" 2>/dev/null)" || return 1
+  out="$(printf '%s\n' "$out" | tr -d '\r')"
+  printf '%s\n' "$out" | grep -qxF -- "## $p" || return 1
+  # tails-1119-09 (finding 3): a language whose imports the map does not parse (Markdown, JSON, YAML) is inert only
+  # when its block has no `tests:` section at all (textual mentions included); any other `!` line still refuses
+  if printf '%s\n' "$out" | grep -q '^[[:space:]]*! imports not parsed'; then
+    printf '%s\n' "$out" | grep -qx 'tests:' && return 1
+    out="$(printf '%s\n' "$out" | grep -v '^[[:space:]]*! imports not parsed')"
+  fi
+  printf '%s\n' "$out" | grep -q '^[[:space:]]*!' && return 1
+  printf '%s\n' "$out" | awk '/^[^ ]/ { on = ($0 == "importers:"); next } on && $1 == "exact" { f = 1 } END { exit !f }' && return 1
+  while IFS= read -r t; do
+    [ -n "$t" ] && printf '%s' "$rows" | grep -qF -- "$t" && return 1
+  done <<< "$(printf '%s\n' "$out" | awk '/^[^ ]/ { on = ($0 == "tests:"); next } on && $1 == "exact" { print $2 }')"
+  return 0
+}
+
 finding_paths() { # finding_paths <findings> -> the path each finding starts with, one per line: its
   # leading `- `, `N. ` item number (lead-review's list form) and `[tag]`s dropped, the first word cut
   # at a `:`, kept only if it holds a `/` or a `.`. `2.0/x.md` stays whole: no space follows its dot.
@@ -3156,19 +3201,43 @@ EOF
   # S1: a path changed in a commit since the claim head refuses at once, whoever is still open: no
   # worker commits, and nothing of a wave-mate's in-flight work is committed before its own close.
   if [ "$DOCOMMIT" = "1" ]; then
-    local STRAY="" COMMITTED="" sp
+    local STRAY="" COMMITTED="" COMMITTED_L="" sp
     while IFS= read -r sp; do
       sp="${sp#  ! }"
       [ -n "$sp" ] || continue
       is_paperwork_path "$sp" && continue
       if [ -n "$SCOPE_HEAD" ] && ! GIT_LITERAL_PATHSPECS=1 git diff --quiet "$SCOPE_HEAD" HEAD -- "$sp" 2>/dev/null; then
-        COMMITTED="${COMMITTED:+$COMMITTED, }$sp"
+        COMMITTED="${COMMITTED:+$COMMITTED, }$sp"; COMMITTED_L="$COMMITTED_L$sp
+"
       elif [ -n "$(GIT_LITERAL_PATHSPECS=1 git status --porcelain -uall -- "$sp" 2>/dev/null)" ]; then
         STRAY="${STRAY:+$STRAY, }$sp"
       fi
     done <<EOF
 $(printf '%s\n' "$SCOPE_OUT" | grep '^  ! ')
 EOF
+    # tails-1119-06 (plan A3): when every such committed path is inert (inert_path), the commit is the Queen's own
+    # and ties to nothing the wave builds or runs: the claim head moves to HEAD with reanchor's journal line, reason
+    # `auto: <paths>`, and the close goes on; a path among them still dirty is then judged as an uncommitted one.
+    # One path not provably inert keeps today's refusal, the head unmoved.
+    if [ -n "$COMMITTED" ]; then
+      local AUTO=1
+      while IFS= read -r sp; do
+        [ -n "$sp" ] || continue
+        inert_path "$STORY" "$SCOPE_WAVE" "$sp" || { AUTO=0; break; }
+      done <<EOF
+$COMMITTED_L
+EOF
+      if [ "$AUTO" = 1 ]; then
+        claim_head_move "$SPECDIR" "$SCOPE_WAVE" "auto: $COMMITTED" 1 close-story
+        echo "cycle: close-story - note: committed since the claim head, touching no wave file or check: $COMMITTED; claim head of wave $SCOPE_WAVE moved to $(git rev-parse --short "$CHM_NEW")" >&2
+        SCOPE_HEAD="$CHM_NEW"; COMMITTED=""
+        while IFS= read -r sp; do
+          [ -n "$sp" ] && [ -n "$(GIT_LITERAL_PATHSPECS=1 git status --porcelain -uall -- "$sp" 2>/dev/null)" ] && STRAY="${STRAY:+$STRAY, }$sp"
+        done <<EOF
+$COMMITTED_L
+EOF
+      fi
+    fi
     if [ -n "$COMMITTED" ]; then
       echo "cycle: close-story - edited outside ## Files: $COMMITTED - committed since the claim head $(git rev-parse --short "$SCOPE_HEAD"); return NEEDS_CONTEXT naming them" >&2
       emit false close-story 4 repair "edited outside ## Files: $COMMITTED${STRAY:+, $STRAY}"
@@ -4840,6 +4909,18 @@ gate_log_round() { # gate_log_round <spec> <n> -> the round dir whose gate log s
   printf '%s' "$1/council/round-$k"
 }
 
+solo_rerun_none() { # solo_rerun_none <spec> <n> -> 0 iff, with the opt-in on, round n is Tier 1-2 and the log that
+  # stands for its gate (gate_log_round) ran no step: nothing re-runs. A `--full` round (full=asked|design) that ran
+  # its steps answers 1, so round_rerun names its FAIL steps (tails-1119-05)
+  local rd s
+  solo_tier "$1" "$1/council/round-$2" && solo_gate_on || return 1
+  rd="$(gate_log_round "$1" "$2")"
+  [ -f "$rd/suite.log" ] || return 0
+  s="$(head -1 "$rd/suite.log" | tr -d '\r' | sed -n 's/.* steps=\([0-9][0-9]*\).*/\1/p')"
+  case "$s" in ''|0) return 0 ;; esac
+  return 1
+}
+
 round_rerun() { # round_rerun <spec> <n> -> the gate steps the narrow round after round n's repair re-runs (plan R3):
   # the steps `FAIL` in round n's finished suite.log, comma-separated, empty when none failed or no row runs now;
   # `all` when the step count now differs from that log's, or round n has no finished log, or the count cannot
@@ -4848,7 +4929,7 @@ round_rerun() { # round_rerun <spec> <n> -> the gate steps the narrow round afte
   # that ran steps (narrow-repair-1115-06, round 1 finding 1)
   local rd snow sold
   # solo-gate-1118: with the opt-in on, the narrow round after a Tier 1-2 repair re-runs no step (its round n ran none)
-  solo_tier "$1" "$1/council/round-$2" && solo_gate_on && return 0
+  solo_rerun_none "$1" "$2" && return 0
   rd="$(gate_log_round "$1" "$2")"
   snow="$(suite_step_count)"
   [ "$snow" = 0 ] && return 0
@@ -4913,22 +4994,35 @@ repair_scope_paths() { # repair_scope_paths <spec> <asks> <findings> -> a repair
   return 1
 }
 
+repair_named_paths() { # repair_named_paths <findings> -> each existing path the findings name (finding_paths), one
+  # per line: no glob, nothing under docs/defects/ (a card ties no story's rows, tails-1119-05)
+  local p
+  while IFS= read -r p; do
+    case "$p" in ''|*[*?[]*|docs/defects/*) continue ;; esac
+    [ -e "$ROOT/$p" ] && printf '%s\n' "$p"
+  done <<< "$(finding_paths "$1" | awk 'NF && !seen[$0]++')"
+  return 0
+}
+
 repair_scope_rows() { # repair_scope_rows <spec> <asks> <findings> <paths> -> a repair story's ## Verification
-  # lines (plan S1), deduplicated, `repeat:` dropped: those of the done stories whose ## Files match one of
-  # <paths> (docs/defects/* aside) and of the stories serving a pathless RED ask; none tied (or <paths>
-  # empty, the union case): `none — reviewed by lead-review`.
-  local spec="$1" sf e p tied serving out=""
+  # lines (plan S1), deduplicated, `repeat:` dropped: those of the done stories whose ## Files (docs/defects/
+  # aside) match a path the findings name (repair_named_paths) and of the stories serving a pathless RED ask;
+  # none tied (or <paths> empty, the union case): `none — reviewed by lead-review`. tails-1119-05 (RR1): a tie
+  # through a path only the repair added (a symbol-map test, a serving story's ## Files, a card) gives no row;
+  # matching all of <paths> gave tails-1115's round-2 repair 41 rows.
+  local spec="$1" sf e p tied serving named="" out=""
   serving="$(repair_ask_stories "$spec" "$2" "$3")"
+  [ -n "$4" ] && named="$(repair_named_paths "$3")"
   for sf in "$spec"/*.md; do
     is_story_file "$sf" && [ "$(fm_field "$sf" status)" = done ] || continue
     tied=0
     printf '%s\n' "$serving" | grep -qxF -- "$sf" && tied=1
-    if [ "$tied" = 0 ] && [ -n "$4" ]; then
+    if [ "$tied" = 0 ] && [ -n "$named" ]; then
       while IFS= read -r e; do
-        [ -n "$e" ] || continue
+        case "$e" in ''|docs/defects/*) continue ;; esac
         while IFS= read -r p; do
-          [ -n "$p" ] && [ "$p" != 'docs/defects/*' ] && path_overlap "$e" "$p" && { tied=1; break 2; }
-        done <<< "$4"
+          [ -n "$p" ] && path_overlap "$e" "$p" && { tied=1; break 2; }
+        done <<< "$named"
       done <<< "$(files_of "$sf")"
     fi
     [ "$tied" = 1 ] && out="$out$(verify_of "$sf" | grep -vE '^repeat[[:space:]]*:')
@@ -5104,14 +5198,22 @@ cmd_reanchor() { # cmd_reanchor <spec> <reason> <commit:0|1>
     exit 2 ;;
   esac
   w=$((10#$w))
-  old="$(state_get "$ROOT" "$(slug_of "$SPEC")" "wave.$w" claim)"; new="$(git rev-parse HEAD)"
-  state_put "$SPEC" claim "wave.$w" "$new" || { emit false reanchor 2 error "could not write the claim head"; exit 2; }
-  REASON="$(redact_note "$REASON")" || REASON="(reason withheld)"
-  bash "$HERE/journal.sh" "$SPEC" "03-building" "claim head of wave $w moved from ${old:-none} to $new by reanchor: $REASON" "build:$w" >/dev/null
-  [ "$DOCOMMIT" = "1" ] && commit_paperwork reanchor "vulyk($(slug_of "$SPEC")): reanchor wave $w" "$SPEC/journal.md"
-  echo "cycle: $(slug_of "$SPEC") - claim head of wave $w now $(git rev-parse --short "$new")"
+  claim_head_move "$SPEC" "$w" "$REASON" "$DOCOMMIT" reanchor
+  echo "cycle: $(slug_of "$SPEC") - claim head of wave $w now $(git rev-parse --short "$CHM_NEW")"
   emit_status reanchor "$SPEC"
   exit 0
+}
+
+claim_head_move() { # claim_head_move <spec> <wave> <reason> <commit:0|1> <verb> - the claim head of <wave> to HEAD with
+  # reanchor's journal line (its reason redacted), the journal committed with <commit> 1; CHM_NEW = the new head.
+  # One move, two callers: reanchor by hand, and close-story's inert-commit rule (plan A3, reason `auto: <paths>`).
+  local spec="$1" w="$2" reason="$3" old
+  old="$(state_get "$ROOT" "$(slug_of "$spec")" "wave.$w" claim)"; CHM_NEW="$(git rev-parse HEAD)"
+  state_put "$spec" claim "wave.$w" "$CHM_NEW" || { emit false "$5" 2 error "could not write the claim head"; exit 2; }
+  reason="$(redact_note "$reason")" || reason="(reason withheld)"
+  bash "$HERE/journal.sh" "$spec" "03-building" "claim head of wave $w moved from ${old:-none} to $CHM_NEW by reanchor: $reason" "build:$w" >/dev/null
+  [ "$4" = "1" ] && commit_paperwork "$5" "vulyk($(slug_of "$spec")): reanchor wave $w" "$spec/journal.md"
+  return 0
 }
 
 # --- advance: one call per agent boundary (ADR-013 D2) - claim, ingest the seats' report
@@ -5123,6 +5225,18 @@ verb_json_str() { # verb_json_str <verb-line> <key> -> a string field of a verb'
   # still JSON-escaped (it goes back into JSON as is); the carried status is cut off first, so
   # a status key of the same name can never answer for the verb's own.
   printf '%s' "${1%%,\"status\":\{*}" | sed -nE "s/.*\"$2\":\"(([^\"\\\\]|\\\\.)*)\".*/\\1/p" | head -1
+}
+
+findings_answered() { # findings_answered <story-file> - 0 iff the last top-level list item of its `## Findings` opens
+  # `- Queen (` (tails-1119-06, plan D2); fenced lines (FENCE_AWK) and HTML comments are never read
+  tr -d '\r' < "$1" | awk "$FENCE_AWK"'
+    fence_line($0) || fence_n                 { next }
+    /^##[[:space:]]+Findings[[:space:]]*$/    { on = 1; next }
+    /^##[[:space:]]/                          { on = 0 }
+    on && /^<!--/                             { cm = 1 }
+    cm                                        { if (/-->/) cm = 0; next }
+    on && /^[-*+][[:space:]]/                 { last = $0 }
+    END { exit !(index(last, "- Queen (") == 1) }'
 }
 
 run_verb() { # run_verb <verb> <args...> - runs one cycle.sh verb as a subprocess (stdin is the
@@ -5138,7 +5252,7 @@ cmd_advance() { # cmd_advance <spec> <stamp> <claim:0|1> <ingest:0|1>
   local SPEC="$1" STAMP="$2" CLAIM="$3" INGEST="$4"
   local SLUG; SLUG="$(slug_of "$SPEC")"
   local -a SARG=(); [ -n "$STAMP" ] && SARG=(--stamp "$STAMP")
-  local STEPS="" REJECTED="" VERB_LINE="" VERB_RC=0 LEFTOVER_KEY=""
+  local STEPS="" REJECTED="" VERB_LINE="" VERB_RC=0 LEFTOVER_KEY="" ANSWERED=""
 
   advance_stop() { # advance_stop <failed-verb> - the stop line, built from VERB_LINE/VERB_RC; a
     # verb that exited 0 without an ok:true line (garbled output) still stops as exit 2
@@ -5220,9 +5334,28 @@ cmd_advance() { # cmd_advance <spec> <stamp> <claim:0|1> <ingest:0|1>
       [ -n "$(driver_stamp "$SPEC")" ] && record_claim_head "$SPEC" "${next#build:}"
       local vfile re_vf='"file":"([^"]*)"' wrest
       wrest=${st#*'"wave_stories":['}; wrest="${wrest%%]*}"
+      local -a WFILES=()
       while [[ $wrest =~ $re_vf ]]; do
         vfile="${BASH_REMATCH[1]}"; wrest="${wrest#*"${BASH_REMATCH[0]}"}"
         [ -f "$vfile" ] && verify_cells_check advance "$(verify_cmd_list "$vfile")" "$vfile"
+        WFILES+=("$vfile")
+      done
+      # tails-1119-06 (plan D2): a story that returned NEEDS_CONTEXT goes out again only once the Queen answered it,
+      # `- Queen (` opening the last top-level item of its ## Findings; it is then named in `answered`, and the
+      # driver tells its worker the entry is binding. Unanswered: exit 2 naming it, no worker sent.
+      local nid
+      for vfile in ${WFILES[@]+"${WFILES[@]}"}; do
+        [ -f "$vfile" ] || continue
+        [ "$(fm_field "$vfile" status)" = done ] && continue
+        [ "$(fm_field "$vfile" returned)" = NEEDS_CONTEXT ] || continue
+        if findings_answered "$vfile"; then
+          json_escape_to "$vfile"; ANSWERED="${ANSWERED:+$ANSWERED,}\"$JE\""
+          continue
+        fi
+        json_escape_to "$(story_id_of "$vfile")"; nid="$JE"
+        echo "cycle: advance - $nid returned NEEDS_CONTEXT and its ## Findings holds no answer: add \`- Queen (<date>): <answer>\` as the last item of its ## Findings, commit it with cycle.sh revise, then launch again" >&2
+        VERB_RC=2; VERB_LINE="{\"error\":\"$nid returned NEEDS_CONTEXT, no answer: add - Queen (<date>): <answer> as the last item of its ## Findings\"}"
+        advance_stop needs_context
       done ;;
   esac
   echo "cycle: $SLUG - advanced ${nsteps} step(s), next: $next"
@@ -5234,8 +5367,8 @@ cmd_advance() { # cmd_advance <spec> <stamp> <claim:0|1> <ingest:0|1>
         echo "cycle: waiting on manual step '$mid' - do it, then: bash scripts/cycle.sh manual-done $SPEC $mid [note]"
       done ;;
   esac
-  printf '{"ok":true,"verb":"advance","exit":0,"next":"%s","steps":[%s],"rejected":[%s]%s,"status":%s}\n' \
-    "$next" "$STEPS" "$REJECTED" "$LEFTOVER_KEY" "$st"
+  printf '{"ok":true,"verb":"advance","exit":0,"next":"%s","steps":[%s],"rejected":[%s]%s%s,"status":%s}\n' \
+    "$next" "$STEPS" "$REJECTED" "$LEFTOVER_KEY" "${ANSWERED:+,\"answered\":[$ANSWERED]}" "$st"
   exit 0
 }
 
@@ -5343,6 +5476,18 @@ short_line() { # short_line <line> - the line a verb run with `--short` prints i
         rs="$rs,\"$SI\""
       done
       out="$out,\"leftover\":[${rs#,}]" ;;
+  esac
+  # tails-1119-06 (plan D2): advance's answered NEEDS_CONTEXT stories, by id as leftover
+  case "$env" in
+    *'"answered":['*)
+      rs=""; w="${env#*\"answered\":[}"
+      re="^$QC,?"
+      while [[ $w =~ $re ]]; do
+        f="${BASH_REMATCH[1]}"; w="${w#"${BASH_REMATCH[0]}"}"
+        json_escape_to "$(story_id_of "$f")"; short_id "$f" "$JE"
+        rs="$rs,\"$SI\""
+      done
+      out="$out,\"answered\":[${rs#,}]" ;;
   esac
   printf '{%s}\n' "${out#,}"
 }

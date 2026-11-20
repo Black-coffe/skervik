@@ -44,11 +44,37 @@ pack_fingerprint() { # pack_fingerprint <spec-dir> - must match every caller exa
   fi
 }
 
+# One definition of a spec folder (S1, tails-1119): `docs/specs`, always, plus each line of <root>/.claude/vulyk-spec-roots
+# the grammar keeps. The file is UTF-8, one repo-relative folder per line, `/` separators; a line is trimmed (a CRLF
+# checkout's CR too) and loses its trailing `/`; blank lines and `#` lines are dropped; a line that is absolute (`/`, a
+# drive), holds `..`, a backslash or a glob character (`*?[]`) is skipped; a repeat is read once. No file, or one that
+# cannot be read: `docs/specs` alone, today's set. A spec folder is <folder>/<slug>/. The hooks' Python halves (they run
+# with -S and cannot source this file) read it themselves by the same grammar; tests/cycle.test.sh part gates compares
+# the three readers on one file. No environment variable carries, adds to or overrides the set.
+SPEC_NL='
+'
+spec_roots_set() { # spec_roots_set [<root>] -> SPEC_ROOTS: the set, one folder per line, each ending in a newline (no subshell)
+  local f="${1:-.}/.claude/vulyk-spec-roots" l
+  SPEC_ROOTS="docs/specs$SPEC_NL"
+  [ -f "$f" ] && [ -r "$f" ] || return 0
+  while IFS= read -r l || [ -n "$l" ]; do
+    l="${l#"${l%%[![:space:]]*}"}"; l="${l%"${l##*[![:space:]]}"}"
+    while :; do case "$l" in */) l="${l%/}" ;; *) break ;; esac; done
+    case "$l" in ''|'#'*|/*|[A-Za-z]:*|*..*|*\\*|*[*?]*|*[[]*|*[]]*) continue ;; esac
+    case "$SPEC_NL$SPEC_ROOTS" in *"$SPEC_NL$l$SPEC_NL"*) continue ;; esac
+    SPEC_ROOTS="$SPEC_ROOTS$l$SPEC_NL"
+  done < "$f"
+  return 0
+}
+spec_roots() { # spec_roots [<root>] -> the spec folders, one per line: docs/specs first, then the kept lines
+  spec_roots_set "${1:-.}"; printf '%s' "$SPEC_ROOTS"
+}
+
 # is_paperwork_path() is the one whitelist (C1, amended R23/R4, autonomous-cycle-21): every
 # caller that must tell the cycle's own writes from the software - paperwork_only() below and
 # open-round's own dirty-tree precondition - goes through this single function, so the ADR
 # invariant ("paperwork_only() lists every file the cycle writes") cannot drift into two lists
-# that quietly disagree. Anchored to docs/specs/*/ (R23/m-2): an unanchored `*/council/*` or
+# that quietly disagree. Anchored to a spec folder's <slug>/ (docs/specs/*/ or a listed one, R23/m-2): an unanchored `*/council/*` or
 # `*/journal.md` matched any hive path sharing those names, not just the cycle's own. scope.jsonl joins the memory/stats series because
 # `close-story` writes it through scope-check.sh (R4/C-3(b)). VERSION and CHANGELOG.md join in
 # 0.18 (ADR-013 D3): the release commit /vulyk-ship makes must not stale a GREEN round.
@@ -59,8 +85,13 @@ pack_fingerprint() { # pack_fingerprint <spec-dir> - must match every caller exa
 # the installer never ships, owns or touches (ADR-010 amendment 2026-10-16).
 # Callers pass a path as itself: read git's lists with -z, never its C-quoted `"docs/\320..."`.
 is_paperwork_path() { # is_paperwork_path <repo-relative-path> [<root>]
+  local r rest
+  spec_roots_set "${2:-.}"; rest="$SPEC_ROOTS"
+  while [ -n "$rest" ]; do   # a spec folder: docs/specs or one .claude/vulyk-spec-roots lists (spec_roots)
+    r="${rest%%"$SPEC_NL"*}"; rest="${rest#*"$SPEC_NL"}"
+    case "$1" in "$r"/*/journal.md|"$r"/*/council/*) return 0 ;; esac
+  done
   case "$1" in
-    docs/specs/*/journal.md|docs/specs/*/council/*| \
     memory/stats/human.jsonl|memory/stats/acceptance.jsonl|memory/stats/ship.jsonl|memory/stats/council.jsonl|memory/stats/scope.jsonl| \
     memory/stats/anomalies.jsonl|memory/stats/evolve.jsonl|VERSION|CHANGELOG.md|CITATION.cff) return 0 ;;
     memory/learnings/*.md)
@@ -91,13 +122,19 @@ hive_paperwork_path() { # hive_paperwork_path <repo-relative-path> <root>
 # in brief.md only what `reopen` appends under `## Answers` (an `**After escalation (round N, ...).**`
 # line and its `> ` lines). spec_doc_strip drops exactly those lines and the blank ones; two versions
 # whose stripped texts are equal differ only in the cycle's own lines. Any other change is a hand edit.
-spec_doc_kind() { # spec_doc_kind <repo-relative-path> -> plan | brief for a spec's own plan.md / brief.md
-  case "$1" in
-    docs/specs/*/*/*) return 1 ;;
-    docs/specs/*/plan.md) printf 'plan' ;;
-    docs/specs/*/brief.md) printf 'brief' ;;
-    *) return 1 ;;
-  esac
+spec_doc_kind() { # spec_doc_kind <repo-relative-path> [<root>] -> plan | brief for a spec's own plan.md / brief.md,
+  # under docs/specs or a folder <root>/.claude/vulyk-spec-roots lists (spec_roots)
+  local r rest
+  spec_roots_set "${2:-.}"; rest="$SPEC_ROOTS"
+  while [ -n "$rest" ]; do
+    r="${rest%%"$SPEC_NL"*}"; rest="${rest#*"$SPEC_NL"}"
+    case "$1" in
+      "$r"/*/*/*) ;;
+      "$r"/*/plan.md) printf 'plan'; return 0 ;;
+      "$r"/*/brief.md) printf 'brief'; return 0 ;;
+    esac
+  done
+  return 1
 }
 
 spec_doc_strip() { # spec_doc_strip <plan|brief> < text -> the text without the cycle-written lines
@@ -123,7 +160,7 @@ spec_doc_text() { # spec_doc_text <root> <rev | @ for the working tree> <path> -
 
 spec_doc_same() { # spec_doc_same <root> <path> <from-rev|@> <to-rev|@> -> 0 iff the two versions of a
   # spec's plan.md / brief.md differ only in cycle-written lines (P1); any other path: 1
-  local kind; kind="$(spec_doc_kind "$2")" || return 1
+  local kind; kind="$(spec_doc_kind "$2" "$1")" || return 1
   [ "$(spec_doc_text "$1" "$3" "$2" | spec_doc_strip "$kind")" = "$(spec_doc_text "$1" "$4" "$2" | spec_doc_strip "$kind")" ]
 }
 
@@ -134,10 +171,15 @@ paperwork_change() { # paperwork_change <path> <root> <from-rev|@> <to-rev|@> ->
 
 hand_edits() { # hand_edits <root> <from-commit> <to-commit> -> "<path> <sha>" for each commit in the range
   # that changed a spec's plan.md or brief.md outside its cycle lines (P1), oldest first
-  local sha p
-  git -C "$1" rev-list --reverse "$2..$3" -- 'docs/specs/*/plan.md' 'docs/specs/*/brief.md' 2>/dev/null | while IFS= read -r sha; do
+  local sha p r rest specs=()
+  spec_roots_set "$1"; rest="$SPEC_ROOTS"
+  while [ -n "$rest" ]; do
+    r="${rest%%"$SPEC_NL"*}"; rest="${rest#*"$SPEC_NL"}"
+    specs+=("$r/*/plan.md" "$r/*/brief.md")
+  done
+  git -C "$1" rev-list --reverse "$2..$3" -- ${specs[@]+"${specs[@]}"} 2>/dev/null | while IFS= read -r sha; do
     git -C "$1" -c core.quotePath=false diff-tree --no-commit-id --name-only -r --no-renames "$sha" 2>/dev/null | while IFS= read -r p; do
-      spec_doc_kind "$p" >/dev/null || continue
+      spec_doc_kind "$p" "$1" >/dev/null || continue
       spec_doc_same "$1" "$p" "$sha^" "$sha" || printf '%s %s\n' "$p" "$sha"
     done
   done

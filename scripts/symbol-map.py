@@ -19,7 +19,9 @@ The script reports; it blocks nothing.
 --fill-tests: each `status: todo` story of the spec that is not a repair story gets, appended to its
 `## Files`, every test an `exact` hit links to one of its files (never a `textual` one), and, appended to its
 `## Verification`, the first non-`round-only` `## Commands` cell with no placeholder that names a listed test
-no line names yet; a cell with a placeholder prints `symbol-map: <story>: pick a row for <test> (<cell>)`.
+no line names yet; for a test with only a `--part <topic>` cell, one row per part whose block (its `PARTS=` list
+and `if part <name>` blocks, read from the file) holds an exact hit, a block several parts share counting for each;
+any other placeholder cell, or a suite whose parts do not read, prints `symbol-map: <story>: pick a row for <test> (<cell>)`.
 Its listing is uncapped. Exit 0 every listed test has a row, 1 a pick line, 2 usage or not inside a git repo.
 """
 # Speed on a bash input (post-037-tails, profiled with cProfile; warm OS file cache, one Windows box,
@@ -717,6 +719,123 @@ def insert_after(lines, at, new, eol):
     lines[at + 1:at + 1] = [x + eol for x in new]
 
 
+PARTS_RE = re.compile(r'^\s*PARTS=(["\'])(.*?)\1', re.M | re.S)
+IF_RE = re.compile(r'^\s*if\s+(.*?)(?:;\s*then\b|$)')
+PART_CALL = re.compile(r'(?<![\w$-])(part_on|part)\s+([^;&|}#]*)')
+PART_CMP = re.compile(r'"?\$\{?PART\}?"?\s*(!?=)\s*"?([\w.-]+)"?')
+HEREDOC = re.compile(r'<<-?\s*([\'"]?)(\w+)\1')
+PART_CELL = re.compile(r'--part\s+<[^<> ]+>')
+QUOTED = re.compile(r'\'[^\']*\'|"(?:\\.|[^"\\])*"')
+MID_IF = re.compile(r'(?:[;&|{]|\b(?:then|else|do))\s*if\s')
+MID_FI = re.compile(r'[;&|]\s*fi\b')
+
+
+def suite_parts(repo, q):
+    """(tails-1119-04) The parts of a suite run by `--part`, read statically: the `PARTS=` list and, for each line
+    of q, the set of parts that run it (`if part a || part b`, `if part_on a b`, `if [ "$PART" != a ]` blocks; a line
+    outside every such block runs in each part). None when q has no PARTS= list or its if/fi do not balance."""
+    t = repo.text(q)
+    m = PARTS_RE.search(t or '')
+    if not m:
+        return None
+    parts = m.group(2).split()
+    if not parts or not all(re.match(r'^[\w.-]+$', x) for x in parts):
+        return None
+    every = frozenset(parts)
+    stack, runs, doc = [], [], None
+    lines = t.splitlines()
+    ends = [x.strip() for x in lines]
+    for n, ln in enumerate(lines):
+        cur = stack[-1] if stack else every
+        runs.append(cur)
+        if doc is not None:
+            if ln.strip() == doc:
+                doc = None
+            continue
+        s = ln.strip()
+        if not s or s.startswith('#'):
+            continue
+        h = HEREDOC.search(ln)
+        if h and '<<<' not in ln and h.group(2) in ends[n + 1:]:  # a `<<EOF` with no EOF line after it is data
+            doc = h.group(2)
+        code = QUOTED.sub('""', ln)  # an `if`/`fi` inside a one-line string is data
+        if re.match(r'^\s*fi\b', code):
+            if not stack:
+                return None
+            stack.pop()
+            cur = stack[-1] if stack else every
+        im = IF_RE.match(ln)
+        if im:
+            cond = im.group(1).split(' #')[0]
+            calls = PART_CALL.findall(cond)
+            cmp_ = PART_CMP.search(cond)
+            if calls:
+                got = set()
+                for fn, args in calls:
+                    words = args.split()
+                    got.update(words[:1] if fn == 'part' else words)
+                stack.append(cur & frozenset(got))
+            elif cmp_:
+                one = frozenset([cmp_.group(2)])
+                stack.append(cur & (every - one if cmp_.group(1) == '!=' else one))
+            else:
+                stack.append(cur)
+        stack.extend([stack[-1] if stack else every] * len(MID_IF.findall(code)))
+        for _ in MID_FI.findall(code):
+            if not stack:
+                return None
+            stack.pop()
+    if stack or doc is not None:
+        return None
+    return parts, runs
+
+
+def part_hits(repo, q, p, via):
+    """(tails-1119-04) The line indexes of q that call p: a line running or sourcing p (or its wrapper `via`) outside
+    a function body, or one calling a function of q (or of a sourced wrapper) whose body does."""
+    t = repo.text(q) or ''
+    direct, names = {p}, set()
+    if via:
+        if via in repo._sourced_only.get(q, ()):
+            top, reach = repo.sh_reach(via, p)
+            names |= reach
+            if top:
+                direct.add(via)
+        else:
+            direct.add(via)
+    idx = [i for i, ln in enumerate(t.splitlines()) if not ln.lstrip().startswith('#')]
+    detail = repo._detail.get(q, [])
+    owner, body, cur, indent = [], {}, None, ''
+    for ln, _ in detail:
+        if cur is None:
+            m = repo.FUNC_RE.match(ln)
+            if m:
+                body.setdefault(m.group(2), [])
+                if not re.search(r'[;\s]\}(?:\s|;|$)', ln[m.end():]):
+                    cur, indent = m.group(2), m.group(1)
+                owner.append(m.group(2))
+                continue
+            owner.append(None)
+        else:
+            owner.append(cur)
+            if re.match(re.escape(indent) + r'\}', ln):
+                cur = None
+    for k, (ln, tg) in enumerate(detail):
+        if owner[k] is not None:
+            body[owner[k]].append((ln, tg))
+    reach = {f for f, lns in body.items() if any((tg & direct) or (repo.call_words(ln) & names) for ln, tg in lns)}
+    grew = True
+    while grew:
+        grew = False
+        for f, lns in body.items():
+            if f not in reach and any(repo.call_words(ln) & reach for ln, _ in lns):
+                reach.add(f)
+                grew = True
+    names |= reach
+    return [idx[k] for k, (ln, tg) in enumerate(detail)
+            if owner[k] is None and ((tg & direct) or (names and repo.call_words(ln) & names))]
+
+
 def fill_story(repo, path, cells):
     """Fill one todo, non-repair story in place; returns (pick lines, report lines)."""
     with open(path, 'rb') as f:
@@ -748,13 +867,15 @@ def fill_story(repo, path, cells):
             if item:
                 listed.append(item)
     scope = set(listed) | {rel_to_root(repo.root, path)}
-    added = []
+    added, hits = [], {}  # hits: test -> [(story file, its wrapper or None)]
     for p in listed:
         if is_glob(p) or is_test(p) or not os.path.isfile(os.path.join(repo.root, p)):
             continue
         lang = 'py' if p.endswith('.py') else ('sh' if repo.is_shell(p) else None)
         edges = repo.edges({'py': ('py', 'sh'), 'sh': ('sh',), None: ()}[lang])
-        for q in sorted(exact_importers(repo, edges, p, lang)):
+        for q, v in sorted(exact_importers(repo, edges, p, lang).items()):
+            if is_test(q) and not is_fixture(q):
+                hits.setdefault(q, []).append((p, v[6:-1] if v else None))
             if is_test(q) and not is_fixture(q) and not in_scope(q, scope) and q not in added:
                 added.append(q)
     insert_after(lines, last_item, ['- ' + q for q in added], eol)
@@ -765,15 +886,33 @@ def fill_story(repo, path, cells):
     vtext = '\n'.join(bare[i] for i in range(vs[0] + 1, vs[1]) if not mask[i]) if vs else ''
     picks, rows = [], []
     for t in [x for x in listed + added if not is_glob(x) and is_test(x) and not is_fixture(x)]:
-        if names(t, vtext) or any(names(t, r) for r in rows):
+        # a story that runs t whole (a line naming t with no --part after it) needs no part row
+        whole = names(t, vtext) and not re.search(r'(?<![\w./-])' + re.escape(t) + r'\s+--part\b', vtext)
+        if whole or any(names(t, r) for r in rows):
             continue
         if not vs:
             picks.append('symbol-map: %s: no ## Verification section for %s' % (sid, t))
             continue
         cand = [c for purpose, c in cells if 'round-only' not in purpose and names(t, c)]
         free = [c for c in cand if not PLACEHOLDER.search(c)]
+        parted = [c for c in cand if len(PLACEHOLDER.findall(c)) == 1 and PART_CELL.search(c)]
+        sp = suite_parts(repo, t) if parted and not free and t in hits else None
+        picked = []
+        if sp:
+            plist, runs = sp
+            for p, via in hits[t]:
+                for i in part_hits(repo, t, p, via):
+                    picked.extend(x for x in plist if x in runs[i] and x not in picked)
+            picked.sort(key=plist.index)
+        if names(t, vtext) and not picked:
+            continue  # a part row the story already holds settles a suite whose parts do not read, as before
         if free:
             rows.append(free[0])
+        elif picked:
+            for x in picked:
+                r = PART_CELL.sub('--part ' + x, parted[0])
+                if not re.search(re.escape(r) + r'(?![\w.-])', vtext):
+                    rows.append(r)
         elif cand:
             picks.extend('symbol-map: %s: pick a row for %s (%s)' % (sid, t, c) for c in cand)
         else:

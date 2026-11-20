@@ -23,15 +23,26 @@
 #   - Commands are found in every command position: after `;`, `&&`, `||`, `|`, `&`, a newline, `(`, `{`, a
 #     keyword (`!`, then, do, else, if, while, until), leading redirects and assignments, and the wrappers time,
 #     command, exec, env, timeout, nice, nohup, setsid, stdbuf and xargs with their options; inside `$( )`,
-#     backticks and `<( )` (quoted or not), and in the string given to eval or to `sh -c` (bash, dash, zsh, ...).
-#     A program name built from a variable, a substitution, a brace or a wildcard is denied.
+#     backticks and `<( )` (quoted or not), each judged from the folder in force where it stands. A line break
+#     inside quotes is part of the word. A program name built from a variable, a substitution, a brace or a
+#     wildcard is denied.
+#   - A shell verb given a command string (`sh -c`, bash, dash, zsh, ..., any option cluster holding c) and an
+#     eval-family verb (eval, iex, Invoke-Expression) are denied by the verb, before the string is read: the seat
+#     runs the command directly. A shell running a script file, and `bash -n`, are judged as other commands.
 #   - `cd` is followed only where it surely takes effect; a cd that may not (a missing folder, after `||`, in a
 #     pipe, a branch or a loop, in a subshell that ends) leaves every folder the call may stand in to be judged.
 #     A cd with more than one folder or with a CDPATH is denied.
 #   - git by an allowlist: `status`, `version` (or `--version`), `rev-parse` with its query options and plain
 #     revisions, `ls-files` with its listing options; global options only `-C <dir>`, `--no-pager`, `-P`. Every
 #     other verb (an alias and a low-level verb included), every other option, a `-c` setting, a GIT_* variable
-#     and git fed words by xargs are denied, and a `<rev>:<path>` naming docs/specs/ is denied in every verb.
+#     and git fed words by xargs are denied, and a `<rev>:<path>` naming a spec folder (the folder itself, a path
+#     inside it or above it, a glob that may reach it, in any letter case) is denied in every verb.
+#   - A spec folder (plan.md `## Contracts` S1 of tails-1119) is `docs/specs`, always, or a folder that
+#     <project>/.claude/vulyk-spec-roots lists, one repo-relative folder per line with `/` separators, read by the
+#     Python half itself by lib.sh `spec_roots`' grammar: each line trimmed (a CR too) and its trailing `/` dropped;
+#     blank and `#` lines dropped; a line that is absolute, or holds `..`, a backslash or a glob character, is
+#     skipped and names no folder. A file that cannot be read counts as docs/specs alone. Either way a deny reason
+#     then says so; nothing denied with no file passes with one. No environment variable sets the list.
 #   - A command the hook cannot read (open quotes or substitutions, a path operand or `cd` built from a
 #     variable or a substitution it cannot resolve) is denied; a `$` inside a script, a pattern or an echo word is
 #     no path. A heredoc body is text (the seat's report), not commands; a comment is cut where the shell cuts it.
@@ -53,8 +64,8 @@
 #   - a word that exists nowhere and is no reading command's operand (a script, a pattern, an echo word);
 #   - which court a call that starts in no court enters by `cd`;
 #   - a link that only the Git Bash layer knows, which Windows cannot resolve;
-#   - refused although harmless (known over-denies, 0.55.0): a `case` statement, an arithmetic expansion that
-#     holds a parenthesised group or a substitution, and a substitution after a `cd` into the court.
+#   - refused although harmless (known over-denies, 0.55.0): a `case` statement, and an arithmetic expansion
+#     that holds a parenthesised group or a substitution.
 if [ "${1:-}" = "--check" ]; then
   [ -f "${2:-}" ] || exit 0
   IFS= read -r -d '' IN < "$2"
@@ -92,7 +103,7 @@ CHECK = len(sys.argv) > 1 and sys.argv[1] == '--check'
 SEATS = ('council-opus', 'council-haiku')
 SEP = {';', '&&', '||', '|', '&', '\n', '(', ')', '{', '}'}
 # git for a seat: the verbs it may run, each with the options it may give (None: any option). A word that is no
-# option is a pathspec (status, ls-files) or a revision (rev-parse); any `<rev>:<path>` into docs/specs/ is denied.
+# option is a pathspec (status, ls-files) or a revision (rev-parse); any `<rev>:<path>` into a spec folder is denied.
 GIT_VERBS = {
     'status': None,
     'version': None,
@@ -133,6 +144,7 @@ WRAP = {
                '--max-procs', '--max-chars', '--replace', '--eof', '--max-lines'), ('-a', '--arg-file'), 0),
 }
 SHELLS = ('sh', 'bash', 'dash', 'zsh', 'ksh', 'mksh', 'ash')
+ANSI_ESC_QUOTE = re.compile(r"\$'(?:[^'\\]|\\.)*\\'")  # an ANSI-C quoted word ($'...') holding an escaped quote
 
 
 def prog(w):
@@ -141,7 +153,39 @@ def prog(w):
     return n[:-4] if n.endswith('.exe') else n
 
 
+ROOTS = None      # (the spec folders, a note for a deny reason), read once per call from the project root
+
+
+def spec_roots(root):
+    """(the spec folders, a note for a deny reason): `docs/specs`, then each line of <root>/.claude/vulyk-spec-roots
+    the grammar keeps (S1, as lib.sh spec_roots reads it): trimmed, its trailing `/` dropped; blank and `#` lines
+    dropped; a line that is absolute or holds `..`, a backslash or a glob character skipped; a repeat read once.
+    A file that cannot be read gives docs/specs alone, and the note says so."""
+    out = ['docs/specs']
+    p = os.path.join(root, '.claude', 'vulyk-spec-roots')
+    if not os.path.lexists(p):
+        return out, ''
+    try:
+        with open(p, 'rb') as f:
+            text = f.read().decode('utf-8', 'replace')
+    except (OSError, ValueError):
+        return out, ' (.claude/vulyk-spec-roots could not be read, so only docs/specs is read as a spec folder.)'
+    skipped = 0
+    for line in text.split('\n'):
+        l = line.strip(' \t\r\n\v\f').rstrip('/')
+        if not l or l.startswith('#'):
+            continue
+        if l.startswith('/') or re.match(r'[A-Za-z]:', l) or '..' in l or '\\' in l or re.search(r'[*?\[\]]', l):
+            skipped += 1
+        elif l not in out:
+            out.append(l)
+    return out, (' (.claude/vulyk-spec-roots: %d line(s) its grammar refuses are skipped and name no spec folder.)'
+                 % skipped if skipped else '')
+
+
 def deny(reason):
+    if ROOTS is not None:
+        reason += ROOTS[1]
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}))
@@ -226,12 +270,14 @@ def drop_heredocs(cmd):
     lines, out, i = cmd.split('\n'), [], 0
     while i < len(lines):
         line = lines[i]
+        before = '\n'.join(out) + '\n' if out else ''   # a quote opened on an earlier line spans this one
         out.append(line)
         i += 1
         stop = comment_at(line)
         for m in re.finditer(r'(?<!<)<<(?!<)-?[ \t]*((?:\'[^\']*\'|"[^"]*"|[^\s;&|<>()\'"])+)', line):
             head = line[:m.start()]
-            if m.start() >= stop or quoted(line, m.start()) or head.count('((') > head.count('))'):
+            if m.start() >= stop or quoted(before + line, len(before) + m.start()) or \
+                    head.count('((') > head.count('))'):
                 continue
             word = re.sub(r'[\'"\\]', '', m.group(1))
             while i < len(lines) and lines[i].strip() != word:
@@ -241,13 +287,57 @@ def drop_heredocs(cmd):
 
 
 def strip_comments(cmd, powershell):
+    """The command with each comment cut to its line's end; a quote spans lines, and a `#` inside it is text."""
     esc = '`' if powershell else '\\'
-    return '\n'.join(line[:comment_at(line, esc)] for line in cmd.split('\n'))
+    out, q, k = [], None, 0
+    while k < len(cmd):
+        ch = cmd[k]
+        if ch == esc and q != "'":
+            out.append(cmd[k:k + 2])
+            k += 2
+            continue
+        if q:
+            if ch == q:
+                q = None
+        elif ch in '\'"':
+            q = ch
+        elif ch == '#' and (k == 0 or cmd[k - 1] in ' \t\n;&|()<>'):
+            j = cmd.find('\n', k)
+            k = len(cmd) if j < 0 else j
+            continue
+        out.append(ch)
+        k += 1
+    return ''.join(out)
+
+
+NL = '\x02'                                             # an unquoted line break, marked for the tokeniser
+SUB = re.compile('\x01(\\d+)\x01')                      # a substitution, cut out to be judged where it stands
+
+
+def mark_lines(cmd, esc):
+    """The command with each unquoted line break marked as a separator word; one inside quotes is the word's."""
+    out, q, k = [], None, 0
+    while k < len(cmd):
+        ch = cmd[k]
+        if ch == esc and q != "'":
+            out.append(cmd[k:k + 2])
+            k += 2
+            continue
+        if q:
+            if ch == q:
+                q = None
+        elif ch in '\'"':
+            q = ch
+        elif ch == '\n':
+            ch = ' ' + NL + ' '
+        out.append(ch)
+        k += 1
+    return ''.join(out)
 
 
 def substitutions(cmd):
-    """The bodies of every `$( )` and backtick substitution outside single quotes (quoted in "..." too), or None
-    when one does not close. `$(( ))` is arithmetic: its inside is scanned on, for a substitution within."""
+    """(start, end, body) of every `$( )` and backtick substitution outside single quotes (quoted in "..." too),
+    or None when one does not close. `$(( ))` is arithmetic: its inside is scanned on, for a substitution within."""
     out, i, q = [], 0, None
     while i < len(cmd):
         c = cmd[i]
@@ -268,7 +358,7 @@ def substitutions(cmd):
                 j += 2 if cmd[j] == '\\' else 1
             if j >= len(cmd):
                 return None
-            out.append(cmd[i + 1:j])
+            out.append((i, j + 1, cmd[i + 1:j]))
             i = j
         elif cmd.startswith('$(', i) and not cmd.startswith('$((', i):
             depth, j, iq = 1, i + 2, None
@@ -288,7 +378,7 @@ def substitutions(cmd):
                 j += 1
             if depth:
                 return None
-            out.append(cmd[i + 2:j - 1])
+            out.append((i, j, cmd[i + 2:j - 1]))
             i = j - 1
         i += 1
     return out
@@ -301,6 +391,7 @@ def items(cmd, powershell):
     """The command as a list of (kind, text): word, sep (; && || | & newline), redir (< > >> <& ...), open and
     close (a subshell, a process substitution); None when its quotes do not close."""
     cmd = cmd.replace('\r', '').replace('`\n' if powershell else '\\\n', '')
+    cmd = mark_lines(cmd, '`' if powershell else '\\')
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=';&|()<>')
     lex.whitespace = ' \t'
     lex.whitespace_split = True
@@ -319,14 +410,10 @@ def items(cmd, powershell):
                         out.append(('redir', op))
                     else:
                         out.append(('sep', op))
+            elif tok == NL:
+                out.append(('sep', '\n'))
             elif tok in SEP:
                 out.append(('sep', ';'))                # { } group in the current shell
-            elif '\n' in tok:
-                for k, part in enumerate(tok.split('\n')):
-                    if k:
-                        out.append(('sep', '\n'))
-                    if part:
-                        out.append(('word', part))
             else:
                 out.append(('word', tok))
     except ValueError:
@@ -532,15 +619,20 @@ def main():
         return out
 
     def rel_hit(rel):
-        """True when a pathspec relative to the repo top is docs/specs, inside it, or above it."""
+        """True when a pathspec relative to the repo top is a spec folder (docs/specs or one the project's
+        .claude/vulyk-spec-roots lists), inside one, or above one."""
+        global ROOTS
+        if ROOTS is None:
+            ROOTS = spec_roots(project)
         rel = re.sub(r'^(\./)+', '', rel.replace('\\', '/')).strip('/').lower()
         if rel in ('', '.'):
             return True
+        folders = [r.lower() for r in ROOTS[0]]
         stop = re.split(r'[*?\[]', rel, 1)
         if len(stop) > 1:                              # a glob: whatever it may reach from its fixed prefix
             fixed = stop[0].rsplit('/', 1)[0] if '/' in stop[0] else ''
-            return fixed == '' or 'docs/specs'.startswith(fixed) or fixed.startswith('docs/specs')
-        return rel in ('docs', 'docs/specs') or rel.startswith('docs/specs/')
+            return fixed == '' or any(r.startswith(fixed) or fixed.startswith(r) for r in folders)
+        return any(rel == r or r.startswith(rel + '/') or rel.startswith(r + '/') for r in folders)
 
     def check_git(seg, i):
         """seg[i] is a git word: deny every form off the seat's allowlist (GIT_VERBS, GIT_GLOBAL, `-C <dir>`)."""
@@ -573,7 +665,7 @@ def main():
                     refuse('git %s %s is not on the list' % (verb, a))
             elif ':' in a and not a.startswith(':') and not re.match(r'^[A-Za-z]:[/\\]', a) and \
                     rel_hit(a.split(':', 1)[1]):
-                refuse('the revision %s names docs/specs/' % a)
+                refuse('the revision %s names a spec folder (docs/specs/ or one .claude/vulyk-spec-roots lists)' % a)
 
     def head(words, H):
         """(index of the command word, wrapped, via xargs): past assignments, keywords (`!`, then, do, ...) and
@@ -637,7 +729,14 @@ def main():
         v = expand(v)
         VARS[name.split('[')[0].rstrip('+')] = None if re.search(r'[$`]', v) else v
 
-    def segment(words, reds, H, certain, depth):
+    def segment(words, reds, H, certain, depth, bodies):
+        def judged(w):
+            """w with each substitution it holds walked from the folders in force here, then shown as `$()`."""
+            for m in SUB.finditer(w):
+                walk(bodies[int(m.group(1))], list(H), depth + 1)
+            return SUB.sub('$()', w)
+        words = [judged(w) for w in words]
+        reds = [(o, None if t is None else judged(t)) for o, t in reds]
         shown[0] = ' '.join(words + [o + (t or '') for o, t in reds])
         for op, t in reds:
             if t is None or op == '<<':                 # a heredoc's delimiter is no path
@@ -679,14 +778,12 @@ def main():
                     assign(a)
                 each(H, a, 'word')
             return
-        if n in ('eval', 'iex', 'invoke-expression'):
-            walk(' '.join(words[i + 1:]), H, depth + 1)   # eval runs in this shell: its cd moves the call
-            return
-        if n in SHELLS:
-            s = shell_string(words, i)
-            if s is not None:
-                walk(s, list(H), depth + 1)
-                return
+        # tails-1119-09 (finding 4): a shell with a command string in any later word too (a multi-call binary, a
+        # find action), fail closed
+        if n in ('eval', 'iex', 'invoke-expression') or \
+                any(prog(words[k]) in SHELLS and shell_string(words, k) is not None for k in range(i, len(words))):
+            deny('VULYK court guard: `%s` - a nested shell string is denied to a blind seat by its verb (eval, iex, '
+                 'sh -c and the like), before its text is read; run the command directly.%s' % (shown[0], TAIL))
         if n == 'git':
             if xa:
                 deny('VULYK court guard: `%s` hands git words read from input, which the hook cannot check; a '
@@ -726,13 +823,21 @@ def main():
     def walk(text, H, depth):
         if depth > 8:
             unreadable()
+        if not ps and ANSI_ESC_QUOTE.search(text):
+            unreadable()                                # an ANSI-C word with an escaped quote: bounds the reader lacks
         text = strip_comments(drop_heredocs(text), ps)
         subs = substitutions(text)
-        its = items(text, ps)
-        if subs is None or its is None:
+        if subs is None:
             unreadable()
-        for body in subs:                               # a substitution runs where the call stands
-            walk(body, list(H), depth + 1)
+        # each substitution is cut out and judged in the segment it stands in, from the folder in force there
+        bodies, cut, last = [], [], 0
+        for a, b, body in subs:
+            cut.append(text[last:a] + '\x01%d\x01' % len(bodies))
+            bodies.append(body)
+            last = b
+        its = items(''.join(cut) + text[last:], ps)
+        if its is None:
+            unreadable()
         entries, words, reds, pend = [], [], [], None
         for kind, v in its + [('sep', None)]:
             if kind == 'word':
@@ -772,7 +877,7 @@ def main():
             after = entries[k + 1] if k + 1 < len(entries) else ('sep', None)
             certain = (not cond[0] and before[1] in (None, ';', '&&', '\n', '(')
                        and not (after[0] == 'sep' and after[1] in ('||', '|', '&', '|&')))
-            segment(e[1], e[2], H, certain, depth)
+            segment(e[1], e[2], H, certain, depth, bodies)
 
     walk(cmd, [cwd], 0)
     sys.exit(0)

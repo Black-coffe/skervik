@@ -9,7 +9,8 @@
 #     `--commit` word is no part of the spec or the note);
 #   - a command running `cycle.sh briefed <spec> ... --go`;
 #   - an Edit, MultiEdit, Write or shell command that adds or changes a `**Approved:**` or `**Checked:**` line
-#     of a `docs/specs/<slug>/plan.md` (a line still holding the template placeholder `<...>` is no record),
+#     of a `<spec folder>/<slug>/plan.md` (a spec folder, below; a line still holding the template placeholder
+#     `<...>` is no record),
 #     and one that adds an ACCEPTED or REJECTED row to `memory/stats/human.jsonl`: any shell command naming
 #     `human.jsonl` beside the word ACCEPTED or REJECTED counts as one, a `git add` / `git commit` of the record
 #     included, so `human-check.sh ... --commit` commits its own plan.md line and row. An Edit, MultiEdit or
@@ -17,7 +18,7 @@
 #     or MultiEdit on the file as it stands after it, so one that replaces only the text after the marker, or
 #     moves a row to another spec, counts;
 #   - a shell command that may rewrite a plan.md holding such a line without spelling the marker (a redirect
-#     into it; tee, cp, mv, a script interpreter; sed or awk -i) and that names it by its `docs/specs/<slug>/plan.md`
+#     into it; tee, cp, mv, a script interpreter; sed or awk -i) and that names it by its `<spec folder>/<slug>/plan.md`
 #     path, also inside a word that holds a whole command (`bash -c`, a heredoc, a pipe or a here-string with the
 #     path spelled): the hook cannot read the line it leaves, so it is denied to everyone, with the Edit tool named
 #     as the way.
@@ -74,7 +75,14 @@
 # `toolUseResult.answers` value of the tool_result for an AskUserQuestion tool_use of the main thread.
 # Not judged, on purpose: whether the words mean yes (no word list), and who wrote the transcript file itself
 # (the session can write that file); an owner who types or dictates text an agent wrote counts as the owner.
-# The main session's plan.md rewrite check reads the path as the command spells it (`docs/specs/<slug>/plan.md`).
+# The main session's plan.md rewrite check reads the path as the command spells it (`<spec folder>/<slug>/plan.md`).
+# A spec folder (plan.md `## Contracts` S1 of tails-1119) is `docs/specs`, always, or a folder that
+# `.claude/vulyk-spec-roots` at the project root (the git top of the input cwd, else the project dir) lists, one repo-relative folder per
+# line with `/` separators, read by the Python half itself by lib.sh `spec_roots`' grammar: each line trimmed (a CR
+# too) and its trailing `/` dropped; blank and `#` lines dropped; a line that is absolute, or holds `..`, a backslash
+# or a glob character, is skipped and names no folder. A file that cannot be read counts as docs/specs alone. Either
+# way a deny reason then says so; nothing is guarded less than with no file. No environment variable sets the list.
+# A subagent's Write, Edit or MultiEdit of `.claude/vulyk-spec-roots` (its path resolved) is denied.
 # No Python, or a transcript the hook cannot read: a guarded call is denied with a message naming the cause;
 # without Python every Edit, MultiEdit or Write of a plan.md counts as one, and for a subagent so does a Write,
 # Edit or MultiEdit whose path holds `vulyk` and then `state`, and a shell call whose text holds, in any letter
@@ -189,9 +197,74 @@ SIDE_NOTE = re.compile(r'(?:^|(?<=>))[ \t]*here is a note offered by a side agen
                        r'(?:\n[ \t]*(?:>[^\n]*)?(?=\n|\Z))*', re.S | re.I | re.M)
 COMMAND_ARGS = re.compile(r'<command-args>(.*?)</command-args>', re.S)
 MARKER = re.compile(r'^\s*\*\*(Approved|Checked):\*\*(.*)$')
+ROOTS = None      # (the spec folders, a note for a deny reason), read once per call by spec_folders()
+ROOTS_CWD = ''    # the call's cwd: the project root is the git top of it
+
+
+def spec_roots(root):
+    """(the spec folders, a note for a deny reason): `docs/specs`, then each line of <root>/.claude/vulyk-spec-roots
+    the grammar keeps (S1, as lib.sh spec_roots reads it): trimmed, its trailing `/` dropped; blank and `#` lines
+    dropped; a line that is absolute or holds `..`, a backslash or a glob character skipped; a repeat read once.
+    A file that cannot be read gives docs/specs alone, and the note says so."""
+    out = ['docs/specs']
+    p = os.path.join(root, '.claude', 'vulyk-spec-roots')
+    if not os.path.lexists(p):
+        return out, ''
+    try:
+        with open(p, 'rb') as f:
+            text = f.read().decode('utf-8', 'replace')
+    except (OSError, ValueError):
+        return out, ' (.claude/vulyk-spec-roots could not be read, so only docs/specs is read as a spec folder.)'
+    skipped = 0
+    for line in text.split('\n'):
+        l = line.strip(' \t\r\n\v\f').rstrip('/')
+        if not l or l.startswith('#'):
+            continue
+        if l.startswith('/') or re.match(r'[A-Za-z]:', l) or '..' in l or '\\' in l or re.search(r'[*?\[\]]', l):
+            skipped += 1
+        elif l not in out:
+            out.append(l)
+    return out, (' (.claude/vulyk-spec-roots: %d line(s) its grammar refuses are skipped and name no spec folder.)'
+                 % skipped if skipped else '')
+
+
+def spec_folders():
+    """The spec folders of the call's project (its git top, else the project dir, else the cwd), read once."""
+    global ROOTS
+    if ROOTS is None:
+        top = git(ROOTS_CWD, 'rev-parse', '--show-toplevel') if ROOTS_CWD and os.path.isdir(ROOTS_CWD) else None
+        ROOTS = spec_roots(top.strip() if top and top.strip() else os.environ.get('CLAUDE_PROJECT_DIR') or ROOTS_CWD)
+    return ROOTS[0]
+
+
+def roots_re():
+    """A regex part matching any spec folder as a command spells it, `/` or `\\` between its parts."""
+    return '(?:%s)' % '|'.join(r'[/\\]'.join(re.escape(x) for x in r.split('/')) for r in spec_folders())
+
+
+def in_spec_folder(parts, name):
+    """True when the path parts (lower case) are <spec folder>/<slug>/<name>."""
+    if not parts or parts[-1] != name:
+        return False
+    for r in spec_folders():
+        rp = r.casefold().split('/')
+        if len(parts) >= len(rp) + 2 and parts[-len(rp) - 2:-2] == rp:
+            return True
+    return False
+
+
+def spec_path(root, slug):
+    """<root>/<folder>/<slug> for the first spec folder holding the slug on disk, else <root>/docs/specs/<slug>."""
+    for r in spec_folders():
+        p = os.path.join(root, *(r.split('/') + [slug]))
+        if os.path.isdir(p):
+            return p
+    return os.path.join(root, 'docs', 'specs', slug)
 
 
 def deny(reason):
+    if ROOTS is not None:
+        reason += ROOTS[1]
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                              "permissionDecision": "deny",
                                              "permissionDecisionReason": reason}}))
@@ -470,7 +543,7 @@ def command_actions(cmd, powershell, cwd):
         acts.append(('go', None, '', 'cycle.sh briefed --go'))
     if 'plan.md' in cmd:
         flat = cmd.replace('\\*', '*')
-        m = re.search(r'docs[/\\]specs[/\\]([^/\\\s\'"]+)[/\\]', cmd)
+        m = re.search(roots_re() + r'[/\\]([^/\\\s\'"]+)[/\\]', cmd)
         spec = spec_of(m.group(0).rstrip('/\\'), cwd) if m else None
         # a marker written as data: at a line start or right after a quote, a `/` (sed) or a `>`; prose
         # (`**Approved:**` in backticks, mid-sentence) is no record
@@ -497,7 +570,7 @@ def command_actions(cmd, powershell, cwd):
     # `human-check.sh ... --commit` records and commits the row, and no other command needs to say both
     if 'human.jsonl' in cmd and re.search(r'ACCEPTED|REJECTED', cmd) and not any(a[0] == 'release' for a in acts):
         m = re.search(r'"spec\\?"\s*:\s*\\?"([^"\\]+)', cmd)
-        acts.append(('release', spec_of('docs/specs/' + m.group(1), cwd) if m else None, cmd,
+        acts.append(('release', spec_path(cwd, m.group(1)) if m else None, cmd,
                      'a command naming human.jsonl beside ACCEPTED or REJECTED (record and commit a check only '
                      'with `human-check.sh <spec> <verdict> "<note>" --commit`)'))
     return acts
@@ -530,14 +603,14 @@ WRITERS = ('tee', 'cp', 'mv', 'install', 'dd', 'truncate', 'set-content', 'add-c
 
 
 def rewrites_plan(cmd, powershell, depth=0):
-    """The first docs/specs/<slug>/plan.md path a command may rewrite, else None: a redirect into it; a simple
+    """The first <spec folder>/<slug>/plan.md path a command may rewrite, else None: a redirect into it; a simple
     command naming it run by one of WRITERS (cp, mv, install, Copy-Item, Move-Item only as the last word), or by
     sed or awk with an in-place flag; a word holding a whole command (`bash -c "..."`) is read the same way."""
-    m = re.search(r'(?<![0-9&])>{1,2}\s*[\'"]?([^\s\'";&|<>]*docs[/\\]specs[/\\][^/\\\s\'"]+[/\\]plan\.md)\b', cmd)
+    m = re.search(r'(?<![0-9&])>{1,2}\s*[\'"]?([^\s\'";&|<>]*' + roots_re() + r'[/\\][^/\\\s\'"]+[/\\]plan\.md)\b', cmd)
     if m:
         return m.group(1)
     for seg in split_segments(cmd, powershell) or []:
-        hits = [w for w in seg if re.search(r'docs[/\\]specs[/\\][^/\\\s\'"]+[/\\]plan\.md', w)]
+        hits = [w for w in seg if re.search(roots_re() + r'[/\\][^/\\\s\'"]+[/\\]plan\.md', w)]
         if not hits:
             continue
         lead = base(seg[0]).lower()
@@ -546,7 +619,7 @@ def rewrites_plan(cmd, powershell, depth=0):
             hits = hits if seg[-1] in hits else []
         if (hits and lead in WRITERS) or (lead in ('sed', 'gsed', 'awk', 'gawk') and any(
                 re.match(r'^(-[a-zA-Z]*i\S*|--in-place\S*)$', w) for w in seg[1:])):
-            m = re.search(r'[^\s\'"]*docs[/\\]specs[/\\][^/\\\s\'"]+[/\\]plan\.md', hits[0])
+            m = re.search(r'[^\s\'"]*' + roots_re() + r'[/\\][^/\\\s\'"]+[/\\]plan\.md', hits[0])
             return m.group(0)
         if depth < 2:
             for w in hits:
@@ -590,7 +663,7 @@ def file_actions(tool, ti, cwd):
     if not isinstance(path, str) or not path:
         return []
     forms = resolved(path, cwd)
-    plan = [p for p, parts in forms if len(parts) >= 4 and parts[-4:-2] == ['docs', 'specs'] and parts[-1] == 'plan.md']
+    plan = [p for p, parts in forms if in_spec_folder(parts, 'plan.md')]
     rec = [p for p, parts in forms if parts[-3:] == ['memory', 'stats', 'human.jsonl']]
     acts = []
     if plan:
@@ -621,7 +694,7 @@ def file_actions(tool, ti, cwd):
                     row = {}
                 slug = row.get('spec') if isinstance(row, dict) else None
                 note = row.get('note') if isinstance(row, dict) else None
-                acts.append(('release', os.path.join(root, 'docs', 'specs', slug) if isinstance(slug, str) else None,
+                acts.append(('release', spec_path(root, slug) if isinstance(slug, str) else None,
                              note if isinstance(note, str) else line, 'a human.jsonl row'))
     return acts
 
@@ -631,6 +704,8 @@ def file_actions(tool, ti, cwd):
 RUN_STATE = ('VULYK owner guard: a subagent cannot write a run-state record (%s). `.vulyk/state/` holds the claim, '
              'approval and verification records the cycle trusts, and only scripts/cycle.sh writes them. Read it '
              'with the Read tool; put what should change under ## Findings and return it.')
+ROOTS_FILE = ('VULYK owner guard: a subagent cannot change .claude/vulyk-spec-roots (%s), the list of the folders '
+              'whose plan.md the guards read as a spec\'s. Put the change under ## Findings and return it.')
 MAIN_SPELL = ('VULYK owner guard: the quote rule judges a guarded call only as it is spelled out, and this '
               'command spells it otherwise.')
 SCRIPT_WORD = SUBAGENT + (' This command may run %s that way (%s); a script word, verdict or flag the hook cannot '
@@ -797,11 +872,11 @@ def target_why(t, vars, where, d):
 
 
 def spec_dir(word, vars, d):
-    """True when the word, read as a folder from d, may be a spec folder (docs/specs/<slug>, or one holding a
-    plan.md on disk)."""
+    """True when the word, read as a folder from d, may be a spec's folder (<spec folder>/<slug>, or one
+    holding a plan.md on disk)."""
     for c in expand(word, vars):
         s = c.replace('\\', '/').rstrip('/').casefold()
-        if re.search(r'(?:^|/)docs/specs/[^/]+$', s.replace(UNKNOWN, 'x')):
+        if re.search(r'(?:^|/)(?:%s)/[^/]+$' % '|'.join(re.escape(r.casefold()) for r in spec_folders()), s.replace(UNKNOWN, 'x')):
             return True
         if d is None:
             continue
@@ -1289,7 +1364,8 @@ def find_words(seg, i, vars, where, d):
         full = where.join(d, root, vars)
         rel = where.rel(full) if full is not None else None
         if full is None or r is None or (rel is not None and (
-                rel in ('', 'docs', 'docs/specs') or rel.startswith('docs/specs/'))):
+                rel == '' or any(rel == f or f.startswith(rel + '/') or rel.startswith(f + '/')
+                                 for f in (x.casefold() for x in spec_folders())))):
             hold = True
     if hold and (not names or any(globmatch('plan.md', n) for n in names)):
         names.append('plan.md')
@@ -1471,6 +1547,9 @@ def subagent_judge(tool, ti, cwd):
         path = ti.get('file_path')
         if isinstance(path, str) and path and run_state(path, cwd):
             return RUN_STATE % path
+        if isinstance(path, str) and path and any(parts[-2:] == ['.claude', 'vulyk-spec-roots']
+                                                  for _, parts in resolved(path, cwd)):
+            return ROOTS_FILE % path
         return None
     cmd = ti.get('command')
     if tool in ('Bash', 'PowerShell') and isinstance(cmd, str):
@@ -1544,7 +1623,7 @@ def judge_release(evs, root, slug, note, what):
 
 
 def main():
-    global GUARDED, SCRIPT_ONLY
+    global GUARDED, SCRIPT_ONLY, ROOTS_CWD
     try:
         data = json.loads(sys.stdin.buffer.read().decode('utf-8-sig', 'replace'))
     except Exception:
@@ -1554,6 +1633,7 @@ def main():
     tool = str(data.get('tool_name') or '')
     ti = data.get('tool_input') if isinstance(data.get('tool_input'), dict) else {}
     cwd = str(data.get('cwd') or os.environ.get('CLAUDE_PROJECT_DIR') or os.getcwd())
+    ROOTS_CWD = cwd
     sub = bool(data.get('agent_id'))
     if sub and tool in ('Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit'):
         GUARDED = True   # a subagent's call the hook cannot finish reading is refused

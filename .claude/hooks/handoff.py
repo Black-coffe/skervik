@@ -890,13 +890,17 @@ def _mask_key_blocks(text):
     return "\n".join(out)
 
 
+REDACT_FAILED = "[VULYK:REDACT-FAILED]"
+
+
 def redact_text(root, text):
     """Pass transcript-derived text through scripts/redact.sh before writing it.
 
     Handoffs are gitignored but get re-injected into future sessions and are routinely
     shared - a pasted secret must not survive into either. Contract holds: never crash,
-    never block; on total failure the text passes through unredacted rather than the
-    handoff being eaten (that would be a silent-loss path of its own)."""
+    never block. When redact.sh gives no usable output and the built-in pass raises too,
+    the text is withheld: REDACT_FAILED comes back in its place (M1, tails-1119-03), so the
+    handoff file is still written but holds no unmasked or half-masked text."""
     if not text:
         return text
     script = os.path.join(root, "scripts", "redact.sh")
@@ -907,22 +911,36 @@ def redact_text(root, text):
                 [bash, script], input=text.encode("utf-8"),
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=15)
             if p.returncode == 0 and p.stdout:
-                text = p.stdout.decode("utf-8", "replace")
+                masked = p.stdout.decode("utf-8", "replace")
+                try:
+                    return _builtin_pass(masked)
+                except Exception:
+                    return masked  # redact.sh already masked it: its output stands
         except Exception:
             pass
     return redact_builtin(text)
 
 
-def redact_builtin(text):
-    """The _REDACT_FALLBACK pass alone: pure Python, no process. Never raises."""
-    try:
-        text = _mask_key_blocks(text)
-        for pat in _REDACT_FALLBACK:
-            text = pat.sub(
-                lambda m: (m.group(1) if m.groups() else "") + "[VULYK:REDACTED]", text)
-    except Exception:
-        pass
+def _builtin_pass(text):
+    """The _REDACT_FALLBACK pass; raises when a step does."""
+    text = _mask_key_blocks(text)
+    for pat in _REDACT_FALLBACK:
+        text = pat.sub(
+            lambda m: (m.group(1) if m.groups() else "") + "[VULYK:REDACTED]", text)
     return text
+
+
+def redact_builtin(text):
+    """The _REDACT_FALLBACK pass alone: pure Python, no process. Never raises: a raise at any
+    step withholds the text (REDACT_FAILED, one stderr line), never a half-masked one."""
+    try:
+        return _builtin_pass(text)
+    except Exception:
+        try:
+            sys.stderr.write("VULYK handoff: masking failed; the text is withheld (%s)\n" % REDACT_FAILED)
+        except Exception:
+            pass
+        return REDACT_FAILED
 
 
 def redact_bash():

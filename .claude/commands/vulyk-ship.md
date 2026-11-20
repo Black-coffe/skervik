@@ -1,5 +1,5 @@
 ---
-description: Stage 06 of the cycle - fix history, merge locally, print the publish command, open the next circle. Pushes only the spec branch, for its CI run, and only to a private origin; never publishes or deploys. Its only tag is the VULYK source's local dev-build tag, never pushed.
+description: Stage 06 of the cycle - fix history, merge locally, print the publish command, open the next circle. Pushes only the spec branch, for its CI run, and only to a private origin (in the VULYK source, on the owner's yes, a ci/ branch to the private mirror); never publishes or deploys. Its only tag is the VULYK source's local dev-build tag, never pushed.
 argument-hint: [spec slug; defaults to the newest spec with a GREEN council row or a human check recorded]
 ---
 
@@ -94,6 +94,14 @@ Ship: "$ARGUMENTS" (default: the newest spec under `docs/specs/` whose plan.md c
    every line that names a gate bypass or a hole not fixed in the version being published. The main session moves
    each flagged line to a private file under `~/.vulyk/` and removes it from the outward text, then asks
    `lead-review` again; the publish command is printed only after a clean pass (card public-release-per-change).
+   Then, only in the VULYK source (`install.sh` and `VERSION` at the root), run `bash scripts/ci-local.sh` yourself on
+   the merged default branch: the CI jobs of `ci.yml` in a WSL clone and under docker `bash:3.2`, about two full
+   suites long, so run it in the background and wait for its end. It writes the receipt `scripts/git-hooks/pre-push`
+   asks for when the default branch or a `v*` tag is pushed; a `FAIL` line stops the ship: repair it, never print the
+   publish command around it. A `LEG <leg>: skipped` line passes: tell the owner which leg was skipped and why. Then
+   ask the owner one question with `AskUserQuestion`: run CI on real macOS through the private mirror for this commit?
+   Run `bash scripts/ci-mirror.sh --push` only after his yes; its refusal (no `ci-mirror` remote, or one not answering
+   `PRIVATE`) is told to him with the setup step it prints, and a red mirror run stops the ship like a `FAIL`.
    Under a `to publish, run:` heading, print the publish step exactly as the
    *Release / deploy* row names it, with the version. When that step pushes and tags and the repo has CI
    (`.github/workflows/`), print it in this order: push the release commit, wait for CI on that commit

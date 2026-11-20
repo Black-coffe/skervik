@@ -46,7 +46,10 @@
 #     (cycle.sh by the verb rule below);
 #     every cycle.sh verb but advance, status, release, suite, stamp-red (never with --baseline) and close-story,
 #     a verb, or a stamp-red argument, that is not literal, a verb xargs hands in, and stamp-red behind xargs;
-#     while a docs/specs/*/DRIVER file exists in the repository the git command acts on (each cd and -C
+#     while a running build's <folder>/<slug>/DRIVER file exists in the repository the git command acts on, <folder>
+#     being docs/specs or a folder that repository's .claude/vulyk-spec-roots lists (read by the S1 grammar of
+#     lib.sh spec_roots, a refused line skipped; a file that exists and cannot be read, or is not UTF-8, holds the
+#     place) (each cd and -C
 #     followed where it takes effect: a cd in a subshell, or in a command string handed to a shell or a `!` alias,
 #     moves only that child (one in eval moves the caller), one in a pipeline or the
 #     background or with two folder words moves nothing, one after || makes the place unknown; --git-dir,
@@ -82,7 +85,8 @@
 # every word of the command, quoted or not. For a subagent it also denies, by text: a command naming the run state;
 # a cycle.sh word (quotes removed, a glob matched) with a verb outside the six, a verb holding $ or a backtick, or
 # stamp-red with --baseline; a shell's script word holding $ or a backtick unless the shell only checks syntax;
-# and, while a docs/specs/*/DRIVER exists in the call's cwd or a parent, every history verb above after a `git`
+# and, while a DRIVER exists under docs/specs or a folder .claude/vulyk-spec-roots lists (read with builtins by the
+# same grammar; a file that cannot be read holds) in the call's cwd or a parent, every history verb above after a `git`
 # word (update-index only with --chmod passes). Other git commands pass.
 # Passes silently: bad JSON, a main-session command naming neither git, cycle.sh nor PowerShell's evaluate-a-string
 # command.
@@ -222,12 +226,56 @@ fb_sub() { # sets FB_SUBR: the subagent rule FB_RAW breaks, read by its text (no
   return 0
 }
 
-fb_held() { # true when a docs/specs/*/DRIVER exists in the call's cwd or a parent, up to the folder holding .git
-  local d up f re='"cwd"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+fb_utf8() { # fb_utf8 <file> - true when every byte of <file> reads as UTF-8 (builtins, one byte at a time, C locale)
+  ( LC_ALL=C
+    need=0
+    while IFS= read -r l || [ -n "$l" ]; do
+      [ "$need" = 0 ] || exit 1                     # a sequence cut by the line end
+      case "$l" in *[![:print:][:space:]]*) ;; *) continue ;; esac
+      i=0; n=${#l}
+      while [ "$i" -lt "$n" ]; do
+        printf -v b '%d' "'${l:i:1}"; [ "$b" -lt 0 ] && b=$((b + 256))
+        i=$((i + 1))
+        if [ "$need" -gt 0 ]; then
+          { [ "$b" -ge 128 ] && [ "$b" -lt 192 ]; } || exit 1
+          need=$((need - 1)); continue
+        fi
+        if [ "$b" -lt 128 ]; then continue
+        elif [ "$b" -ge 194 ] && [ "$b" -lt 224 ]; then need=1
+        elif [ "$b" -ge 224 ] && [ "$b" -lt 240 ]; then need=2
+        elif [ "$b" -ge 240 ] && [ "$b" -lt 245 ]; then need=3
+        else exit 1; fi
+      done
+    done < "$1"
+    [ "$need" = 0 ] )
+}
+
+fb_listed() { # fb_listed <folder> - S1's reader of <folder>/.claude/vulyk-spec-roots (lib.sh spec_roots' grammar,
+  # builtins): 0 a <root>/*/DRIVER exists under a kept line, 2 the file exists and cannot be read, 1 otherwise
+  local f="$1/.claude/vulyk-spec-roots" l g
+  { [ -e "$f" ] || [ -L "$f" ]; } || return 1
+  { [ -f "$f" ] && [ -r "$f" ] && fb_utf8 "$f"; } 2>/dev/null || return 2
+  while IFS= read -r l || [ -n "$l" ]; do
+    l="${l#"${l%%[![:space:]]*}"}"; l="${l%"${l##*[![:space:]]}"}"
+    while :; do case "$l" in */) l="${l%/}" ;; *) break ;; esac; done
+    case "$l" in ''|'#'*|/*|[A-Za-z]:*|*..*|*\\*|*[*?]*|*[[]*|*[]]*) continue ;; esac
+    for g in "$1/$l"/*/DRIVER; do [ -e "$g" ] && return 0; done
+  done < "$f"
+  return 1
+}
+
+fb_held() { # true when a docs/specs/*/DRIVER, or a <root>/*/DRIVER under a folder .claude/vulyk-spec-roots lists,
+  # exists in the call's cwd or a parent, up to the folder holding .git; FB_HELD says which (docs, listed, unreadable:
+  # the file exists and cannot be read, which holds the place)
+  local d up f rc re='"cwd"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
   set +f
+  FB_HELD=
   d="$PWD"; [[ $IN =~ $re ]] && d="${BASH_REMATCH[1]//\\\\//}"
   while :; do
-    for f in "$d"/docs/specs/*/DRIVER; do [ -e "$f" ] && return 0; done
+    for f in "$d"/docs/specs/*/DRIVER; do [ -e "$f" ] && { FB_HELD=docs; return 0; }; done
+    fb_listed "$d"; rc=$?
+    [ "$rc" = 0 ] && { FB_HELD=listed; return 0; }
+    [ "$rc" = 2 ] && { FB_HELD=unreadable; return 0; }
     [ -e "$d/.git" ] && return 1
     up="${d%/*}"
     { [ "$up" = "$d" ] || [ -z "$up" ]; } && return 1
@@ -257,7 +305,9 @@ if [ -n "$SUB" ]; then
   if [ -n "$FB_HV" ] && fb_held; then
     case "$FB_HV $FB_RAW" in
       "update-index "*--chmod*) ;;
-      *) fb_deny "VULYK git guard: no Python, so the bash fallback denies a subagent every git $FB_HV while a docs/specs/*/DRIVER file holds a spec: close-story commits the story's paths. Leave the tree as it is; install Python 3 or set VULYK_PY." ;;
+      *) [ "$FB_HELD" = listed ] && fb_deny "VULYK git guard: no Python, so the bash fallback denies a subagent every git $FB_HV - a build in a listed spec folder is held for a subagent: a <folder>/<slug>/DRIVER file exists under a folder .claude/vulyk-spec-roots lists. close-story commits the story's paths. Leave the tree as it is; install Python 3 or set VULYK_PY."
+         [ "$FB_HELD" = unreadable ] && fb_deny "VULYK git guard: no Python, so the bash fallback denies a subagent every git $FB_HV - .claude/vulyk-spec-roots exists and cannot be read (a folder, or bytes that are not UTF-8), so a build may hold any spec folder it lists. Leave the tree as it is; report the file under ## Findings."
+         fb_deny "VULYK git guard: no Python, so the bash fallback denies a subagent every git $FB_HV while a docs/specs/*/DRIVER file holds a spec: close-story commits the story's paths. Leave the tree as it is; install Python 3 or set VULYK_PY." ;;
     esac
   fi
 fi
@@ -623,18 +673,49 @@ def git_places(seg, exported):
     return out
 
 
+def spec_roots(root):
+    """The listed spec folders of <root>/.claude/vulyk-spec-roots (S1, as lib.sh spec_roots reads it), docs/specs
+    aside: each line trimmed, its trailing `/` dropped; blank and `#` lines dropped; a line that is absolute or holds
+    `..`, a backslash or a glob character skipped. None when the file exists and cannot be read (not UTF-8 too)."""
+    p = os.path.join(root, '.claude', 'vulyk-spec-roots')
+    if not os.path.lexists(p):
+        return []
+    try:
+        with open(p, 'rb') as f:
+            text = f.read().decode('utf-8')
+    except (OSError, ValueError):
+        return None
+    out = []
+    for line in text.split('\n'):
+        l = line.strip(' \t\r\n\v\f').rstrip('/')
+        if not l or l.startswith('#') or l == 'docs/specs':
+            continue
+        if l.startswith('/') or re.match(r'[A-Za-z]:', l) or '..' in l or '\\' in l or re.search(r'[*?\[\]]', l):
+            continue
+        if l not in out:
+            out.append(l)
+    return out
+
+
 def driver_held(cwd):
-    """True when a docs/specs/*/DRIVER file exists in cwd or a parent, up to the first folder holding .git;
-    True too for a folder the hook cannot read (it may be held)."""
+    """'docs' when a docs/specs/*/DRIVER file exists in cwd or a parent, up to the first folder holding .git, and
+    for a folder the hook cannot read (it may be held); 'listed' for a <root>/*/DRIVER under a folder the walked
+    folder's .claude/vulyk-spec-roots lists; 'unreadable' when that file exists and cannot be read; '' otherwise."""
     if not cwd or not os.path.isdir(cwd):
-        return True
+        return 'docs'
     d = os.path.abspath(cwd)
     while True:
         if glob.glob(os.path.join(glob.escape(d), 'docs', 'specs', '*', 'DRIVER')):
-            return True
+            return 'docs'
+        roots = spec_roots(d)
+        if roots is None:
+            return 'unreadable'
+        for r in roots:
+            if glob.glob(os.path.join(glob.escape(os.path.join(d, *r.split('/'))), '*', 'DRIVER')):
+                return 'listed'
         up = os.path.dirname(d)
         if os.path.exists(os.path.join(d, '.git')) or up == d:
-            return False
+            return ''
         d = up
 
 
@@ -1323,11 +1404,21 @@ def main():
             for spot in spots:
                 if spot not in held:
                     held[spot] = driver_held(spot)
-                if held[spot]:
+                if held[spot] == 'docs':
                     deny('VULYK git guard: a subagent may not run `%s` while a docs/specs/*/DRIVER file holds the '
                          'repository it acts on - every verb that stages, makes a commit, or moves a branch or HEAD '
                          'is close-story\'s: it commits the story\'s paths, and a commit of your own hides edits '
                          'from its scope check. Leave the tree as it is.' % shown)
+                if held[spot] == 'listed':
+                    deny('VULYK git guard: a subagent may not run `%s` - a build in a listed spec folder is held for a '
+                         'subagent: a <folder>/<slug>/DRIVER file exists under a folder .claude/vulyk-spec-roots lists, '
+                         'in the repository it acts on. Every verb that stages, makes a commit, or moves a branch or '
+                         'HEAD is close-story\'s: it commits the story\'s paths. Leave the tree as it is.' % shown)
+                if held[spot] == 'unreadable':
+                    deny('VULYK git guard: a subagent may not run `%s` - .claude/vulyk-spec-roots exists in the '
+                         'repository it acts on and cannot be read (a folder, or bytes that are not UTF-8), so a build '
+                         'may hold any spec folder it lists. Every verb that stages, makes a commit, or moves a branch '
+                         'or HEAD is close-story\'s. Leave the tree as it is; report the file under ## Findings.' % shown)
         blind = here == UNKNOWN
         base_ = cwd if blind else (here if not where else os.path.join(here, where))
         hit = classify(verb, args, base_)

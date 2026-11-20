@@ -1,7 +1,8 @@
 # Hive memory index
 
-<!-- Pointer index: <= 60 lines, always loaded. Pointers are hints - verify against code before acting.
-     Maintained by drone-docs (pointers) and librarian (hygiene). Humans welcome too.
+<!-- Pointer index: <= 60 lines. Not auto-loaded (nothing imports it): the SessionStart brief points the Queen here and
+     it is read at task start. Pointers are hints - verify against code before acting.
+     Maintained by drone-docs (pointers) and librarian (hygiene).
      /vulyk-bootstrap seeds it for this project; until then every section below is empty. -->
 
 ## Codebase map
