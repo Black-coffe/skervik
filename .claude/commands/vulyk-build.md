@@ -163,14 +163,16 @@ Then go on. A refusal on the redispatch is the existing stop: an absent seat, a 
 - `green`: first `bash scripts/ship-check.sh docs/specs/<slug>`; when its `suite:` line asks for the merge run
   (`suite: no full run at <sha>`), run `bash scripts/cycle.sh suite docs/specs/<slug> --merge --commit` step by step until `"done":true`, before «Выпускаем?»
   (one Bash call per step, `timeout: 600000`, no agent). A `suite: FAIL` line is a repair, not a question: fix the
-  parts it names, commit, and run the merge run again, the whole suite once more. A RED round is followed by a repair and a narrow round:
+  parts it names, commit, and run the merge run again, the whole suite once more; once the merge run is `"done":true`,
+  run `bash scripts/ship-check.sh docs/specs/<slug>` again: a step that went flaky only in the merge run is in that
+  run's lines, not the first one's. A RED round is followed by a repair and a narrow round:
   one reviewer reads the repair's diff, the blind seat re-judges only the asks to re-judge, the gate re-runs only
   the steps that were red; a full round follows a repair only after a design fault. Then
   print the round count, the newest `**Council:**` line and the output of `bash scripts/human-check.sh
   --show docs/specs/<slug>` as a fenced block in the reply text (tool output is collapsed), then ask the owner once with
   `AskUserQuestion`, in the owner's language: «<slug>: council GREEN, round <n>. Выпускаем?», the yes
-  option first and marked recommended. The question quotes every `unchecked:`, `flaky:` and `dropped:` line of that
-  `ship-check.sh` run verbatim, under the question line; with none it is the question as above. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
+  option first and marked recommended. The question quotes every `unchecked:`, `flaky:` and `dropped:` line of the last
+  `ship-check.sh` run verbatim, under the question line (the first run only when no merge run ran after it); with none it is the question as above. Yes: run `vulyk-ship` with the Skill tool (args `<slug>`) in
   this session. No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line. Ship
   pushes the spec branch for its CI run, then prints the tag and publish steps; it never runs those.
 - `escalated`: print plan.md's `## Needs a human` verbatim (a `suite-timeout` reason carries its `- suite:

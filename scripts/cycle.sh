@@ -1067,7 +1067,25 @@ review_has_regression() { review_blocking_lines "$1" | grep -qF '[regression]'; 
 # <fixed|open|dropped> round <m>[ - <reason>]` per answer. judge numbers, never the reviewer and never record-seat.
 ledger_open() { # ledger_open <spec> -> each number whose newest ledger line says open, ascending, one per line
   [ -f "$1/council/findings" ] || return 0
-  tr -d '\r' < "$1/council/findings" | awk '$1 ~ /^F[0-9]+$/ { s[substr($1, 2) + 0] = $2 } END { for (k in s) if (s[k] == "open") print k }' | sort -n
+  ledger_open_text < "$1/council/findings"
+}
+
+ledger_open_text() { # ledger_open_text < <ledger text> -> ledger_open's numbers, read from stdin
+  tr -d '\r' | awk '$1 ~ /^F[0-9]+$/ { s[substr($1, 2) + 0] = $2 } END { for (k in s) if (s[k] == "open") print k }' | sort -n
+}
+
+ledger_open_at() { # ledger_open_at <spec> <head> -> ledger_open's numbers in council/findings as committed at <head>
+  # (af-tails-1120 FN3); no file there is an empty ledger. Exit 2 with the cause on stdout when <head> or the file at
+  # it cannot be read: never an empty answer that would pass every report.
+  local rel ent led
+  rel="${1#./}"; rel="${rel#"$ROOT"/}"
+  ent="$(git ls-tree --full-tree "$2" -- "$rel/council/findings" 2>&1)" \
+    || { printf 'the round head %s cannot be read: %s\n' "${2:-<none>}" "$(printf '%s' "$ent" | head -1)"; return 2; }
+  [ -n "$ent" ] || return 0
+  case "$ent" in *" blob "*) ;; *) printf '%s/council/findings at %s is not a file\n' "$rel" "$2"; return 2 ;; esac
+  led="$(git show "$2:$rel/council/findings" 2>&1)" \
+    || { printf 'git show %s:%s/council/findings failed: %s\n' "$2" "$rel" "$(printf '%s' "$led" | head -1)"; return 2; }
+  printf '%s\n' "$led" | ledger_open_text
 }
 
 past_answers_text() { # past_answers_text <report> -> each non-blank line under a `## Past findings` heading, a list marker and
@@ -1077,19 +1095,25 @@ past_answers_text() { # past_answers_text <report> -> each non-blank line under 
     on && NF { l = $0; sub(/^[[:space:]]*([-*][[:space:]]+)?/, "", l); sub(/[[:space:]]+$/, "", l); print l }'
 }
 
-past_answer_bad() { # past_answer_bad <spec> <report> -> FN2: `F<k>` for the first answer line naming an unknown or repeated
-  # number or giving another word or a bare `dropped`, else for the first open number with no answer; nothing when
-  # every open number is answered once (an empty ledger, or none open, needs no section)
-  local open; open="$(ledger_open "$1" | tr '\n' ' ')"
-  [ -n "$open" ] || return 0
+past_answer_bad() { # past_answer_bad <spec> <report> <round head> -> FN2: one line per bad number, all of them, in answer
+  # order then ascending: `F<k> unknown` for an answer naming a number the ledger at the round head does not hold open
+  # (af-tails-1120 FN3/FN4), `F<k> not answered` for a repeated number, another word or a bare `dropped`, and for an
+  # open number with no answer; nothing when every open number is answered once (an empty ledger, or none open, needs
+  # no section). Exit 2 with the cause on stdout when the ledger at the round head cannot be read (ledger_open_at).
+  local open; open="$(ledger_open_at "$1" "$3")" || { printf '%s\n' "$open"; return 2; }
+  open="$(printf '%s\n' "$open" | tr '\n' ' ')"
+  [ -n "$(printf '%s' "$open" | tr -d ' ')" ] || return 0
   past_answers_text "$2" | awk -v open="$open" '
     BEGIN { n = split(open, o, " "); for (i = 1; i <= n; i++) want[o[i]] = 1 }
-    bad == "" && match($0, /^F[0-9]+:/) {
+    match($0, /^F[0-9]+:/) {
       k = substr($0, 2, RLENGTH - 2) + 0; rest = substr($0, RLENGTH + 1); sub(/^[[:space:]]+/, "", rest)
-      if (!(k in want) || (k in got) || !(rest == "fixed" || rest == "open" || rest ~ /^dropped - .*[^[:space:]]/)) bad = "F" k
+      if (!(k in said)) {
+        if (!(k in want)) { print "F" k " unknown"; said[k] = 1 }
+        else if ((k in got) || !(rest == "fixed" || rest == "open" || rest ~ /^dropped - .*[^[:space:]]/)) { print "F" k " not answered"; said[k] = 1 }
+      }
       got[k] = 1
     }
-    END { if (bad != "") { print bad; exit } for (i = 1; i <= n; i++) if (!(o[i] in got)) { print "F" o[i]; exit } }'
+    END { for (i = 1; i <= n; i++) if (!(o[i] in got) && !(o[i] in said)) print "F" o[i] " not answered" }'
 }
 
 past_answers_of() { # past_answers_of <spec> <review-file> -> "k fixed|open|dropped[ - <reason>]" per open number the stored
@@ -2092,9 +2116,17 @@ cmd_record_seat_review() { # cmd_record_seat_review <spec> <rd> <n> <attempt> <r
 
   # af-gates-1119 FN2: with open numbers in the spec's findings ledger the review answers each one once under
   # ## Past findings; anything else is MALFORMED (kept, exit 4, asked once more, then ABSENT).
-  local pbad; pbad="$(past_answer_bad "$SPEC" "$REPORT")"
+  # af-tails-1120 FN3/FN4: the open numbers are the ledger's at the round head; every bad number is named for what it is.
+  local pbad prc=0; pbad="$(past_answer_bad "$SPEC" "$REPORT" "$(round_field "$RD" head)")" || prc=$?
+  if [ "$prc" -ne 0 ]; then
+    local lwhy="cannot read council/findings at the round head: $pbad"
+    echo "cycle: record-seat - $SEAT round $N: $lwhy" >&2
+    emit false record-seat 4 error "$lwhy"
+    exit 4
+  fi
   if [ -n "$pbad" ]; then
-    local why="past finding $pbad not answered - answer each open number of council/findings once under ## Past findings: F<k>: fixed, F<k>: open or F<k>: dropped - <reason>"
+    local why
+    why="$(printf '%s\n' "$pbad" | sed 's/^/past finding /' | paste -sd ';' - | sed 's/;/; /g') - answer each open number of council/findings once under ## Past findings: F<k>: fixed, F<k>: open or F<k>: dropped - <reason>"
     write_seat_file "$RD/$SEAT.attempt-$ATTEMPT.md" "$SEAT" "$model" "$N" "$HEAD" "$RPACK" "$ATTEMPT" "" "$REPORT"
     echo "cycle: record-seat - $SEAT round $N attempt $ATTEMPT: MALFORMED: $why" >&2
     emit false record-seat 4 error "MALFORMED: $why"
@@ -4245,13 +4277,18 @@ suite_cut_names() { # suite_cut_names <log> -> each part name suite-parts-check.
 suite_red_items() { # suite_red_items <log> -> the gate's red items in log order: each red PART line (FAIL, CAP, or
   # named by suite-parts-check.sh), the STEP line of a FAIL step with no red PART line (af-gates-1119 G1), and for a FAIL log with neither
   # (a runner that gave no step count) its SUITE: line
+  suite_red_items_k "$1" | cut -f2-
+}
+
+suite_red_items_k() { # suite_red_items_k <log> -> suite_red_items' items, each as "<K><TAB><line>": K the step the line
+  # sits in (af-tails-1120 R1), empty for a SUITE: line
   [ -f "$1" ] || return 0
   suite_settled "$1" | awk -v cut="$(suite_cut_names "$1")" '
     BEGIN { n = split(cut, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") c[a[i]] = 1 }
-    function flush() { if (sf && !sp) { print sl; any = 1 } sf = 0; sp = 0 }
-    $1 == "STEP" { flush(); sl = $0; sf = ($3 == "FAIL"); next }
-    $1 == "PART" && ($3 == "FAIL" || $3 == "CAP" || ($2 in c)) { print; sp = 1; any = 1; next }
-    $1 == "SUITE:" { flush(); if (!any && $2 == "FAIL") print; next }
+    function flush() { if (sf && !sp) { print k "\t" sl; any = 1 } sf = 0; sp = 0 }
+    $1 == "STEP" { flush(); sl = $0; k = $2; sub(/\/.*/, "", k); sf = ($3 == "FAIL"); next }
+    $1 == "PART" && ($3 == "FAIL" || $3 == "CAP" || ($2 in c)) { print k "\t" $0; sp = 1; any = 1; next }
+    $1 == "SUITE:" { flush(); if (!any && $2 == "FAIL") print "\t" $0; next }
     END { flush() }'
 }
 
@@ -5135,13 +5172,15 @@ round_scope() { # round_scope <spec> <n> -> the scope of the round after round n
   slug="$(slug_of "$spec")"
   row="$(git show HEAD:memory/stats/council.jsonl 2>/dev/null | grep -F "\"spec\":\"$slug\"" | grep -F "\"round\":$n," | tail -1)"
   [ -n "$row" ] || { echo "full norecord"; return 0; }
-  # af-gates-1119 G3: after a gate-only round the next round keeps that round's own scope (build_round freezes it)
+  rel="${spec#./}"; rel="${rel#"$ROOT"/}"
+  # af-gates-1119 G3: after a gate-only round the next round keeps that round's own scope (build_round freezes it),
+  # read from HEAD's ROUND like the rest (af-tails-1120 R3): an uncommitted edit changes nothing, none committed = norecord
   if row_is_gate "$row"; then
-    if [ "$(round_field "$spec/council/round-$n" narrow)" = 1 ]; then echo narrow; else echo "full gate"; fi
+    line="$(git show "HEAD:$rel/council/round-$n/ROUND" 2>/dev/null)" || { echo "full norecord"; return 0; }
+    if [ "$(printf '%s\n' "$line" | tr -d '\r' | sed -n 's/^narrow=//p' | head -1)" = 1 ]; then echo narrow; else echo "full gate"; fi
     return 0
   fi
   if [ "$(json_field "$row" verdict)" = ESCALATE ]; then
-    rel="${spec#./}"; rel="${rel#"$ROOT"/}"
     line="$(git show "HEAD:$rel/council/REOPEN" 2>/dev/null | grep -E "^round=${n}[[:space:]]" | tail -1)"
     if [ -n "$line" ]; then
       case " $line " in *" full=1 "*) echo "full design"; return 0 ;; esac
@@ -5359,6 +5398,111 @@ repair_scope_rows() { # repair_scope_rows <spec> <asks> <findings> <paths> -> a 
   fi
 }
 
+gate_cell_ok() { # gate_cell_ok <constitution> <command> -> 0 iff <command> is a `## Commands` cell a story may run (not round-only)
+  [ -n "$2" ] && command_cell_exists "$1" "$2" && ! command_cell_round_only "$1" "$2"
+}
+
+gate_step_cmd() { # gate_step_cmd <K> -> the command the round gate runs for step K: a stepped row's `<cmd> --step K`, one
+  # plain row's command, or row K's in row-per-step mode (gate-split-08); nothing when no row or no K names one
+  suite_rows
+  [ "$SR_NROWS" -gt 0 ] || return 0
+  if [ "$SR_STEPPED" = 1 ]; then [ -n "$1" ] && printf '%s --step %s\n' "$SR_CMD" "$1"; return 0; fi
+  [ "$SR_NROWS" = 1 ] && { printf '%s\n' "$SR_CMD"; return 0; }
+  case "$1" in ''|*[!0-9]*) return 0 ;; esac
+  printf '%s\n' "$SR_ROWS" | sed -n "${1}p" | cut -f2
+}
+
+gate_part_cell() { # gate_part_cell <constitution> <P> -> the `## Commands` cell a story may run that reruns part <P>, or
+  # nothing: (a) the row whose Purpose slug is <P>, else (b) `bash tests/<suite>.test.sh --part <topic>` for
+  # <P> = <suite>:<topic>, else (c) `bash tests/<suite>.test.sh` (the whole-file cell of a suite with no --part cell:
+  # inject, defects; round 1 F2) or `bash tests/<P>.test.sh`
+  local con="$1" p="$2" c
+  while IFS= read -r c; do
+    case "$c" in ''|*'<'*'>'*) continue ;; esac
+    gate_cell_ok "$con" "$c" && { printf '%s\n' "$c"; return 0; }
+  done <<EOF
+$(commands_rows "$con" | awk -F '\t' -v p="$p" '($2 == "one" || $2 == "noted") {
+    s = tolower($1); gsub(/[^a-z0-9]+/, "-", s); sub(/^-+/, "", s); sub(/-+$/, "", s); if (s == p) print $4 }')
+EOF
+  case "$p" in
+    *:*) c="bash tests/${p%%:*}.test.sh --part ${p#*:}"
+      gate_cell_ok "$con" "$c" || c="bash tests/${p%%:*}.test.sh" ;;
+    *) c="bash tests/$p.test.sh" ;;
+  esac
+  gate_cell_ok "$con" "$c" && printf '%s\n' "$c"
+  return 0
+}
+
+gate_repair_rows() { # gate_repair_rows <round-dir> -> a gate-only round's repair rows (af-tails-1120 R1): "row<TAB><command>"
+  # per red item of the round's suite.log (suite_red_items_k), in log order, deduplicated, each a `## Commands` cell a
+  # story may run; "none<TAB><item>" for an item with none. A `PART <P>` line: gate_part_cell, else its step's command.
+  # A STEP line naming hung parts (`no end from: <P> ...`, a timed-out step; round 2 ask 1): each hung part's
+  # gate_part_cell, a hung part with none its step's command or "none<TAB>PART <P>"; when no hung part has a cell, and
+  # for any other STEP or SUITE: line, its step's command (gate_step_cmd). Never `none — reviewed by lead-review`.
+  local con line k item p c cmd sc hrows hmiss tab
+  tab="$(printf '\t')"
+  con="$(constitution_file "$ROOT")"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    k="${line%%"$tab"*}"; item="${line#*"$tab"}"; cmd=""
+    case "$item" in
+      'PART '*)
+        p="$(printf '%s\n' "$item" | awk '{ print $2 }')"
+        cmd="$(gate_part_cell "$con" "$p")" ;;
+      'STEP '*'no end from: '*)
+        hrows=""; hmiss=""
+        for p in ${item##*no end from: }; do
+          c="$(gate_part_cell "$con" "$p")"
+          if [ -n "$c" ]; then hrows="$hrows$c
+"; else hmiss="$hmiss $p"; fi
+        done
+        if [ -n "$hrows" ]; then
+          printf '%s' "$hrows" | awk '{ print "row\t" $0 }'
+          sc="$(gate_step_cmd "$k")"; gate_cell_ok "$con" "$sc" || sc=""
+          for p in $hmiss; do
+            if [ -n "$sc" ]; then printf 'row\t%s\n' "$sc"; else printf 'none\tPART %s\n' "$p"; fi
+          done
+          continue
+        fi ;;
+    esac
+    if [ -z "$cmd" ]; then c="$(gate_step_cmd "$k")"; gate_cell_ok "$con" "$c" && cmd="$c"; fi
+    if [ -n "$cmd" ]; then printf 'row\t%s\n' "$cmd"; else printf 'none\t%s\n' "$item"; fi
+  done <<EOF
+$(suite_red_items_k "$1/suite.log")
+EOF
+  return 0
+}
+
+gate_repair_quotes() { # gate_repair_quotes <spec> <rows> -> a gate-only round's repair ## Requirements (af-tails-1120 R2): the
+  # `> ` lines of every done story whose ## Verification holds one of <rows> (whitespace normalised), deduplicated, in
+  # story order; when no story holds any, `> <item>` per brief ## Asks item (brief_asks: wrapped lines joined), a struck
+  # (`~~`) item skipped
+  local spec="$1" sf v r hit out=""
+  for sf in "$spec"/*.md; do
+    is_story_file "$sf" && [ "$(fm_field "$sf" status)" = done ] || continue
+    hit=0
+    while IFS= read -r v; do
+      v="$(printf '%s' "$v" | tr -s '[:space:]' ' ')"; v="${v# }"; v="${v% }"
+      [ -n "$v" ] || continue
+      while IFS= read -r r; do
+        r="$(printf '%s' "$r" | tr -s '[:space:]' ' ')"; r="${r# }"; r="${r% }"
+        [ -n "$r" ] && [ "$r" = "$v" ] && { hit=1; break 2; }
+      done <<EOF
+$2
+EOF
+    done <<EOF
+$(verify_of "$sf")
+EOF
+    [ "$hit" = 1 ] || continue
+    out="$out$(awk "$FENCE_AWK"' fence_line($0) || fence_n { next }
+      /^##[[:space:]]+Requirements[[:space:]]*$/ { on = 1; next } /^##[[:space:]]/ { on = 0 }
+      on && /^>/ { sub(/\r$/, ""); sub(/[[:space:]]+$/, ""); print }' "$sf")
+"
+  done
+  if [ -n "$(printf '%s' "$out" | tr -d '[:space:]')" ]; then printf '%s' "$out" | awk 'NF && !seen[$0]++'; return 0; fi
+  brief_asks "$spec/brief.md" | awk 'NF && $0 !~ /^([0-9]+\.[[:space:]]+)?~~/ { print "> " $0 }'
+}
+
 cmd_repair() { # cmd_repair <spec> <commit:0|1> [<stamp>]
   local SPEC="$1" DOCOMMIT="$2" STAMP="${3:-}"
   [ -n "$SPEC" ] && [ -d "$SPEC" ] || {
@@ -5437,6 +5581,23 @@ cmd_repair() { # cmd_repair <spec> <commit:0|1> [<stamp>]
   SPATHS="$(repair_scope_paths "$SPEC" "$asks" "$findings")" || SUNION=1
   if [ "$SUNION" = 1 ]; then SROWS="$(repair_scope_rows "$SPEC" "" "" "")"
   else SROWS="$(repair_scope_rows "$SPEC" "$asks" "$findings" "$SPATHS")"; fi
+  # af-tails-1120 R1/R2: a gate-only round's repair reruns each red item's own command and quotes the asks of the
+  # stories holding those rows; an item with no command a story may run gets a Queen line instead of a row.
+  local GATE=0 GOUT GQUOTES="" GMISS="" gi
+  if row_is_gate "$NEWEST"; then
+    GATE=1
+    GOUT="$(gate_repair_rows "$RD")"
+    SROWS="$(printf '%s\n' "$GOUT" | awk -F '\t' '$1 == "row" && !seen[$2]++ { print $2 }')"
+    while IFS= read -r gi; do
+      [ -n "$gi" ] || continue
+      echo "cycle: repair - $SLUG: no rerun command a story may run for $gi" >&2
+      GMISS="$GMISS- Queen: no rerun command a story may run for $gi; name one
+"
+    done <<EOF
+$(printf '%s\n' "$GOUT" | awk -F '\t' '$1 == "none" && !seen[$2]++ { print $2 }')
+EOF
+    GQUOTES="$(gate_repair_quotes "$SPEC" "$SROWS")"
+  fi
 
   {
     printf -- '---\nstory: %s-%s\nstatus: todo\nreturned:\nworker: worker-code\nmodel: opus\nwave: %s\nblocked_by: []\n' "$SLUG" "$NN" "$WAVE"
@@ -5447,7 +5608,9 @@ cmd_repair() { # cmd_repair <spec> <commit:0|1> [<stamp>]
     printf '# Repair round %s\n\n' "$N"
     printf '## Goal\nMake the asks and findings council round %s left RED pass, and change nothing else.\n\n' "$N"
     printf '## Requirements\n'
-    if [ -n "$asks" ]; then
+    if [ "$GATE" = 1 ]; then
+      [ -n "$GQUOTES" ] && printf '%s\n' "$GQUOTES"
+    elif [ -n "$asks" ]; then
       for x in $asks; do
         local item; item="$(ask_item "$SPEC" "$x")"
         [ -n "$item" ] && printf '> %s\n' "$item"
@@ -5457,6 +5620,7 @@ cmd_repair() { # cmd_repair <spec> <commit:0|1> [<stamp>]
     fi
     printf '\n## Findings\n'
     [ -n "$findings" ] && printf '%s\n' "$findings"
+    [ -n "$GMISS" ] && printf '%s' "$GMISS"
     if [ "$SUNION" = 0 ]; then
       printf '\n## Acceptance criteria\n'
       printf -- '- [ ] The class card under docs/defects/ (its quote, Never line or check:) is added or updated in the same commit as the fix.\n'

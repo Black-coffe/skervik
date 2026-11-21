@@ -10,7 +10,12 @@
 # guess). Legs: `linux` in WSL (`wsl -e bash`), `bash32` in docker (`docker run bash:3.2`); each gets a bundle of
 # this repo and works in a fresh `git clone` of HEAD, never a copy of the working tree. A missing launcher, or a
 # tool the steps need missing in the leg, skips that leg with one line saying how to add it. Each step runs as
-# `bash -e <step>` from the clone's root; `npm install -g` lands in the leg's own temp prefix.
+# `bash -e <step>` from the clone's root; `npm install -g` lands in the leg's own temp prefix. What a runner gives
+# the steps (af-tails-1120 CI4): RUNNER_TEMP, a fresh folder per job inside the leg; a `python` that runs python3
+# when the leg has none; the node-version of a skipped actions/setup-node step (nodejs.org build, SHASUMS256-checked)
+# when the leg node is older; an Alpine leg adds GNU coreutils/findutils/grep/sed/gawk/tar/diffutils/procps over busybox,
+# and bash 5 at /bin/bash. The bash32 leg stands in for the macOS runner: a job whose runs-on or matrix names no
+# macos-* runner runs under /bin/bash (CI runs it on Linux only), a macOS job under the bash 3.2 on PATH.
 # Output: one line per step `<leg> <job>/<n> ok|FAIL|SKIP <reason>`, one per leg `LEG <leg>: ok|FAIL|skipped - <why>`.
 # A full run (no --leg / --job) writes the receipt to `git rev-parse --git-path vulyk-ci-local`: `head=<sha>` and
 # the LEG lines; a run with a FAIL writes none and removes an old one. A leg whose result lines do not match its
@@ -99,6 +104,7 @@ parse() { # parse <ci.yml> <dir> - writes <dir>/manifest (job TAB n TAB run|SKIP
       printf "%s\t%d\t%s\t%s\n", job, i, st[i], r > (D "/manifest")
     }
     if (n == 0) printf "%s\t0\tSKIP\tno steps\n", job > (D "/manifest")
+    if (jmac) print job > (D "/macos.jobs")
     job = ""; n = 0
   }
   function newstep() { endstep(); n++; sdone = 0; sname = ""; srun = ""; suses = ""; sif = ""; senv = 0; sexpr = 0; sfold = 0; shasrun = 0 }
@@ -119,10 +125,11 @@ parse() { # parse <ci.yml> <dir> - writes <dir>/manifest (job TAB n TAB run|SKIP
     i = ind(line)
     if (i == 0) { endjob(); injobs = (line ~ /^jobs:[ ]*(#.*)?$/); next }
     if (!injobs) next
-    if (i == 2 && line ~ /^  [A-Za-z0-9_-]+:[ ]*(#.*)?$/) { endjob(); job = keyof(line); insteps = 0; jif = ""; jenv = 0; si = -1; n = 0; next }
+    if (i == 2 && line ~ /^  [A-Za-z0-9_-]+:[ ]*(#.*)?$/) { endjob(); job = keyof(line); insteps = 0; jif = ""; jenv = 0; jmac = 0; si = -1; n = 0; next }
     if (job == "") next
     if (insteps && i <= 4) insteps = 0
     if (!insteps) {
+      if (line ~ /[Mm]ac[Oo][Ss]-/) jmac = 1   # runs-on or its matrix names a macOS runner
       if (i == 4) {
         k = keyof(line)
         if (k == "steps") { insteps = 1; si = -1 }
@@ -137,6 +144,10 @@ parse() { # parse <ci.yml> <dir> - writes <dir>/manifest (job TAB n TAB run|SKIP
     }
     if (n == 0) next
     if (index(line, "${{")) sexpr = 1
+    if (suses ~ /actions\/setup-node@/ && line ~ /^ *node-version:/) {   # the node a skipped setup-node step gives
+      v = valof(line); gsub(q, "", v); gsub(/"/, "", v); sub(/[^0-9].*/, "", v)
+      if (v + 0 > nodev) nodev = v + 0
+    }
     if (ind(line) != si + 2 || line !~ /^ *[A-Za-z0-9_-]+:/) next
     k = keyof(line); v = valof(line)
     if (k == "run") {
@@ -150,7 +161,7 @@ parse() { # parse <ci.yml> <dir> - writes <dir>/manifest (job TAB n TAB run|SKIP
     else if (k == "env") senv = 1
     else if (k == "name") sname = unq(v)
   }
-  END { endjob() }' "$1"
+  END { endjob(); if (nodev) print nodev > (D "/node.version") }' "$1"
 }
 
 leg_script() { # the script each leg runs inside WSL or the container: tools, clone, steps
@@ -159,22 +170,60 @@ set -u
 leg="$1"; sha="$2"; d="$(cd "$(dirname "$0")" && pwd)"
 missing() { m=""; for t in $(cat "$d/tools"); do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }
 m="$(missing)"
-if [ -n "$m" ] && command -v apk >/dev/null 2>&1; then
-  pk=""; for t in $m; do case "$t" in node) pk="$pk nodejs" ;; *) pk="$pk $t" ;; esac; done
-  echo "$leg tools: apk add$pk (inside the container)"
-  apk add --no-cache $pk >/dev/null 2>&1
+if command -v apk >/dev/null 2>&1; then
+  # an Alpine leg: GNU tools in place of busybox's (no CI runner has busybox) and a bash 5 at /bin/bash for the
+  # jobs CI runs on Linux only; the bash 3.2 on PATH stays the shell of the macOS jobs
+  pk="bash coreutils findutils grep sed gawk tar diffutils procps"
+  for t in $m; do case "$t" in node) pk="$pk nodejs" ;; *) pk="$pk $t" ;; esac; done
+  echo "$leg tools: apk add $pk (inside the container)"
+  apk add --no-cache $pk >/dev/null 2>&1 || { echo "LEGFAIL apk add $pk failed"; exit 1; }
   m="$(missing)"
 fi
 [ -z "$m" ] || { echo "LEGSKIP missing tool(s):$m - add them in the leg, e.g. wsl -u root apt-get install -y$m"; exit 3; }
 echo "$leg clone: git clone -q repo.bundle src && git checkout -q --detach $sha"
 git clone -q "$d/repo.bundle" "$d/src" && git -C "$d/src" checkout -q --detach "$sha" \
   || { echo "LEGFAIL git clone of the bundle failed"; exit 1; }
-export NPM_CONFIG_PREFIX="$d/npm-global"; PATH="$d/npm-global/bin:$PATH"; export PATH
+# a skipped actions/setup-node step: a leg node older than its node-version gets that major as setup-node does,
+# the nodejs.org build, checked against the release's SHASUMS256.txt
+nv="$(cat "$d/steps/node.version" 2>/dev/null)"
+if [ -n "$nv" ]; then
+  have="$(node --version 2>/dev/null)"; have="${have#v}"; have="${have%%.*}"
+  case "$have" in ''|*[!0-9]*) have=0 ;; esac
+  if [ "$have" -lt "$nv" ]; then
+    case "$(uname -m)" in x86_64|amd64) ar=x64 ;; aarch64|arm64) ar=arm64 ;; *) ar="$(uname -m)" ;; esac
+    base="https://nodejs.org/dist/latest-v$nv.x"
+    echo "$leg node: v$have is older than setup-node's node-version $nv - fetching $base linux-$ar"
+    sum="$(curl -fsSL "$base/SHASUMS256.txt" 2>/dev/null | grep " node-v[0-9.]*-linux-$ar\.tar\.gz\$" | head -n 1)"
+    [ -n "$sum" ] && curl -fsSL "$base/${sum##* }" -o "$d/node.tgz" 2>/dev/null \
+      || { echo "LEGSKIP node $nv (actions/setup-node) could not be fetched from $base - install node $nv in the leg"; exit 3; }
+    got="$( { sha256sum < "$d/node.tgz" 2>/dev/null || shasum -a 256 < "$d/node.tgz"; } | cut -c1-64)"
+    [ "$got" = "${sum%% *}" ] || { echo "LEGFAIL ${sum##* } does not match its SHASUMS256.txt line"; exit 1; }
+    mkdir -p "$d/node" && tar -xzf "$d/node.tgz" -C "$d/node" --strip-components 1 && rm -f "$d/node.tgz" \
+      || { echo "LEGFAIL could not unpack ${sum##* }"; exit 1; }
+    PATH="$d/node/bin:$PATH"; export PATH
+  fi
+fi
+# a runner has `python` beside python3 (the hooks fall through python3 -> python -> py): one that runs python3 when
+# the leg's own `python` is missing or not Python 3
+mkdir -p "$d/bin" "$d/bash5"
+if ! python -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1 && p3="$(command -v python3)"; then
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$p3" > "$d/bin/python"; chmod +x "$d/bin/python"
+fi
+printf '#!/bin/sh\nexec /bin/bash "$@"\n' > "$d/bash5/bash"; chmod +x "$d/bash5/bash"
+export NPM_CONFIG_PREFIX="$d/npm-global"; PATH="$d/bin:$d/npm-global/bin:$PATH"; export PATH
 cd "$d/src" || exit 1
-bad=0
+bad=0; last=""
 while IFS="	" read -r job n st tx; do
+  if [ "$job" != "$last" ]; then   # a runner's RUNNER_TEMP: one fresh folder per job
+    last="$job"; RUNNER_TEMP="$d/runner-temp/$job"; export RUNNER_TEMP; mkdir -p "$RUNNER_TEMP"
+  fi
   if [ "$st" = SKIP ]; then echo "$leg $job/$n SKIP $tx"; continue; fi
-  if bash -e "$d/steps/$job.$n.sh" < /dev/null > "$d/step.log" 2>&1; then echo "$leg $job/$n ok - $tx"
+  sh=bash; pth="$PATH"
+  # the bash32 leg stands in for the macOS runner: a job CI runs on Linux only gets the Linux runner's bash 5
+  if [ "$leg" = bash32 ] && [ -x /bin/bash ] && ! grep -qx "$job" "$d/steps/macos.jobs" 2>/dev/null; then
+    sh=/bin/bash; pth="$d/bash5:$PATH"
+  fi
+  if PATH="$pth" "$sh" -e "$d/steps/$job.$n.sh" < /dev/null > "$d/step.log" 2>&1; then echo "$leg $job/$n ok - $tx"
   else rc=$?; echo "$leg $job/$n FAIL - $tx (exit $rc)"; tail -n 40 "$d/step.log" | sed 's/^/    /'; bad=1; fi
 done < "$d/manifest"
 exit "$bad"

@@ -2,8 +2,9 @@
 # PreToolUse hook (matcher Read|Grep|Glob|Bash|PowerShell): keeps a blind council seat inside its court
 # (plan.md `## Contracts` C1 of audit-fixes-1113, C2 of guards-1115). It acts only when the input's agent_type is
 # `council-opus` or `council-haiku`; any other agent and the main session pass untouched.
-#   - The seat's court is the round folder <project>/.vulyk/court/<slug>/<round>/ the call stands in (the input
-#     cwd, then each `cd`); another round's court is denied. A call that stands in no court may name a court path
+#   - The seat's court is the round folder <root>/.vulyk/court/<slug>/<round>/ the call stands in (the input
+#     cwd, then each `cd`), <root> being <project> or any worktree `git worktree list` gives for <project>'s
+#     repository (plan.md C3 of af-tails-1120); another round's court is denied. A call that stands in no court may name a court path
 #     only while exactly one court exists; with more it is denied and told to work from inside its court.
 #   - Every path is judged by its resolved form: links followed, `..` steps (also behind a folder or a wildcard),
 #     letter case folded on Windows, a Git Bash spelling (/c/..., /tmp in any case) read as the Windows path, also
@@ -63,6 +64,7 @@
 #   - a command that names no path reads the folder it runs in, also when that folder is outside every court;
 #   - a word that exists nowhere and is no reading command's operand (a script, a pattern, an echo word);
 #   - which court a call that starts in no court enters by `cd`;
+#   - a failing or slow `git` (3 s cap) leaves <project>'s court alone: a worktree's court is then denied;
 #   - a link that only the Git Bash layer knows, which Windows cannot resolve;
 #   - refused although harmless (known over-denies, 0.55.0): a `case` statement, and an arithmetic expansion
 #     that holds a parenthesised group or a substitution.
@@ -436,28 +438,44 @@ def main():
         m = re.search(r'[/\\]\.vulyk[/\\]court([/\\]|$)', cwd)
         project = cwd[:m.start()] if m else cwd
     project = full(project, cwd)
-    courts = os.path.join(project, '.vulyk', 'court')
+    roots = [project]                                   # the project dir, then every worktree of its repository
+    try:
+        import subprocess
+        r = subprocess.run(['git', '-C', project, 'worktree', 'list', '--porcelain'], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+        if r.returncode == 0:
+            for line in r.stdout.decode('utf-8', 'replace').splitlines():
+                if line.startswith('worktree '):
+                    w = full(line[len('worktree '):].strip(), project)
+                    if w not in roots:
+                        roots.append(w)
+    except Exception:
+        pass                                            # git failing or slow: the project dir's court alone
+    court_roots = [os.path.join(w, '.vulyk', 'court') for w in roots]
     reports = os.path.join(project, '.vulyk', 'reports')
     seat = data.get('agent_type')
 
     def court_of(p):
-        """The round folder .vulyk/court/<slug>/<round> that holds p, or None."""
-        if not under(p, courts):
-            return None
-        parts = os.path.relpath(p, courts).replace('\\', '/').split('/')
-        if len(parts) < 2 or parts[0] in ('', '.', '..'):
-            return None
-        return os.path.join(courts, parts[0], parts[1])
+        """The round folder .vulyk/court/<slug>/<round> of any court root that holds p, or None."""
+        for courts in court_roots:
+            if not under(p, courts):
+                continue
+            parts = os.path.relpath(p, courts).replace('\\', '/').split('/')
+            if len(parts) < 2 or parts[0] in ('', '.', '..'):
+                return None
+            return os.path.join(courts, parts[0], parts[1])
+        return None
 
     def court_count():
         n = 0
-        try:
-            for slug in os.listdir(courts):
-                d = os.path.join(courts, slug)
-                if os.path.isdir(d):
-                    n += sum(1 for r in os.listdir(d) if os.path.isdir(os.path.join(d, r)))
-        except OSError:
-            pass
+        for courts in court_roots:
+            try:
+                for slug in os.listdir(courts):
+                    d = os.path.join(courts, slug)
+                    if os.path.isdir(d):
+                        n += sum(1 for r in os.listdir(d) if os.path.isdir(os.path.join(d, r)))
+            except OSError:
+                pass
         return n
 
     stand = [court_of(full(cwd, cwd))]                  # the court the call stands in, moved by each `cd`

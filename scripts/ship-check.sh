@@ -262,7 +262,7 @@ suite_log_ok() { # suite_log_ok <log> -> 0 iff the log is finished and keyed to 
   [ -n "$SL_HEAD" ] && paperwork_only "$ROOT" "$SL_HEAD" HEAD
 }
 suite_check() {
-  local h7 n rlog="" log src why=""
+  local h7 n rlog="" log src why="" at
   if ! commands_rows "$(constitution_file "$ROOT")" | awk -F '\t' '
     { p = tolower($1); if (p ~ /full suite/ && p ~ /(^|[^[:alnum:]_-])round-only($|[^[:alnum:]_-])/) {
         lc = tolower($4); if ($2 == "several" || (lc !~ /^<fill in/ && lc !~ /^none([^[:alnum:]_-]|$)/)) f = 1 } }
@@ -273,6 +273,15 @@ suite_check() {
   n="$(for d in "$SPEC"/council/round-*/; do d="${d%/}"; printf '%s\n' "${d##*/round-}"; done | grep -x '[0-9][0-9]*' | sort -n | tail -1)"
   [ -n "$n" ] && [ -f "$SPEC/council/round-$n/ROUND" ] && ! tr -d '\r' < "$SPEC/council/round-$n/ROUND" | grep -qx 'narrow=1' \
     && rlog="$SPEC/council/round-$n/suite.log"
+  # af-tails-1120 S1: a finished FAIL merge run is the stage's answer, whatever head it is keyed to: no round log is
+  # read after it (a newer green round gate never passes over it). Unfinished, or ok at another head: read as before.
+  if suite_log_ok "$SPEC/council/merge-suite.log"; then at="$h7"; else at="${SL_HEAD:-$h7}"; fi
+  case "$SL_LAST" in "SUITE: FAIL"*)
+    why="${SL_LAST#* - }"; [ "$why" = "$SL_LAST" ] && why="the merge run failed"
+    fail suite "suite: FAIL at $at - $why - fix it, commit, then run bash scripts/cycle.sh suite $SPEC --merge again: the whole suite once more on the new head, no agents"
+    return ;;
+  esac
+  why=""
   for log in "$SPEC/council/merge-suite.log" "$rlog"; do
     [ -n "$log" ] && suite_log_ok "$log" || continue
     src="the merge run"; [ "$log" = "$rlog" ] && src="round $n's gate"
@@ -450,8 +459,22 @@ unchecked_asks() { # ask 3: per brief `## Asks` item (one struck through with ~~
   done < <(brief_asks "$SPEC/brief.md")
 }
 unchecked_asks
+solo_gate_set() { # solo_gate_set -> 0 iff the default branch holds a root `.vulyk-solo-gate` saying exactly `merge-only`.
+  # A copy of cycle.sh solo_gate_on (lib.sh has no shared reader; af-tails-1120 S2): the full ref, local else origin's,
+  # and ls-tree + cat-file, never one `<branch>:<path>` argument (Git Bash rewrites it); missing or other text: off.
+  local ref blob v
+  if git show-ref --verify --quiet "refs/heads/$DEFAULT"; then ref="refs/heads/$DEFAULT"
+  elif git show-ref --verify --quiet "refs/remotes/origin/$DEFAULT"; then ref="refs/remotes/origin/$DEFAULT"
+  else return 1; fi
+  blob="$(git ls-tree "$ref" -- .vulyk-solo-gate 2>/dev/null | awk '$2 == "blob" { print $3; exit }')"
+  [ -n "$blob" ] || return 1
+  v="$(git cat-file blob "$blob" 2>/dev/null | tr -d '\r')" || return 1
+  [ "$v" = merge-only ]
+}
 unchecked_suite() { # ask 3: the suite line is none because the constitution has no round-only full-suite row (a row
   # whose cell is still `<fill in` counts as none); a declared `none` cell, a narrow round and the solo gate print nothing
+  # (af-tails-1120 S2: the solo gate is the `.vulyk-solo-gate` switch on the default branch)
+  solo_gate_set && return 0
   commands_rows "$(constitution_file "$ROOT")" | awk -F '\t' '
     { p = tolower($1); if (p ~ /full suite/ && p ~ /(^|[^[:alnum:]_-])round-only($|[^[:alnum:]_-])/ \
         && ($2 == "several" || tolower($4) !~ /^<fill in/)) f = 1 }

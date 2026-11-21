@@ -52,10 +52,11 @@ branch). Every call below that runs `advance` carries `timeout: 600000`.
    - `green`: first `bash scripts/ship-check.sh docs/specs/<slug>`; when its `suite:` line asks for the merge
      run (`suite: no full run at <sha>`), run `bash scripts/cycle.sh suite docs/specs/<slug> --merge --commit` step by step until `"done":true`, before «Выпускаем?»
      (one Bash call per step, `timeout: 600000`, no agent). A `suite: FAIL` line is a repair: fix the parts it
-     names, commit, run the merge run again. Then ask the owner once with `AskUserQuestion`, in the owner's language: «<slug>: council
+     names, commit, run the merge run again; once the merge run is `"done":true`, run `bash scripts/ship-check.sh
+     docs/specs/<slug>` again: a step that went flaky only in the merge run is in that run's lines. Then ask the owner once with `AskUserQuestion`, in the owner's language: «<slug>: council
      GREEN, round <n>. Выпускаем?», yes first and recommended. The question quotes every `unchecked:`, `flaky:` and
-     `dropped:` line of that `ship-check.sh` run verbatim, under the question line; with none it is the question as
-     above. Yes: run `vulyk-ship` with the Skill
+     `dropped:` line of the last `ship-check.sh` run verbatim, under the question line (the first run only when no
+     merge run ran after it); with none it is the question as above. Yes: run `vulyk-ship` with the Skill
      tool (args `<slug>`). No, or no `AskUserQuestion` (`claude -p`): recommend `/vulyk-ship` in one line.
    - `build:<W>`: the round was RED and the repair story is written; it is built through `/vulyk-build`,
      never by hand in this command. A RED round is followed by a repair and a narrow round: one reviewer reads
