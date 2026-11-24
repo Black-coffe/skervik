@@ -18,9 +18,8 @@ are still stubs; zero game rules exist yet — **that's M1** (start at E1.1 per
 **Execution plan — when resuming work, start here (no other context needed):**
 
 1. `docs/specs/m1-vertical-slice/plan.md` — **the active plan**: M1 execution
-   playbook for the Queen (epic order, tier routing, domain notes per epic,
-   invariant checklists, first stories materialized). The Queen writes NO code —
-   specs/docs/orchestration only; all code goes through `worker-code` subagents.
+   playbook (epic order, tier routing, domain notes per epic,
+   invariant checklists, first stories materialized).
 2. `docs/specs/roadmap/ROADMAP-2026-H2.md` — holistic Jul–Dec 2026 plan (7 directions:
    product → M1 slice + closed alpha in Dec, art/brand, marketing, SMM/community,
    funding, infra, Claude Code process), anchored to master-roadmap epic IDs.
@@ -132,21 +131,21 @@ merge gates, component inventory) are **binding** for every UI diff and UI
 story. Reference mockup: `docs/design/mockups/game-table.html`. Authored by
 owner-commissioned design pass 2026-07-03; deviations need owner sign-off.
 
-## Orchestration: VULYK hive
+## Orchestration: VULYK thin (since 2026-11-24)
 
-This project is set up with the **VULYK** multi-agent orchestration framework
-(from github.com/Black-coffe/vulyk). The main session acts as the **Queen**
-(planner/dispatcher/integrator) and delegates to tiered subagents. Key entry
-points: `/vulyk-bootstrap` (one-time setup interview + codebase map),
-`/vulyk-plan` → `/vulyk-build` → `/vulyk-review` (work pipeline), `/vulyk-status`,
-`/vulyk-map`, `/vulyk-gc`, `/vulyk-evolve`. Memory lives in `memory/` (index:
-`memory/memory.md`); decisions in `docs/adr/`, plans/stories in `docs/specs/`,
-domain notes in `docs/wiki/`. The full constitution (laws, complexity routing,
-token economy, memory protocol) is imported below.
+The old **VULYK** hive (0.55.0-dev.3: Queen, tiered workers, councils, `/vulyk-*`
+commands, hooks, `scripts/cycle.sh`) was removed; work goes through the VULYK thin
+plugin (`vulyk@vulyk-thin`, block at the end of this file). Decisions in `docs/adr/`,
+plans/stories in `docs/specs/`, domain notes in `docs/wiki/`. `memory/` is a read-only
+archive (index: `memory/memory.md`; module maps in `memory/map/` were last updated in
+July 2026 — verify against code).
 
-@CLAUDE.vulyk.md
+**Project amendment (owner directive 2026-07-10, kept through the move).** `packages/core`,
+`packages/protocol` and anything determinism-bearing (the seed/event contract, RNG, `validate`)
+are changed only by the `builder` agent through `/vulyk:go`, at any size: this session never
+hand-edits them, and "small obvious fixes skip it" does not apply to them.
 
-## Project profile (VULYK bootstrap)
+## Project profile
 
 - **Project:** Skervik — OSS online "explore-trade-settle" game (Catan-inspired, independent). One sentence: see `docs/specs/roadmap/ROADMAP.md`.
 - **Status:** M0 foundation (repo live, CI green; E0.4 = last open gate). Master plan: `docs/specs/roadmap/ROADMAP.md` · H2-2026 plan: `docs/specs/roadmap/ROADMAP-2026-H2.md` · fix backlog: `docs/specs/audit/FIX-PLAN-2026-07.md`. Current milestone: **M0 → M1** (`docs/specs/m0-foundation/`).
@@ -154,6 +153,52 @@ token economy, memory protocol) is imported below.
 - **Verification (real, all green as of 2026-07-02):** build `pnpm -r build` · test `pnpm -r test` (core determinism: `pnpm --filter @skervik/core test`) · lint `pnpm -r lint` · typecheck `pnpm -r typecheck`.
 - **Hard invariants (never regress):** deterministic isomorphic core (no wall-clock / no ambient RNG); authoritative server; commit-reveal RNG; event sourcing; rule profiles as config not branches. See `docs/wiki/`.
 - **No-go zones (once they exist):** generated output (`dist/`,`build/`), lockfiles, migration history, vendored art assets.
-- **Budget posture:** BALANCED (cap ~4 parallel workers). Gate model: see `CLAUDE.vulyk.md`, check with `bash scripts/top-model.sh --explain`.
 - **Branch/commit:** conventional commits; agents may stage + commit to feature branches; human merges. Docs in RU; code/identifiers in EN.
-- **Test reality:** Vitest 4 is the runner; 41 tests green (36 real in core, 5 stub smoke-tests) — keep `worker-test`.
+- **Test reality:** Vitest 4 is the runner; 41 tests green (36 real in core, 5 stub smoke-tests).
+
+## Commands
+
+Quiet variants only: everything these print is resent on every subsequent turn.
+(`-s` silences pnpm's own banner noise.)
+
+| Purpose                  | Command                               |
+| ------------------------ | ------------------------------------- |
+| Single package tests     | `pnpm -s --filter <pkg> test`         |
+| Full suite               | `pnpm -s -r test`                     |
+| Core determinism gate    | `pnpm -s --filter @skervik/core test` |
+| Core has no runtime deps | `pnpm -s check:core-deps`             |
+| Lint                     | `pnpm -s -r lint`                     |
+| Typecheck                | `pnpm -s typecheck`                   |
+| Build                    | `pnpm -s -r build`                    |
+
+## Secrets
+
+Name a secret by its env var (`STRIPE_KEY`), never by value. A secret that reaches git is rotated, not deleted.
+
+## Where things live
+
+Specs, stories, study reports: `docs/specs/<milestone>/` · decisions: `docs/adr/` · domain notes: `docs/wiki/`
+· path rules: `.claude/rules/` · module maps (archive, verify against code): `memory/map/`.
+
+## Compact instructions
+
+Keep: the deliverable and goal, the spec slug and each story's state, decisions with reasons and rejected
+options, walls hit, open questions to the owner. Drop file contents, diffs, command output: they are on disk.
+
+<!-- vulyk:begin -->
+
+## VULYK
+
+- Work goes through `/vulyk:go`: brief with the owner's words, plan, one approval, build, review by
+  another model family, local merge. Small obvious fixes skip it.
+- Specs: `docs/specs` (each spec in `<folder>/<slug>/`; `brief.md` keeps the owner's words verbatim and is
+  the contract). A project that keeps specs elsewhere writes its folder here.
+- Publishing (push, tag, release, deploy) only on the owner's explicit word, each step named.
+- Never discard uncommitted work: no `git reset --hard`, `git checkout -- .`, `git clean -f` or
+  `git stash drop` on changes that are not committed elsewhere. Ask.
+- When the owner corrects your work and says why, record the lesson as a rule: a line in
+  `.claude/rules/lessons.md` (at most 60 lines; merge or drop old lines to stay under), or a
+  `.claude/rules/<topic>.md` with `paths:` when it applies to certain files. No new hooks or scripts for it:
+  a check the project wants goes into its own tests.
+
+<!-- vulyk:end -->

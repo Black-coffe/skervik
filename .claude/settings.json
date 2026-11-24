@@ -1,134 +1,22 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-start-brief.sh\""
-          },
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/vulyk-update-check.sh\""
-          },
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/top-model-brief.sh\""
-          },
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defects-inject.sh\" reset"
-          },
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/ysk-offer.sh\""
-          }
-        ]
-      }
-    ],
-    "SessionEnd": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/anomaly-scan.sh\"",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Skill",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-usage-counter.sh\""
-          }
-        ]
-      },
-      {
-        "matcher": "AskUserQuestion",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defect-intake.sh\" answer"
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defect-intake.sh\""
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/git-guard.sh\""
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Read|Bash|PowerShell|WebFetch|WebSearch|Agent|mcp__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/defects-inject.sh\""
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/owner-guard.sh\"",
-            "onFailure": "block"
-          }
-        ]
-      },
-      {
-        "matcher": "Read|Grep|Glob|Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/court-guard.sh\"",
-            "onFailure": "block"
-          }
-        ]
-      }
-    ],
-    "UserPromptExpansion": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"C:\\Program Files\\Git\\usr\\bin\\bash.exe\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-usage-counter.sh\""
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
-    "allow": [
-      "Bash(bash scripts/cycle.sh advance:*)",
-      "Bash(bash scripts/cycle.sh status:*)",
-      "Bash(bash scripts/cycle.sh release:*)",
-      "Bash(bash scripts/cycle.sh suite:*)",
-      "Bash(bash scripts/cycle.sh stamp-red:*)",
-      "Bash(bash scripts/cycle.sh close-story:*)",
-      "Bash(bash scripts/journal.sh:*)"
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --tags*)",
+      "Bash(git push --mirror*)"
+    ],
+    "ask": [
+      "Bash(git push*)",
+      "Bash(git tag*)",
+      "Bash(gh release*)",
+      "Bash(npm publish*)"
     ]
   },
-  "switchModelsOnFlag": false
+  "switchModelsOnFlag": false,
+  "extraKnownMarketplaces": {
+    "vulyk-thin": { "source": { "source": "github", "repo": "Black-coffe/vulyk-thin" } }
+  },
+  "enabledPlugins": { "vulyk@vulyk-thin": true }
 }
